@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2024 Mass Labs
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+relay
+.env
+tmp
+/gomod2nix-template
+.pre-commit-config.yaml
+result
