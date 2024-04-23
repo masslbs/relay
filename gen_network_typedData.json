@@ -1,0 +1,244 @@
+{
+  "StoreManifest": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "store_token_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "domain",
+      "type": "string"
+    },
+    {
+      "name": "published_tag_id",
+      "type": "bytes32"
+    }
+  ],
+  "UpdateManifest": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "field",
+      "type": "int256"
+    },
+    {
+      "name": "string",
+      "type": "string"
+    },
+    {
+      "name": "tag_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "erc20_addr",
+      "type": "address"
+    }
+  ],
+  "CreateItem": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "price",
+      "type": "string"
+    },
+    {
+      "name": "metadata",
+      "type": "bytes"
+    }
+  ],
+  "UpdateItem": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "item_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "field",
+      "type": "int256"
+    },
+    {
+      "name": "price",
+      "type": "string"
+    },
+    {
+      "name": "metadata",
+      "type": "bytes"
+    }
+  ],
+  "CreateTag": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "name",
+      "type": "string"
+    }
+  ],
+  "AddToTag": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "tag_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "item_id",
+      "type": "bytes32"
+    }
+  ],
+  "RemoveFromTag": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "tag_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "item_id",
+      "type": "bytes32"
+    }
+  ],
+  "RenameTag": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "tag_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "name",
+      "type": "string"
+    }
+  ],
+  "DeleteTag": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "tag_id",
+      "type": "bytes32"
+    }
+  ],
+  "CreateCart": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    }
+  ],
+  "ChangeCart": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "cart_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "item_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "quantity",
+      "type": "int32"
+    }
+  ],
+  "CartFinalized": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "cart_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "purchase_addr",
+      "type": "address"
+    },
+    {
+      "name": "erc20_addr",
+      "type": "address"
+    },
+    {
+      "name": "sub_total",
+      "type": "string"
+    },
+    {
+      "name": "sales_tax",
+      "type": "string"
+    },
+    {
+      "name": "total",
+      "type": "string"
+    },
+    {
+      "name": "total_in_crypto",
+      "type": "string"
+    }
+  ],
+  "CartAbandoned": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "cart_id",
+      "type": "bytes32"
+    }
+  ],
+  "ChangeStock": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "item_ids",
+      "type": "bytes32[]"
+    },
+    {
+      "name": "diffs",
+      "type": "int32[]"
+    },
+    {
+      "name": "cart_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "tx_hash",
+      "type": "bytes32"
+    }
+  ],
+  "NewKeyCard": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "user_wallet_addr",
+      "type": "address"
+    },
+    {
+      "name": "card_public_key",
+      "type": "bytes"
+    }
+  ]
+}
