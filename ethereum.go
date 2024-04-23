@@ -11,8 +11,10 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
+	mrand "math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -25,18 +27,17 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/gorilla/websocket"
+	"github.com/ssgreg/repeat"
 )
 
 type ethClient struct {
-	*ethclient.Client
+	rpcUrls []string
 	chainID uint
 
 	gasTipCap *big.Int
 	gasFeeCap *big.Int
-
-	stores         *RegStore
-	relays         *RegRelay
-	paymentFactory *PaymentFactory
 
 	erc20ContractABI abi.ABI
 
@@ -56,21 +57,33 @@ var genContractAddresses embed.FS
 
 func newEthClient() *ethClient {
 	var c ethClient
+	var err error
+
 	c.chainID = uint(mustGetEnvInt("ETH_CHAIN_ID"))
 
-	rpcUrl := mustGetEnvString("ETH_RPC_ENDPOINT")
-	var err error
-	c.Client, err = ethclient.Dial(rpcUrl)
-	check(err)
+	for _, urls := range strings.Split(mustGetEnvString("ETH_RPC_ENDPOINT"), ";") {
+		c.rpcUrls = append(c.rpcUrls, urls)
+	}
 
-	log("ethClient chainId=%d rpc=%s", c.chainID, rpcUrl)
+	log("ethClient chainId=%d rpcs=%d", c.chainID, len(c.rpcUrls))
 
 	ctx := context.Background()
 	ctx, cancel := context.WithTimeout(ctx, time.Second*30)
 	defer cancel()
 
 	// check rpc works
-	err = c.updateGasLimit(ctx)
+	err = repeat.Repeat(
+		repeat.Fn(func() error {
+			err := c.updateGasLimit(ctx)
+			if errors.Is(err, context.DeadlineExceeded) {
+				return repeat.HintTemporary(err)
+			}
+			return err
+		}),
+		repeat.WithDelay(repeat.FullJitterBackoff(250*time.Millisecond).Set()),
+		repeat.StopOnSuccess(),
+		repeat.LimitMaxTries(5),
+	)
 	check(err)
 
 	if keyPath := os.Getenv("ETH_PRIVATE_KEY_FILE"); keyPath != "" {
@@ -90,23 +103,25 @@ func newEthClient() *ethClient {
 	assertWithMessage(ok, "Error casting public key to ECDSA")
 	c.wallet = crypto.PubkeyToAddress(*publicKeyECDSA)
 	log("ethClient.newEthClient wallet=%s", c.wallet.Hex())
-	assert(c.hasBalance(c.wallet))
+	has := c.hasBalance(ctx, c.wallet)
+	// assert(has)
+	_ = has
 
 	addrData, err := genContractAddresses.ReadFile("gen_contract_addresses.json")
 	check(err)
 	err = json.Unmarshal(addrData, &c.contractAddresses)
 	check(err)
 
-	c.stores, err = NewRegStore(c.contractAddresses.StoreRegistry, c.Client)
-	check(err)
+	// c.stores, err = NewRegStore(c.contractAddresses.StoreRegistry, c.Client)
+	// check(err)
 	log("ethClient.newEthClient storeRegAddr=%s", c.contractAddresses.StoreRegistry.Hex())
 
-	c.relays, err = NewRegRelay(c.contractAddresses.RelayRegistry, c.Client)
-	check(err)
+	// c.relays, err = NewRegRelay(c.contractAddresses.RelayRegistry, c.Client)
+	// check(err)
 	log("ethClient.newEthClient relayRegAddr=%s", c.contractAddresses.RelayRegistry.Hex())
 
-	c.paymentFactory, err = NewPaymentFactory(c.contractAddresses.PaymentFactory, c.Client)
-	check(err)
+	// c.paymentFactory, err = NewPaymentFactory(c.contractAddresses.PaymentFactory, c.Client)
+	// check(err)
 	log("ethClient.newEthClient paymentFactoryAddr=%s", c.contractAddresses.PaymentFactory.Hex())
 
 	c.erc20ContractABI, err = abi.JSON(strings.NewReader(ERC20MetaData.ABI))
@@ -118,12 +133,15 @@ func newEthClient() *ethClient {
 		Context: ctx,
 	}
 
-	var h [32]byte
-	addr, err := c.paymentFactory.GetPaymentAddress(callOpts, c.wallet, c.wallet, big.NewInt(123), common.Address{}, h)
-	check(err)
-	log("ethClient.testing PaymentAddress=%s", addr.Hex())
+	// var h [32]byte
+	// addr, err := c.paymentFactory.GetPaymentAddress(callOpts, c.wallet, c.wallet, big.NewInt(123), common.Address{}, h)
+	// check(err)
+	// log("ethClient.testing PaymentAddress=%s", addr.Hex())
 
 	// register a new nft for the relay
+	relaysReg, gethc, err := c.newRelayReg(ctx)
+	check(err)
+
 	relayTokenID := new(big.Int)
 	if nftIDStr := os.Getenv("RELAY_NFT_ID"); nftIDStr != "" {
 		buf, err := hex.DecodeString(nftIDStr)
@@ -131,9 +149,10 @@ func newEthClient() *ethClient {
 		assertWithMessage(len(buf) == 32, fmt.Sprintf("expected 32bytes of data in RELAY_NFT_ID. got %d", len(buf)))
 		relayTokenID.SetBytes(buf)
 
-		nftOwner, err := c.relays.OwnerOf(callOpts, relayTokenID)
+		nftOwner, err := relaysReg.OwnerOf(callOpts, relayTokenID)
 		check(err)
 		assertWithMessage(nftOwner.Cmp(c.wallet) == 0, fmt.Sprintf("passed NFT is owned by %s", nftOwner))
+
 	} else { // in testing, always create a new nft
 		buf := make([]byte, 32)
 		rand.Read(buf)
@@ -147,17 +166,66 @@ func newEthClient() *ethClient {
 
 		txOpts, err := c.makeTxOpts(ctx)
 		check(err)
-		tx, err := c.relays.Mint(txOpts, relayTokenID, c.wallet, fmt.Sprintf("http://localhost:%d/relay_nft?token=%s", mustGetEnvInt("PORT"), relayTokenID))
+		tx, err := relaysReg.Mint(txOpts, relayTokenID, c.wallet, fmt.Sprintf("http://localhost:%d/relay_nft?token=%s", mustGetEnvInt("PORT"), relayTokenID))
 		check(err)
 
-		err = c.checkTransaction(ctx, tx)
+		err = c.checkTransaction(ctx, gethc, tx)
 		check(err)
 	}
+	gethc.Close()
 
 	log("ethClient.relayNft token=%s", relayTokenID)
 	c.relayTokenID = relayTokenID
 
 	return &c
+}
+
+func (c ethClient) getClient(ctx context.Context) (*ethclient.Client, error) {
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 1 * time.Second,
+		// custom dialer..?
+	}
+
+	randomIndex := mrand.Intn(len(c.rpcUrls))
+	randomRPCURL := c.rpcUrls[randomIndex]
+	log("ethClient.getClient rpc=%s", randomRPCURL)
+
+	gethRPC, err := rpc.DialOptions(ctx,
+		randomRPCURL,
+		rpc.WithWebsocketDialer(dialer),
+		// TODO: with retry http roundtripper for http endpoints
+		// https://pkg.go.dev/github.com/hashicorp/go-retryablehttp#Client
+	)
+	if err != nil {
+		return nil, err
+	}
+	return ethclient.NewClient(gethRPC), nil
+}
+
+func (c ethClient) newRelayReg(ctx context.Context) (*RegRelay, *ethclient.Client, error) {
+	client, err := c.getClient(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	reg, err := NewRegRelay(c.contractAddresses.RelayRegistry, client)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ethClient.newRelayReg: creating relay registry failed: %w", err)
+	}
+	return reg, client, nil
+}
+
+func (c ethClient) newStoreReg(ctx context.Context) (*RegStore, *ethclient.Client, error) {
+	client, err := c.getClient(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	reg, err := NewRegStore(c.contractAddresses.StoreRegistry, client)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ethClient.newStoreReg: creating store registry failed: %w", err)
+	}
+
+	return reg, client, nil
 }
 
 func (c ethClient) makeTxOpts(ctx context.Context) (*bind.TransactOpts, error) {
@@ -179,8 +247,8 @@ func (c ethClient) makeTxOpts(ctx context.Context) (*bind.TransactOpts, error) {
 	}, nil
 }
 
-func (c ethClient) checkTransaction(ctx context.Context, tx *types.Transaction) error {
-	receipt, err := bind.WaitMined(ctx, c.Client, tx)
+func (c ethClient) checkTransaction(ctx context.Context, conn *ethclient.Client, tx *types.Transaction) error {
+	receipt, err := bind.WaitMined(ctx, conn, tx)
 	if err != nil {
 		return fmt.Errorf("waiting for mint failed: %w", err)
 	}
@@ -192,28 +260,44 @@ func (c ethClient) checkTransaction(ctx context.Context, tx *types.Transaction) 
 }
 
 func (c *ethClient) updateGasLimit(ctx context.Context) error {
-	var err error
-	c.gasFeeCap, err = c.Client.SuggestGasPrice(ctx)
+	client, err := c.getClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	c.gasFeeCap, err = client.SuggestGasPrice(ctx)
 	if err != nil {
 		return fmt.Errorf("ethClient.updateGasLimit: gas price failed: %w", err)
 	}
 	log("ethClient.updateGasLimit gasFeeCap=%s", c.gasFeeCap)
 
-	c.gasTipCap, err = c.Client.SuggestGasTipCap(ctx)
+	c.gasTipCap, err = client.SuggestGasTipCap(ctx)
 	if err != nil {
 		return fmt.Errorf("ethClient.updateGasLimit: gas tip cap failed: %w", err)
 	}
 	log("ethClient.updateGasLimit gasTipCap=%s", c.gasTipCap)
+
 	return nil
 }
 
-func (c ethClient) hasBalance(addr common.Address) bool {
-	ctx := context.Background()
-	currBlock, err := c.BlockNumber(ctx)
-	check(err)
-
-	balance, err := c.BalanceAt(ctx, addr, big.NewInt(int64(currBlock)))
+func (c ethClient) hasBalance(ctx context.Context, addr common.Address) bool {
+	client, err := c.getClient(ctx)
 	if err != nil {
+		log("ethClient.hasBalance.getClient error=%s", err)
+		return false
+	}
+	defer client.Close()
+
+	currBlock, err := client.BlockNumber(ctx)
+	if err != nil {
+		log("ethClient.hasBalance.blockNo error=%s", err)
+		return false
+	}
+
+	balance, err := client.BalanceAt(ctx, addr, big.NewInt(int64(currBlock)))
+	if err != nil {
+		log("ethClient.hasBalance.balanceAt error=%s", err)
 		return false
 	}
 	log("ethClient balance=%d wallet=%s", balance.Int64(), addr.Hex())
@@ -221,8 +305,10 @@ func (c ethClient) hasBalance(addr common.Address) bool {
 	return balance.Int64() > 0
 }
 
-func (c ethClient) readRootHashForStore(storeID string) {
-	ctx := context.Background()
+/*
+func (c ethClient) readRootHashForStore(ctx context.Context, storeID string) {
+	storeReg, gethc, err := c.newStoreReg(ctx)
+
 	storeIDInt := new(big.Int)
 	_, ok := storeIDInt.SetString(strings.TrimPrefix(storeID, "0x"), 16)
 	if !ok {
@@ -250,7 +336,7 @@ func (c ethClient) readRootHashForStore(storeID string) {
 	fmt.Println("Current Relay Count: ", relayCount.Uint64())
 }
 
-/*
+
 func (c ethClient) updateRootHash(_ requestID, newRootHash []byte) error {
 	if len(newRootHash) != 32 {
 		return fmt.Errorf("invalid root hash length: %d", len(newRootHash))

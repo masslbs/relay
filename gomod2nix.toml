@@ -327,6 +327,9 @@ schema = 3
   [mod."github.com/spaolacci/murmur3"]
     version = "v1.1.0"
     hash = "sha256-RWD4PPrlAsZZ8Xy356MBxpj+/NZI7w2XOU14Ob7/Y9M="
+  [mod."github.com/ssgreg/repeat"]
+    version = "v1.5.1"
+    hash = "sha256-wz+eT56SyY0lcSOnJyZVbIBlzUX0ZeGwb5IjpMFf9Zw="
   [mod."github.com/stretchr/testify"]
     version = "v1.9.0"
     hash = "sha256-uUp/On+1nK+lARkTVtb5RxlW15zxtw2kaAFuIASA+J0="
