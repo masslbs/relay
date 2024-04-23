@@ -776,6 +776,9 @@ func validateRemoveFromTag(_ uint, event *RemoveFromTag) *Error {
 }
 
 func validateChangeStock(_ uint, event *ChangeStock) *Error {
+	if len(event.CartId) != 0 {
+		return &Error{Code: invalidErrorCode, Message: "CartId must be empty"}
+	}
 	if len(event.ItemIds) != len(event.Diffs) {
 		return &Error{Code: invalidErrorCode, Message: "ItemId and Diff must have the same length"}
 	}
@@ -4427,14 +4430,18 @@ func (r *Relay) run() {
 
 // Metric maps a name to a prometheus metric.
 type Metric struct {
-	name2gauge   map[string]prometheus.Gauge
-	name2counter map[string]prometheus.Counter
+	name2gauge      map[string]prometheus.Gauge
+	name2counter    map[string]prometheus.Counter
+	httpStatusCodes *prometheus.CounterVec
 }
 
 func newMetric() *Metric {
 	return &Metric{
 		name2gauge:   make(map[string]prometheus.Gauge),
 		name2counter: make(map[string]prometheus.Counter),
+		httpStatusCodes: promauto.NewCounterVec(prometheus.CounterOpts{
+			Name: "http_response_codes",
+		}, []string{"status", "path"}),
 	}
 }
 
@@ -4483,15 +4490,22 @@ func (m *Metric) counterAdd(name string, value float64) {
 
 // HTTP Handlers
 
-func sessionsHandleFunc(version uint, db *Relay) func(http.ResponseWriter, *http.Request) {
+func sessionsHandleFunc(version uint, r *Relay) func(http.ResponseWriter, *http.Request) {
 	log("relay.sessionsHandleFunc version=%d", version)
-	return func(w http.ResponseWriter, r *http.Request) {
-		conn, _, _, err := ws.UpgradeHTTP(r, w)
+	return func(w http.ResponseWriter, req *http.Request) {
+		conn, _, _, err := ws.UpgradeHTTP(req, w)
 		if err != nil {
+			code := http.StatusInternalServerError
+			if rej, ok := err.(*ws.ConnectionRejectedError); ok {
+				code = rej.StatusCode()
+			}
+			r.metric.httpStatusCodes.WithLabelValues(strconv.Itoa(code), req.URL.Path).Inc()
 			log("relay.upgradeError %+v", err)
 			return
 		}
-		sess := newSession(version, conn, db.ops, db.metric)
+		// bit of a misnomer, to set 201, but let's log it at least
+		r.metric.httpStatusCodes.WithLabelValues("201", req.URL.Path).Inc()
+		sess := newSession(version, conn, r.ops, r.metric)
 		startOp := &StartOp{sessionID: sess.id, sessionVersion: version, sessionOps: sess.ops}
 		sess.sendDatabaseOp(startOp)
 		sess.run()
@@ -4574,10 +4588,11 @@ func uploadBlobHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.Requ
 
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]any{"ipfs_path": uploadedCid.String(), "url": "https://cloudflare-ipfs.com" + uploadedCid.String()})
-		return 0, nil
+		return http.StatusCreated, nil
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		code, err := fn(w, req)
+		r.metric.httpStatusCodes.WithLabelValues(strconv.Itoa(code), req.URL.Path).Inc()
 		if err != nil {
 			jsonEnc := json.NewEncoder(w)
 			log("relay.blobUploadHandler err=%s", err)
@@ -4644,10 +4659,11 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 				userWallet:       userWallet,
 			}
 		}()
-		return 0, nil
+		return http.StatusCreated, nil
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		code, err := fn(w, req)
+		r.metric.httpStatusCodes.WithLabelValues(strconv.Itoa(code), req.URL.Path).Inc()
 		if err != nil {
 			jsonEnc := json.NewEncoder(w)
 			log("relay.enrollKeyCard err=%s", err)
@@ -4658,23 +4674,25 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 	}
 }
 
-func healthHandleFunc(syncPool *pgxpool.Pool) func(http.ResponseWriter, *http.Request) {
+func healthHandleFunc(r *Relay) func(http.ResponseWriter, *http.Request) {
 	log("relay.healthHandleFunc")
-	return func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, req *http.Request) {
 		start := now()
 		log("relay.health.start")
 		ctx := context.Background()
 		var res int
-		err := syncPool.QueryRow(ctx, `select 1`).Scan(&res)
+		err := r.connPool.QueryRow(ctx, `select 1`).Scan(&res)
 		if err != nil {
 			log("relay.health.dbs.fail")
 			w.WriteHeader(500)
+			r.metric.httpStatusCodes.WithLabelValues("500", req.URL.Path).Inc()
 			fmt.Fprintln(w, "database unavailable")
 			return
 		}
 
 		log("relay.health.pass")
 		fmt.Fprintln(w, "health OK")
+		r.metric.httpStatusCodes.WithLabelValues("200", req.URL.Path).Inc()
 		log("relay.health.finish elapsed=%d", took(start))
 	}
 }
@@ -4735,9 +4753,7 @@ func server() {
 
 	mux := http.NewServeMux()
 
-	// We expect some of these endpoints to be accessed only from sync* or
-	// share* DNS endpoints, but don't worry right now about limiting
-	// access by hostname.
+	// Public APIs
 
 	for _, v := range networkVersions {
 		mux.HandleFunc(fmt.Sprintf("/v%d/sessions", v), sessionsHandleFunc(v, r))
@@ -4746,8 +4762,8 @@ func server() {
 		mux.HandleFunc(fmt.Sprintf("/v%d/upload_blob", v), uploadBlobHandleFunc(v, r))
 	}
 
-	// Internal engineering APIs.
-	mux.HandleFunc("/health", healthHandleFunc(r.connPool))
+	// Internal engineering APIs
+	mux.HandleFunc("/health", healthHandleFunc(r))
 
 	corsOpts := cors.Options{
 		AllowedOrigins: []string{"*"},
