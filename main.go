@@ -64,6 +64,8 @@ const tickBlockThreshold = 50 * time.Millisecond
 const memoryStatsInterval = 5 * time.Second
 const databaseOpsChanSize = 64 * 1024
 
+const maxItemMedataBytes = 5 * 1024
+
 // const s3SignatureTimeout = 5 * 60 * 24 * time.Minute
 const sentryFlushTimeout = 2 * time.Second
 const emitUptimeInterval = 10 * time.Second
@@ -441,6 +443,7 @@ func (sess *Session) writeMessage(om Message) {
 	}
 	sess.metric.counterAdd("sessions_messages_write", 1)
 	sess.metric.counterAdd("sessions_messages_write_bytes", float64(len(bytes)))
+	sess.metric.counterAdd(fmt.Sprintf("sessions_messages_write_type_%s", typeType.Name()), 1)
 }
 
 func (sess *Session) handleMessage(im InMessage) {
@@ -708,6 +711,9 @@ func validateCreateItem(_ uint, event *CreateItem) *Error {
 	if !json.Valid(event.Metadata) {
 		errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid metadata"})
 	}
+	if len(event.Metadata) > maxItemMedataBytes {
+		errs = append(errs, &Error{Code: invalidErrorCode, Message: "Too much metadata"})
+	}
 	return coalesce(errs...)
 }
 
@@ -730,6 +736,8 @@ func validateUpdateItem(_ uint, event *UpdateItem) *Error {
 			errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid value type for price"})
 		} else if !json.Valid(v.Metadata) {
 			errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid metadata"})
+		} else if len(v.Metadata) > maxItemMedataBytes {
+			errs = append(errs, &Error{Code: invalidErrorCode, Message: "Too much metadata"})
 		}
 	default:
 		errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid update field"})
