@@ -13,7 +13,7 @@ func (evt *Event) typeAndTypedDataMap() (string, map[string]any) {
 	var unwrapped typedDataMaper
 	var name string
 	switch union := evt.Union.(type) {
-
+	
 	case *Event_AddToTag:
 		name = "AddToTag"
 		unwrapped = union.AddToTag
