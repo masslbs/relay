@@ -46,6 +46,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
+	"github.com/ssgreg/repeat"
 	"golang.org/x/crypto/sha3"
 	"google.golang.org/protobuf/proto"
 )
@@ -57,17 +58,16 @@ const sessionLastSeenAtFlushLimit = 30 * time.Second
 const sessionLastAckedstoreSeqFlushLimit = 4096
 const sessionBufferSizeRefill = limitMaxOutRequests * limitMaxOutBatchSize
 const sessionBufferSizeMax = limitMaxOutRequests * limitMaxOutBatchSize * 2
+const watcherTimeout = 5 * time.Second
 const databaseDebounceInterval = 100 * time.Millisecond
-const newEthereumBlockInterval = 5 * time.Second
 const tickStatsInterval = 1 * time.Second
 const tickBlockThreshold = 50 * time.Millisecond
 const memoryStatsInterval = 5 * time.Second
+const ethereumBlockInterval = 15 * time.Second
 const databaseOpsChanSize = 64 * 1024
 
 const maxItemMedataBytes = 5 * 1024
 
-// const s3SignatureTimeout = 5 * 60 * 24 * time.Minute
-const sentryFlushTimeout = 2 * time.Second
 const emitUptimeInterval = 10 * time.Second
 
 // set by build script via ldflags
@@ -293,6 +293,15 @@ type KeyCardEnrolledInternalOp struct {
 	storeID          eventID
 	keyCardPublicKey []byte
 	userWallet       common.Address
+}
+
+type PaymentFoundInternalOp struct {
+	cartID eventID
+	txHash common.Hash
+
+	// transaction, cartID, etc.
+
+	done chan struct{}
 }
 
 // App/Client Sessions
@@ -2328,8 +2337,19 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 
 			erc20TokenAddr := tv.UpdateManifest.GetErc20Addr()
 
-			tokenCaller, err := NewERC20Caller(common.Address(erc20TokenAddr), r.ethClient)
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
+
+			gethClient, err := r.ethClient.getClient(ctx)
 			if err != nil {
+				log("relay.checkWrite.failedToGetClient err=%s", err)
+				return &Error{Code: invalidErrorCode, Message: "internal server error"}
+			}
+			defer gethClient.Close()
+
+			tokenCaller, err := NewERC20Caller(common.Address(erc20TokenAddr), gethClient)
+			if err != nil {
+				log("relay.checkWrite.newERC20Caller err=%s", err)
 				return &Error{Code: invalidErrorCode, Message: "failed to create token caller"}
 			}
 			decimalCount, err := tokenCaller.Decimals(callOpts)
@@ -2658,6 +2678,15 @@ func (op *CommitCartOp) process(r *Relay) {
 		usignErc20     = len(op.im.Erc20Addr) == 20
 		erc20TokenAddr common.Address
 	)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	gethClient, err := r.ethClient.getClient(ctx)
+	if err != nil {
+		logSR("relay.commitCartOp.failedToGetGethClient err=%s", sessionID, requestID, err.Error())
+		op.err = &Error{Code: invalidErrorCode, Message: "internal server error"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
 
 	callOpts := &bind.CallOpts{
 		Pending: false,
@@ -2681,7 +2710,7 @@ func (op *CommitCartOp) process(r *Relay) {
 
 		// get decimals count of this contract
 		// TODO: since this is a contract constant we could cache it when adding the token
-		tokenCaller, err := NewERC20Caller(erc20TokenAddr, r.ethClient)
+		tokenCaller, err := NewERC20Caller(erc20TokenAddr, gethClient)
 		if err != nil {
 			logSR("relay.commitCartOp.failedToCreateERC20Caller err=%s", sessionID, requestID, err.Error())
 			op.err = &Error{Code: invalidErrorCode, Message: "failed to create erc20 caller"}
@@ -2710,20 +2739,38 @@ func (op *CommitCartOp) process(r *Relay) {
 	copy(receiptHash[:], hasher.Sum(cart.cartID))
 
 	bigStoreTokenID := new(big.Int).SetBytes(store.storeTokenID)
-	ownerAddr, err := r.ethClient.stores.OwnerOf(callOpts, bigStoreTokenID)
+
+	storeReg, err := NewRegStoreCaller(r.ethClient.contractAddresses.StoreRegistry, gethClient)
 	if err != nil {
-		op.err = &Error{Code: invalidErrorCode, Message: "failed to establish store owner"}
+		logSR("relay.commitCartOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
+		op.err = &Error{Code: invalidErrorCode, Message: "failed to create store registry caller"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
-	purchaseAddr, err := r.ethClient.paymentFactory.GetPaymentAddress(callOpts, ownerAddr, proof, bigTotal, etherCurrency, receiptHash)
+	ownerAddr, err := storeReg.OwnerOf(callOpts, bigStoreTokenID)
+	if err != nil {
+		logSR("relay.commitCartOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
+		op.err = &Error{Code: invalidErrorCode, Message: "failed to get store owner"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
+	factory, err := NewPaymentFactoryCaller(r.ethClient.contractAddresses.PaymentFactory, gethClient)
+	if err != nil {
+		logSR("relay.commitCartOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
+		op.err = &Error{Code: invalidErrorCode, Message: "failed to get store owner"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
+	purchaseAddr, err := factory.GetPaymentAddress(callOpts, ownerAddr, proof, bigTotal, etherCurrency, receiptHash)
 	if err != nil {
 		op.err = &Error{Code: invalidErrorCode, Message: "failed to create payment address"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
-	blockNo, err := r.ethClient.BlockNumber(context.Background())
+	blockNo, err := gethClient.BlockNumber(context.Background())
 	if err != nil {
 		op.err = &Error{Code: invalidErrorCode, Message: "failed to get block number"}
 		r.sendSessionOp(sessionState, op)
@@ -2867,6 +2914,54 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 	r.writeEvent(evt, meta)
 	r.commitSyncTransaction()
 	log("db.KeyCardEnrolledOp.finish storeId=%s took=%d", op.storeID, took(start))
+}
+
+func (op *PaymentFoundInternalOp) getSessionID() requestID { panic("not implemented") }
+func (op *PaymentFoundInternalOp) setErr(_ *Error)         { panic("not implemented") }
+
+func (op *PaymentFoundInternalOp) process(r *Relay) {
+	cart, has := r.cartsByCartID.get(op.cartID)
+	assertWithMessage(has, fmt.Sprintf("cart not found for cartId=%s", op.cartID))
+
+	log("db.paymentFoundInternalOp.start cartID=%s", op.cartID)
+	start := now()
+
+	r.beginSyncTransaction()
+
+	const markCartAsPayedQuery = `UPDATE payments SET cartPayedAt = NOW(), cartPayedTx = $1 WHERE cartId = $2;`
+	_, err := r.syncTx.Exec(context.Background(), markCartAsPayedQuery, op.txHash.Bytes(), op.cartID)
+	check(err)
+
+	meta := CachedMetadata{
+		createdByKeyCardID:      relayKeyCardID,
+		createdByStoreID:        cart.createdByStoreID,
+		createdByNetworkVersion: 1,
+	}
+	r.hydrateStores(NewSetEventIds(cart.createdByStoreID))
+	// emit changeStock event
+	cs := &ChangeStock{
+		EventId: newEventID(),
+		CartId:  op.cartID,
+		TxHash:  op.txHash.Bytes(),
+	}
+
+	// fill diff
+	i := 0
+	cs.ItemIds = make([][]byte, cart.items.Size())
+	cs.Diffs = make([]int32, cart.items.Size())
+	cart.items.All(func(itemId eventID, quantity int32) {
+		cs.ItemIds[i] = itemId
+		cs.Diffs[i] = -quantity
+		i++
+	})
+
+	evt := &Event{Union: &Event_ChangeStock{ChangeStock: cs}}
+	err = r.ethClient.eventSign(evt)
+	check(err) // fatal code error
+	r.writeEvent(evt, meta)
+	r.commitSyncTransaction()
+	log("db.paymentFoundInternalOp.finish cartID=%s took=%d", op.cartID, took(start))
+	close(op.done)
 }
 
 // Database processing
@@ -3689,7 +3784,7 @@ order by storeSeq asc limit $4`
 				)
 				check(err)
 				reads++
-				log("relay.debounceSessions.debug event=%x", eventState.eventID)
+				// log("relay.debounceSessions.debug event=%x", eventState.eventID)
 				switch eventState.eventType {
 				case eventTypeStoreManifest:
 					assert(storeTokenID != nil)
@@ -3864,8 +3959,7 @@ order by storeSeq asc limit $4`
 			}
 
 			logS(sessionId, "relay.debounceSessions.read storeId=%s reads=%d readsAllowed=%d bufferLen=%d lastWrittenStoreSeq=%d, lastBufferedstoreSeq=%d elapsed=%d", sessionState.storeID, reads, readsAllowed, len(sessionState.buffer), seqPair.lastWrittenStoreSeq, sessionState.lastBufferedStoreSeq, took(readStart))
-			r.metric.emit("relay.events.read", uint64(reads))
-
+			r.metric.counterAdd("relay_events_read", float64(reads))
 		}
 		r.assertCursors(sessionId, seqPair, sessionState)
 
@@ -3960,18 +4054,20 @@ var (
 	bigOne  = big.NewInt(1)
 )
 
-func (r *Relay) watchEthereumPayments() {
+func (r *Relay) watchEthereumPayments() error {
 	log("relay.watchEthereumPayments.start")
 
 	var (
 		start = now()
-		ctx   = context.Background()
 
 		// this is the block iterator
 		lowestLastBlock = new(big.Int)
 
 		waiters = make(map[common.Address]PaymentWaiter)
 	)
+
+	ctx, cancel := context.WithDeadline(context.Background(), start.Add(watcherTimeout))
+	defer cancel()
 
 	openPaymentsQry := `SELECT waiterId, cartId, cartFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal
 	FROM payments
@@ -4003,17 +4099,22 @@ func (r *Relay) watchEthereumPayments() {
 
 	if len(waiters) == 0 {
 		log("relay.watchEthereumPayments.noOpenPayments took=%d", took(start))
-		return
+		return nil
 	}
 
 	log("relay.watchEthereumPayments.dbRead elapsed=%d waiters=%d lowestLastBlock=%s", took(start), len(waiters), lowestLastBlock)
 
+	// make geth client
+	gethClient, err := r.ethClient.getClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer gethClient.Close()
+
 	// Get the latest block number
-	currentBlockNoInt, err := r.ethClient.BlockNumber(ctx)
+	currentBlockNoInt, err := gethClient.BlockNumber(ctx)
 	check(err)
 	currentBlockNo := big.NewInt(int64(currentBlockNoInt))
-
-	r.beginSyncTransaction()
 
 	for {
 		if currentBlockNo.Cmp(lowestLastBlock) == -1 {
@@ -4022,9 +4123,10 @@ func (r *Relay) watchEthereumPayments() {
 			break
 		}
 		// check each block for transactions
-		block, err := r.ethClient.BlockByNumber(ctx, lowestLastBlock)
+		block, err := gethClient.BlockByNumber(ctx, lowestLastBlock)
 		if err != nil {
-			check(fmt.Errorf("relay.watchEthereumPayments.failedToGetBlock block=%s err=%s", lowestLastBlock, err))
+
+			return fmt.Errorf("relay.watchEthereumPayments.failedToGetBlock block=%s err=%s", lowestLastBlock, err)
 		}
 
 		for _, tx := range block.Transactions() {
@@ -4036,15 +4138,8 @@ func (r *Relay) watchEthereumPayments() {
 			if has {
 				log("relay.watchEthereumPayments.checkTx waiter.lastBlockNo=%s checkingBlock=%s tx=%s to=%s", waiter.lastBlockNo.String(), block.Number().String(), tx.Hash().String(), tx.To().String())
 				cartID := waiter.cartID
-				cart, has := r.cartsByCartID.get(cartID)
+				// cart, has := r.cartsByCartID.get(cartID)
 				assertWithMessage(has, fmt.Sprintf("cart not found for cartId=%s", cartID))
-
-				meta := CachedMetadata{
-					createdByKeyCardID:      relayKeyCardID,
-					createdByStoreID:        cart.createdByStoreID,
-					createdByNetworkVersion: 1,
-				}
-				r.hydrateStores(NewSetEventIds(cart.createdByStoreID))
 
 				// found a transaction to the purchase address
 				// check if it's the right amount
@@ -4053,32 +4148,13 @@ func (r *Relay) watchEthereumPayments() {
 				if waiter.coinsPayed.Cmp(&waiter.coinsTotal.Int) != -1 {
 					// it is larger or equal
 
-					// emit changeStock event
-					cs := &ChangeStock{
-						EventId: newEventID(),
-						CartId:  cartID,
-						TxHash:  tx.Hash().Bytes(),
+					op := PaymentFoundInternalOp{
+						cartID: cartID,
+						txHash: tx.Hash(),
+						done:   make(chan struct{}),
 					}
-
-					// fill diff
-					i := 0
-					cs.ItemIds = make([][]byte, cart.items.Size())
-					cs.Diffs = make([]int32, cart.items.Size())
-					cart.items.All(func(itemId eventID, quantity int32) {
-						cs.ItemIds[i] = itemId
-						cs.Diffs[i] = -quantity
-						i++
-					})
-
-					evt := &Event{Union: &Event_ChangeStock{ChangeStock: cs}}
-					err = r.ethClient.eventSign(evt)
-					check(err)
-					r.writeEvent(evt, meta)
-
-					// update DB state
-					const markCartAsPayedQuery = `UPDATE payments SET cartPayedAt = NOW(), cartPayedTx = $1 WHERE cartId = $2;`
-					_, err := r.syncTx.Exec(ctx, markCartAsPayedQuery, tx.Hash().Bytes(), cartID)
-					check(err)
+					r.opsInternal <- &op
+					<-op.done // wait for write
 
 					delete(waiters, waiter.purchaseAddr)
 					log("relay.watchEthereumPayments.completed cartId=%s", cartID)
@@ -4087,8 +4163,8 @@ func (r *Relay) watchEthereumPayments() {
 					log("relay.watchEthereumPayments.partial cartId=%s inTx=%s subTotal=%s", cartID, inTx.String(), waiter.coinsPayed.String())
 					// update subtotal
 					const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE cartId = $2;`
-					_, err := r.syncTx.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, cartID)
-					check(err)
+					_, err := r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, cartID)
+					check(err) // cant recover sql errors
 				}
 			}
 		}
@@ -4101,7 +4177,7 @@ func (r *Relay) watchEthereumPayments() {
 			waiter.lastBlockNo.Add(&waiter.lastBlockNo.Int, bigOne)
 			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = lastBlockNo + 1 WHERE cartId = $1;`
 			cartID := waiter.cartID
-			_, err = r.syncTx.Exec(ctx, updateLastBlockNoQuery, cartID)
+			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, cartID)
 			check(err)
 			log("relay.watchEthereumPayments.advance cartId=%x newLastBlock=%s", cartID, waiter.lastBlockNo.String())
 		}
@@ -4109,21 +4185,19 @@ func (r *Relay) watchEthereumPayments() {
 		lowestLastBlock.Add(lowestLastBlock, bigOne)
 	}
 
-	r.commitSyncTransaction()
-
 	stillWaiting := len(waiters)
 	log("relay.watchEthereumPayments.finish elapsed=%d openWaiters=%d", took(start), stillWaiting)
 	r.metric.emit("relay_payments_eth_open", uint64(stillWaiting))
+	return nil
 }
 
 var transferSignatureErc20 = crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)"))
 
-func (r *Relay) watchErc20Payments() {
+func (r *Relay) watchErc20Payments() error {
 	log("relay.watchErc20Payments.start")
 
 	var (
 		start = now()
-		ctx   = context.Background()
 
 		// this is the block iterator
 		lowestLastBlock = new(big.Int)
@@ -4131,6 +4205,15 @@ func (r *Relay) watchErc20Payments() {
 		waiters         = make(map[common.Hash]PaymentWaiter)
 		erc20AddressSet = make(map[common.Address]struct{})
 	)
+
+	ctx, cancel := context.WithDeadline(context.Background(), start.Add(watcherTimeout))
+	defer cancel()
+
+	gethClient, err := r.ethClient.getClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer gethClient.Close()
 
 	openPaymentsQry := `SELECT waiterId, cartId, cartFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr
 		FROM payments
@@ -4166,12 +4249,15 @@ func (r *Relay) watchErc20Payments() {
 
 	if len(waiters) == 0 {
 		log("relay.watchErc20Payments.noOpenPayments took=%d", took(start))
-		return
+		return nil
 	}
 
 	// Get the latest block number.
-	currentBlockNoInt, err := r.ethClient.BlockNumber(ctx)
-	check(err)
+	currentBlockNoInt, err := gethClient.BlockNumber(ctx)
+	if err != nil {
+		return fmt.Errorf("relay.watchErc20Payments.blockNumber err=%s", err)
+	}
+
 	log("relay.watchErc20Payments.starting currentBlock=%d", currentBlockNoInt)
 	currentBlockNo := big.NewInt(int64(currentBlockNoInt))
 
@@ -4182,9 +4268,6 @@ func (r *Relay) watchErc20Payments() {
 		copy(erc20Addresses[i][:], addr[:])
 		i++
 	}
-
-	timeoutCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
-	defer cancel()
 
 	qry := ethereum.FilterQuery{
 		Addresses: erc20Addresses,
@@ -4197,10 +4280,13 @@ func (r *Relay) watchErc20Payments() {
 			// https://dave-appleton.medium.com/overcoming-ethclients-filter-restrictions-81e232a8eccd
 		},
 	}
-	logs, err := r.ethClient.FilterLogs(timeoutCtx, qry)
-	check(err)
-
-	r.beginSyncTransaction()
+	logs, err := gethClient.FilterLogs(ctx, qry)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil // possibly no new block, dont try again immediatly
+		}
+		return err
+	}
 
 	// iterate over all matching logs of events from that erc20 contract with the transfer signature
 	for _, vLog := range logs {
@@ -4214,15 +4300,8 @@ func (r *Relay) watchErc20Payments() {
 			// We found a transfer to our address!
 			cartID := waiter.cartID
 
-			cart, has := r.cartsByCartID.get(cartID)
+			_, has := r.cartsByCartID.get(cartID)
 			assertWithMessage(has, fmt.Sprintf("cart not found for cartId=%s", cartID))
-
-			meta := CachedMetadata{
-				createdByKeyCardID:      relayKeyCardID,
-				createdByStoreID:        cart.createdByStoreID,
-				createdByNetworkVersion: 1,
-			}
-			r.hydrateStores(NewSetEventIds(cart.createdByStoreID))
 
 			evts, err := r.ethClient.erc20ContractABI.Unpack("Transfer", vLog.Data)
 			if err != nil {
@@ -4238,31 +4317,14 @@ func (r *Relay) watchErc20Payments() {
 			if waiter.coinsPayed.Cmp(&waiter.coinsTotal.Int) != -1 {
 				// it is larger or equal
 
-				const markCartAsPayedQuery = `UPDATE payments SET cartPayedAt = NOW(), cartPayedTx = $1 WHERE cartId = $2;`
-				_, err := r.syncTx.Exec(ctx, markCartAsPayedQuery, vLog.TxHash.Bytes(), cartID)
-				check(err)
-
-				// emit changeStock
-				cs := &ChangeStock{
-					EventId: newEventID(),
-					CartId:  cartID,
-					TxHash:  toHash.Bytes(),
+				op := PaymentFoundInternalOp{
+					cartID: cartID,
+					txHash: vLog.TxHash,
+					done:   make(chan struct{}),
 				}
+				r.opsInternal <- &op
+				<-op.done
 
-				// fill diff
-				i := 0
-				cs.ItemIds = make([][]byte, cart.items.Size())
-				cs.Diffs = make([]int32, cart.items.Size())
-				cart.items.All(func(itemId eventID, quantity int32) {
-					cs.ItemIds[i] = itemId
-					cs.Diffs[i] = -quantity
-					i++
-				})
-
-				evt := &Event{Union: &Event_ChangeStock{ChangeStock: cs}}
-				err = r.ethClient.eventSign(evt)
-				check(err)
-				r.writeEvent(evt, meta)
 				delete(waiters, toHash)
 				log("relay.watchErc20Payments.completed cartId=%s", cartID)
 
@@ -4271,7 +4333,7 @@ func (r *Relay) watchErc20Payments() {
 				log("relay.watchErc20Payments.partial cartId=%s inTx=%s subTotal=%s", cartID, inTx.String(), waiter.coinsPayed.String())
 				// update subtotal
 				const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE cartId = $2;`
-				_, err = r.syncTx.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, cartID)
+				_, err = r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, cartID)
 				check(err)
 			}
 		}
@@ -4282,16 +4344,16 @@ func (r *Relay) watchErc20Payments() {
 			}
 			// move up block number
 			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = $2 WHERE cartId = $1;`
-			_, err = r.syncTx.Exec(ctx, updateLastBlockNoQuery, waiter.cartID, currentBlockNo.String())
+			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, waiter.cartID, currentBlockNo.String())
 			check(err)
 			log("relay.watchErc20Payments.advance cartId=%x newLastBlock=%s", waiter.cartID, waiter.lastBlockNo.String())
 		}
 	}
 
-	r.commitSyncTransaction()
 	stillWaiting := len(waiters)
 	log("relay.watchErc20Payments.finish elapsed=%d openWaiters=%d", took(start), stillWaiting)
 	r.metric.emit("relay_payments_erc20_open", uint64(stillWaiting))
+	return nil
 }
 
 func (r *Relay) memoryStats() {
@@ -4309,10 +4371,12 @@ func (r *Relay) memoryStats() {
 	for version, versionCount := range sessionVersionCounts {
 		r.metric.emit(fmt.Sprintf("sessions.active.version.%d", version), versionCount)
 	}
-	r.metric.emit("relay.stores.cached", uint64(r.storeIdsToStoreSeqs.Size()))
+	r.metric.emit("relay.cached.stores", uint64(r.storeIdsToStoreSeqs.Size()))
 
 	r.metric.emit("relay.ops.queued", uint64(len(r.ops)))
-	// r.metric.emit("relay.events.cached", uint64(r.eventsById.loaded.Size()))
+
+	r.metric.emit("relay.cached.items", uint64(r.itemsByItemID.loaded.Size()))
+	r.metric.emit("relay.cached.carts", uint64(r.cartsByCartID.loaded.Size()))
 
 	// Go runtime memory information
 	var runtimeMemory runtime.MemStats
@@ -4368,7 +4432,6 @@ func (r *Relay) run() {
 
 	debounceSessionsTimer := NewReusableTimer(databaseDebounceInterval)
 	memoryStatsTimer := NewReusableTimer(memoryStatsInterval)
-	paymentWatcherTimer := NewReusableTimer(newEthereumBlockInterval)
 	tickStatsTimer := NewReusableTimer(tickStatsInterval)
 
 	tickTypeToElapseds := make(map[tickType]time.Duration, len(allTickTypes))
@@ -4403,12 +4466,6 @@ func (r *Relay) run() {
 			tickType, tickSelected = timeTick(ttMemoryStats)
 			r.memoryStats()
 			memoryStatsTimer.Rewind()
-
-		case <-paymentWatcherTimer.C:
-			tickType, tickSelected = timeTick(ttPaymentWatcher)
-			r.watchEthereumPayments()
-			r.watchErc20Payments()
-			paymentWatcherTimer.Rewind()
 
 		case <-tickStatsTimer.C:
 			tickType, tickSelected = timeTick(ttTickStats)
@@ -4635,15 +4692,24 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			return http.StatusForbidden, fmt.Errorf("invalid signature: %w", err)
 		}
 
+		ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
+		defer cancel()
+
+		storeReg, gethClient, err := r.ethClient.newStoreReg(ctx)
+		if err != nil {
+			return http.StatusInternalServerError, fmt.Errorf("contract call error: %w", err)
+		}
+		defer gethClient.Close()
+
 		opts := &bind.CallOpts{
 			Pending: false,
 			From:    r.ethClient.wallet,
-			Context: req.Context(),
+			Context: ctx,
 		}
 		var bigTokenID big.Int
 		bigTokenID.SetBytes(data.StoreTokenID)
 
-		has, err := r.ethClient.stores.HasAtLeastAccess(opts, &bigTokenID, userWallet, 1)
+		has, err := storeReg.HasAtLeastAccess(opts, &bigTokenID, userWallet, 1)
 		if err != nil {
 			return http.StatusInternalServerError, fmt.Errorf("contract call error: %w", err)
 		}
@@ -4752,6 +4818,51 @@ func server() {
 	r.connect()
 	r.writesEnabled = true
 	go r.run()
+
+	go func() {
+		for {
+			op := func() error {
+				err := r.watchEthereumPayments()
+				if err != nil {
+					log("relay.run.watchEthereumPayments.error %+v", err)
+					return repeat.HintTemporary(err)
+				}
+				return nil
+			}
+
+			err := repeat.Repeat(repeat.Fn(op),
+				repeat.LimitMaxTries(10),
+				repeat.StopOnSuccess(),
+			)
+			if err != nil {
+				r.metric.counterAdd("relay_watchError_error", 1)
+			}
+			// sleep 5 second plus sum jitter
+			time.Sleep(ethereumBlockInterval/2 + time.Duration(rand.Intn(1000))*time.Millisecond)
+		}
+	}()
+
+	go func() {
+		for {
+			op := func() error {
+				err := r.watchErc20Payments()
+				if err != nil {
+					log("relay.watchErc20Payments.error %+v", err)
+					return repeat.HintTemporary(err)
+				}
+				return nil
+			}
+			err := repeat.Repeat(repeat.Fn(op),
+				repeat.LimitMaxTries(10),
+				repeat.StopOnSuccess(),
+			)
+			if err != nil {
+				r.metric.counterAdd("relay_watchError_error", 1)
+			}
+			// sleep 5 second plus sum jitter
+			time.Sleep(ethereumBlockInterval/2 + time.Duration(rand.Intn(1000))*time.Millisecond)
+		}
+	}()
 
 	// open metrics and pprof after relay & ethclient booted
 	openPProfEndpoint()

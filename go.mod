@@ -12,6 +12,7 @@ require (
 	github.com/cockroachdb/apd v1.1.0
 	github.com/ethereum/go-ethereum v1.13.11
 	github.com/gobwas/ws v1.3.1
+	github.com/gorilla/websocket v1.5.1
 	github.com/ipfs/boxo v0.19.0
 	github.com/ipfs/kubo v0.26.0
 	github.com/jackc/pgx/v4 v4.18.1
@@ -19,6 +20,7 @@ require (
 	github.com/multiformats/go-multiaddr v0.12.3
 	github.com/prometheus/client_golang v1.19.0
 	github.com/rs/cors v1.10.1
+	github.com/ssgreg/repeat v1.5.1
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/crypto v0.20.0
 	google.golang.org/protobuf v1.32.0
@@ -51,7 +53,6 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/gopacket v1.1.19 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.1 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
