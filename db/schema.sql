@@ -84,9 +84,9 @@ alter table events add constraint eventsStoreManifestCheck check (eventType != '
 alter table events add constraint eventsUpdateManifestCheck check (eventType != 'updateManifest' OR
   (manifestUpdateField is not null AND (string is not null OR (referencedEventId is not null AND octet_length(referencedEventId) = 32) OR (addr is not null AND octet_length(addr) = 20))));
 alter table events add constraint eventsCreateItemCheck check (eventType != 'createItem' OR
-  (itemId is not null AND price is not null AND metadata is not null));
+  (itemId is not null AND price is not null AND metadata is not null AND octet_length(metadata) < 5*1024));
 alter table events add constraint eventsUpdateItemCheck check (eventType != 'updateItem' OR
-  (itemId is not null AND itemUpdateField is not null AND (price is not null OR metadata is not null)));
+  (itemId is not null AND itemUpdateField is not null AND (price is not null OR (metadata is not null AND octet_length(metadata) < 5*1024))));
 alter table events add constraint eventsCreateTagCheck check (eventType != 'createTag' OR
   (tagId is not null AND name is not null));
 alter table events add constraint eventsAddToTagCheck check (eventType != 'addToTag' OR
