@@ -22,31 +22,31 @@ const limitMaxBlobSize = 1048576
 
 // file: db/schema.sql
 type eventType string
-
 const (
-	eventTypeInvalid        eventType = "invalid"
-	eventTypeStoreManifest  eventType = "storeManifest"
+	eventTypeInvalid eventType = "invalid"
+	eventTypeStoreManifest eventType = "storeManifest"
 	eventTypeUpdateManifest eventType = "updateManifest"
-	eventTypeCreateItem     eventType = "createItem"
-	eventTypeUpdateItem     eventType = "updateItem"
-	eventTypeCreateTag      eventType = "createTag"
-	eventTypeAddToTag       eventType = "addToTag"
-	eventTypeRemoveFromTag  eventType = "removeFromTag"
-	eventTypeRenameTag      eventType = "renameTag"
-	eventTypeDeleteTag      eventType = "deleteTag"
-	eventTypeCreateCart     eventType = "createCart"
-	eventTypeChangeCart     eventType = "changeCart"
-	eventTypeCartFinalized  eventType = "cartFinalized"
-	eventTypeCartAbandoned  eventType = "cartAbandoned"
-	eventTypeChangeStock    eventType = "changeStock"
-	eventTypeNewKeyCard     eventType = "newKeyCard"
+	eventTypeCreateItem eventType = "createItem"
+	eventTypeUpdateItem eventType = "updateItem"
+	eventTypeCreateTag eventType = "createTag"
+	eventTypeAddToTag eventType = "addToTag"
+	eventTypeRemoveFromTag eventType = "removeFromTag"
+	eventTypeRenameTag eventType = "renameTag"
+	eventTypeDeleteTag eventType = "deleteTag"
+	eventTypeCreateCart eventType = "createCart"
+	eventTypeChangeCart eventType = "changeCart"
+	eventTypeCartFinalized eventType = "cartFinalized"
+	eventTypeCartAbandoned eventType = "cartAbandoned"
+	eventTypeChangeStock eventType = "changeStock"
+	eventTypeNewKeyCard eventType = "newKeyCard"
+	
 )
 
 // Value implements the driver.Valuer interface.
 func (mv UpdateManifest_ManifestField) Value() (driver.Value, error) {
 	switch mv {
-	// TODO: use UpdateManifest_MANIFEST_FIELD_* instead of numbers
-
+		// TODO: use UpdateManifest_MANIFEST_FIELD_* instead of numbers
+	
 	case 1:
 		return "domain", nil
 	case 2:
@@ -69,7 +69,7 @@ func (mv *UpdateManifest_ManifestField) Scan(src interface{}) error {
 	}
 	switch tv {
 	// TODO: use UpdateManifest_MANIFEST_FIELD_* instead of numbers
-
+	
 	case "domain":
 		*mv = 1
 	case "paymentAddr":
@@ -89,8 +89,8 @@ func (mv *UpdateManifest_ManifestField) Scan(src interface{}) error {
 // Value implements the driver.Valuer interface.
 func (mv UpdateItem_ItemField) Value() (driver.Value, error) {
 	switch mv {
-	// TODO: use UpdateItem_ITEM_FIELD* instead of numbers
-
+		// TODO: use UpdateItem_ITEM_FIELD* instead of numbers
+	
 	case 1:
 		return "price", nil
 	case 2:
@@ -107,7 +107,7 @@ func (mv *UpdateItem_ItemField) Scan(src interface{}) error {
 	}
 	switch tv {
 	// TODO: use UpdateItem_ITEM_FIELD* instead of numbers
-
+	
 	case "price":
 		*mv = 1
 	case "metadata":
@@ -117,3 +117,4 @@ func (mv *UpdateItem_ItemField) Scan(src interface{}) error {
 	}
 	return nil
 }
+

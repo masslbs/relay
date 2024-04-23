@@ -10,15 +10,16 @@
         "utils": "utils"
       },
       "locked": {
-        "lastModified": 1712047431,
-        "narHash": "sha256-ZtwlB8m3iS3pvblaOIPDahm9cU53nxPABwXaNhAaV9Y=",
+        "lastModified": 1710538325,
+        "narHash": "sha256-OvBZ++L5fAuQPw6vtg7odNTWP59Dedh9Oih11YNZlDI=",
         "owner": "masslbs",
         "repo": "contracts",
-        "rev": "dfca5599fdf0e533fb6aebeceb379122332fe8a3",
+        "rev": "0e94bf93940307b97b8db21d8ecde30da9f087e6",
         "type": "github"
       },
       "original": {
         "owner": "masslbs",
+        "ref": "access-control",
         "repo": "contracts",
         "type": "github"
       }
