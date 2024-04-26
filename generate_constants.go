@@ -26,19 +26,12 @@ type Constants struct {
 }
 
 type FromSQL struct {
-	EventTypes   []EventTypes
-	ManifestEnum []EnumValue
-	ItemEnum     []EnumValue
+	EventTypes []EventTypes
 }
 
 type EventTypes struct {
 	Name  string
 	Value string
-}
-
-type EnumValue struct {
-	Number int
-	Value  string
 }
 
 func main() {
@@ -55,11 +48,6 @@ func main() {
 
 package main
 
-import (
-	"database/sql/driver"
-	"fmt"
-)
-
 // file: constants.txt
 {{range .Constants}}const {{.Name}} = {{.Value}}
 {{end}}
@@ -70,63 +58,6 @@ const (
 	{{range .EventTypes}}eventType{{.Name}} eventType = "{{.Value}}"
 	{{end}}
 )
-
-// Value implements the driver.Valuer interface.
-func (mv UpdateManifest_ManifestField) Value() (driver.Value, error) {
-	switch mv {
-		// TODO: use UpdateManifest_MANIFEST_FIELD_* instead of numbers
-	{{range .ManifestEnum}}
-	case {{.Number}}:
-		return "{{.Value}}", nil{{end}}
-	}
-	return nil, fmt.Errorf("unknown UpdateManifest_ManifestField %q", mv)
-}
-
-// Scan implements the sql.Scanner interface
-func (mv *UpdateManifest_ManifestField) Scan(src interface{}) error {
-	tv, ok := src.(string)
-	if !ok {
-		return fmt.Errorf("cannot convert %T to string", src)
-	}
-	switch tv {
-	// TODO: use UpdateManifest_MANIFEST_FIELD_* instead of numbers
-	{{range .ManifestEnum}}
-	case "{{.Value}}":
-		*mv = {{.Number}}{{end}}
-	default:
-		return fmt.Errorf("unknown database enum value %q", tv)
-	}
-	return nil
-}
-
-// Value implements the driver.Valuer interface.
-func (mv UpdateItem_ItemField) Value() (driver.Value, error) {
-	switch mv {
-		// TODO: use UpdateItem_ITEM_FIELD* instead of numbers
-	{{range .ItemEnum}}
-	case {{.Number}}:
-		return "{{.Value}}", nil{{end}}
-	}
-	return nil, fmt.Errorf("unknown UpdateItem_ItemField %q", mv)
-}
-
-// Scan implements the sql.Scanner interface
-func (mv *UpdateItem_ItemField) Scan(src interface{}) error {
-	tv, ok := src.(string)
-	if !ok {
-		return fmt.Errorf("cannot convert %T to string", src)
-	}
-	switch tv {
-	// TODO: use UpdateItem_ITEM_FIELD* instead of numbers
-	{{range .ItemEnum}}
-	case "{{.Value}}":
-		*mv = {{.Number}}{{end}}
-	default:
-		return fmt.Errorf("unknown database enum value %q", tv)
-	}
-	return nil
-}
-
 `
 	constantsTxt := processFile(filepath.Join(os.Getenv("MASS_SCHEMA"), "constants.txt"))
 	fromSQL := processSchemaSQL("db/schema.sql")
@@ -137,12 +68,10 @@ func (mv *UpdateItem_ItemField) Scan(src interface{}) error {
 	}
 
 	err = tmpl.Execute(os.Stdout, map[string]interface{}{
-		"Version":      version,
-		"Date":         date,
-		"Constants":    constantsTxt,
-		"EventTypes":   fromSQL.EventTypes,
-		"ManifestEnum": fromSQL.ManifestEnum,
-		"ItemEnum":     fromSQL.ItemEnum,
+		"Version":    version,
+		"Date":       date,
+		"Constants":  constantsTxt,
+		"EventTypes": fromSQL.EventTypes,
 	})
 
 	if err != nil {
@@ -185,8 +114,6 @@ func processSchemaSQL(filePath string) FromSQL {
 	defer file.Close()
 
 	var eventTypes []EventTypes
-	var manifestEnums []EnumValue
-	var itemFieldEnum []EnumValue
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -205,42 +132,12 @@ func processSchemaSQL(filePath string) FromSQL {
 				})
 			}
 		}
-
-		prefix = "create type manifestFieldEnum as enum ("
-		num := 1
-		if strings.HasPrefix(line, prefix) {
-			trimmed := strings.Trim(line, prefix)
-			fields := strings.Split(trimmed, ", ")
-			for _, field := range fields {
-				manifestEnums = append(manifestEnums, EnumValue{
-					Number: num,
-					Value:  strings.Split(field, "'")[1],
-				})
-				num++
-			}
-		}
-
-		prefix = "create type itemFieldEnum as enum ("
-		num = 1
-		if strings.HasPrefix(line, prefix) {
-			trimmed := strings.Trim(line, prefix)
-			fields := strings.Split(trimmed, ", ")
-			for _, field := range fields {
-				itemFieldEnum = append(itemFieldEnum, EnumValue{
-					Number: num,
-					Value:  strings.Split(field, "'")[1],
-				})
-				num++
-			}
-		}
 	}
 	if scanner.Err() != nil {
 		log.Fatal(scanner.Err())
 	}
 
 	return FromSQL{
-		EventTypes:   eventTypes,
-		ManifestEnum: manifestEnums,
-		ItemEnum:     itemFieldEnum,
+		EventTypes: eventTypes,
 	}
 }
