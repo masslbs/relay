@@ -2,63 +2,48 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from network-schema:typedData.json at version v1 (5a04b2d1bd64145d573898b9317281ca67db3d7c).
+// Generated from network-schema:typedData.json at version v2 (64d582e035063484932d49537ca0bb135c1cd36c).
 //lint:file-ignore U1000 Ignore all unused code, it's generated
 
 package main
 
 import "fmt"
 
-func (evt *Event) typeAndTypedDataMap() (string, map[string]any) {
+func (evt *StoreEvent) typeAndTypedDataMap() (string, map[string]any) {
 	var unwrapped typedDataMaper
 	var name string
 	switch union := evt.Union.(type) {
 
-	case *Event_AddToTag:
-		name = "AddToTag"
-		unwrapped = union.AddToTag
-	case *Event_CartAbandoned:
-		name = "CartAbandoned"
-		unwrapped = union.CartAbandoned
-	case *Event_CartFinalized:
-		name = "CartFinalized"
-		unwrapped = union.CartFinalized
-	case *Event_ChangeCart:
-		name = "ChangeCart"
-		unwrapped = union.ChangeCart
-	case *Event_ChangeStock:
+	case *StoreEvent_ChangeStock:
 		name = "ChangeStock"
 		unwrapped = union.ChangeStock
-	case *Event_CreateCart:
-		name = "CreateCart"
-		unwrapped = union.CreateCart
-	case *Event_CreateItem:
+	case *StoreEvent_CreateItem:
 		name = "CreateItem"
 		unwrapped = union.CreateItem
-	case *Event_CreateTag:
+	case *StoreEvent_CreateOrder:
+		name = "CreateOrder"
+		unwrapped = union.CreateOrder
+	case *StoreEvent_CreateTag:
 		name = "CreateTag"
 		unwrapped = union.CreateTag
-	case *Event_DeleteTag:
-		name = "DeleteTag"
-		unwrapped = union.DeleteTag
-	case *Event_NewKeyCard:
+	case *StoreEvent_NewKeyCard:
 		name = "NewKeyCard"
 		unwrapped = union.NewKeyCard
-	case *Event_RemoveFromTag:
-		name = "RemoveFromTag"
-		unwrapped = union.RemoveFromTag
-	case *Event_RenameTag:
-		name = "RenameTag"
-		unwrapped = union.RenameTag
-	case *Event_StoreManifest:
+	case *StoreEvent_StoreManifest:
 		name = "StoreManifest"
 		unwrapped = union.StoreManifest
-	case *Event_UpdateItem:
+	case *StoreEvent_UpdateItem:
 		name = "UpdateItem"
 		unwrapped = union.UpdateItem
-	case *Event_UpdateManifest:
-		name = "UpdateManifest"
-		unwrapped = union.UpdateManifest
+	case *StoreEvent_UpdateOrder:
+		name = "UpdateOrder"
+		unwrapped = union.UpdateOrder
+	case *StoreEvent_UpdateStoreManifest:
+		name = "UpdateStoreManifest"
+		unwrapped = union.UpdateStoreManifest
+	case *StoreEvent_UpdateTag:
+		name = "UpdateTag"
+		unwrapped = union.UpdateTag
 	default:
 		panic(fmt.Sprintf("unknown event type: %T", evt.Union))
 	}

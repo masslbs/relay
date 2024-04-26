@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from network-schema. Files: constants.txt at version v1 (5a04b2d1bd64145d573898b9317281ca67db3d7c)
+// Generated from network-schema. Files: constants.txt at version v2 (64d582e035063484932d49537ca0bb135c1cd36c)
 //lint:file-ignore U1000 Ignore all unused code, it's generated
 
 package main
@@ -17,33 +17,26 @@ const limitMaxInRequests = 1024
 const limitMaxInBatchSize = 64
 const limitMaxOutRequests = 1024
 const limitMaxOutBatchSize = 64
-const limitMaxDescriptionLength = 128
-const limitMaxBlobSize = 1048576
 
 // file: db/schema.sql
 type eventType string
 
 const (
-	eventTypeInvalid        eventType = "invalid"
-	eventTypeStoreManifest  eventType = "storeManifest"
-	eventTypeUpdateManifest eventType = "updateManifest"
-	eventTypeCreateItem     eventType = "createItem"
-	eventTypeUpdateItem     eventType = "updateItem"
-	eventTypeCreateTag      eventType = "createTag"
-	eventTypeAddToTag       eventType = "addToTag"
-	eventTypeRemoveFromTag  eventType = "removeFromTag"
-	eventTypeRenameTag      eventType = "renameTag"
-	eventTypeDeleteTag      eventType = "deleteTag"
-	eventTypeCreateCart     eventType = "createCart"
-	eventTypeChangeCart     eventType = "changeCart"
-	eventTypeCartFinalized  eventType = "cartFinalized"
-	eventTypeCartAbandoned  eventType = "cartAbandoned"
-	eventTypeChangeStock    eventType = "changeStock"
-	eventTypeNewKeyCard     eventType = "newKeyCard"
+	eventTypeInvalid             eventType = "invalid"
+	eventTypeStoreManifest       eventType = "storeManifest"
+	eventTypeUpdateStoreManifest eventType = "updateStoreManifest"
+	eventTypeCreateItem          eventType = "createItem"
+	eventTypeUpdateItem          eventType = "updateItem"
+	eventTypeCreateTag           eventType = "createTag"
+	eventTypeUpdateTag           eventType = "updateTag"
+	eventTypeCreateOrder         eventType = "createOrder"
+	eventTypeUpdateOrder         eventType = "updateOrder"
+	eventTypeChangeStock         eventType = "changeStock"
+	eventTypeNewKeyCard          eventType = "newKeyCard"
 )
 
 // Value implements the driver.Valuer interface.
-func (mv UpdateManifest_ManifestField) Value() (driver.Value, error) {
+func (mv UpdateStoreManifest_ManifestField) Value() (driver.Value, error) {
 	switch mv {
 	// TODO: use UpdateManifest_MANIFEST_FIELD_* instead of numbers
 
@@ -58,11 +51,11 @@ func (mv UpdateManifest_ManifestField) Value() (driver.Value, error) {
 	case 5:
 		return "removeErc20", nil
 	}
-	return nil, fmt.Errorf("unknown UpdateManifest_ManifestField %q", mv)
+	return nil, fmt.Errorf("unknown UpdateStoreManifest_ManifestField %q", mv)
 }
 
 // Scan implements the sql.Scanner interface
-func (mv *UpdateManifest_ManifestField) Scan(src interface{}) error {
+func (mv *UpdateStoreManifest_ManifestField) Scan(src interface{}) error {
 	tv, ok := src.(string)
 	if !ok {
 		return fmt.Errorf("cannot convert %T to string", src)

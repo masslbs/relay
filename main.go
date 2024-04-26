@@ -48,41 +48,51 @@ import (
 	"github.com/ssgreg/repeat"
 	"golang.org/x/crypto/sha3"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // Server configuration.
-const sessionPingInterval = 5 * time.Second
-const sessionKickTimeout = 6 * sessionPingInterval
-const sessionLastSeenAtFlushLimit = 30 * time.Second
-const sessionLastAckedstoreSeqFlushLimit = 4096
-const sessionBufferSizeRefill = limitMaxOutRequests * limitMaxOutBatchSize
-const sessionBufferSizeMax = limitMaxOutRequests * limitMaxOutBatchSize * 2
-const watcherTimeout = 5 * time.Second
-const databaseDebounceInterval = 100 * time.Millisecond
-const tickStatsInterval = 1 * time.Second
-const tickBlockThreshold = 50 * time.Millisecond
-const memoryStatsInterval = 5 * time.Second
-const ethereumBlockInterval = 15 * time.Second
-const databaseOpsChanSize = 64 * 1024
+const (
+	sessionPingInterval             = 5 * time.Second
+	sessionKickTimeout              = 6 * sessionPingInterval
+	sessionLastSeenAtFlushLimit     = 30 * time.Second
+	sessionLastAckedKCSeqFlushLimit = 4096
+	sessionBufferSizeRefill         = limitMaxOutRequests * limitMaxOutBatchSize
+	sessionBufferSizeMax            = limitMaxOutRequests * limitMaxOutBatchSize * 2
 
-const maxItemMedataBytes = 5 * 1024
+	watcherTimeout           = 5 * time.Second
+	databaseDebounceInterval = 100 * time.Millisecond
+	tickStatsInterval        = 1 * time.Second
+	tickBlockThreshold       = 50 * time.Millisecond
+	memoryStatsInterval      = 5 * time.Second
+	ethereumBlockInterval    = 15 * time.Second
+	emitUptimeInterval       = 10 * time.Second
 
-const emitUptimeInterval = 10 * time.Second
+	databaseOpsChanSize           = 64 * 1024
+	databasePropagationEventLimit = 5000
+
+	maxItemMedataBytes = 5 * 1024
+)
 
 // set by build script via ldflags
 var release = "unset"
 
 // Toggle high-volume log traffic.
-var logMessages = false
-var logEphemeralMessages = false
-var logMetrics = false
+var (
+	logMessages          = false
+	logEphemeralMessages = false
+	logMetrics           = false
+)
 
 // Enable error'd and ignore'd requests to be simulated with env variable.
 // Given in integer percents, 0 <= r <= 100.
 var simulateErrorRate = 0
 var simulateIgnoreRate = 0
 
-var networkVersions = []uint{1}
+var (
+	networkVersions            = []uint{2}
+	currentRelayVersion uint16 = 2
+)
 
 var initLoggingOnce sync.Once
 
@@ -108,7 +118,7 @@ func initLogging() {
 }
 
 func (err *Error) Error() string {
-	return "(" + err.Code + "): " + err.Message
+	return "(" + ErrorCodes_name[int32(err.Code)] + "): " + err.Message
 }
 
 func coalesce(errs ...*Error) *Error {
@@ -121,44 +131,44 @@ func coalesce(errs ...*Error) *Error {
 }
 
 var tooManyConcurrentRequestsError = &Error{
-	Code:    "tooManyConcurrentRequests",
+	Code:    ErrorCodes_tooManyConcurrentRequests,
 	Message: "Too many concurrent requests sent to server",
 }
 
 var alreadyAuthenticatedError = &Error{
-	Code:    "alreadyAuthenticated",
+	Code:    ErrorCodes_alreadyAuthenticated,
 	Message: "Already authenticated in a previous message",
 }
 
 var notAuthenticatedError = &Error{
-	Code:    "notAuthenticated",
+	Code:    ErrorCodes_notAuthenticated,
 	Message: "Must authenticate before sending any other messages",
 }
 
 var alreadyConnectedError = &Error{
-	Code:    "alreadyConnected",
+	Code:    ErrorCodes_alreadyConnected,
 	Message: "Already connected from this device in another session",
 }
 
 var unlinkedKeyCardError = &Error{
-	Code:    "unlinkedKeyCard",
+	Code:    ErrorCodes_unlinkedKeyCard,
 	Message: "Key Card was removed from the Store",
 }
 
 var notFoundError = &Error{
-	Code:    "notFound",
+	Code:    ErrorCodes_notFound,
 	Message: "Item not found",
 }
 
 var simulateError = &Error{
-	Code:    "simulated",
+	Code:    ErrorCodes_simulated,
 	Message: "Error condition simulated for this message",
 }
 
-var (
-	invalidErrorCode    = "invalid"
-	outOfStockErrorCode = "outOfStock"
-)
+var minimumVersionError = &Error{
+	Code:    ErrorCodes_minumumVersionNotReached,
+	Message: "Minumum version not reached for this request",
+}
 
 // Message types are protobuf messages with a requestId field.
 type Message interface {
@@ -253,11 +263,12 @@ type SyncStatusOp struct {
 
 // EventWriteOp processes a write of an event to the database
 type EventWriteOp struct {
-	sessionID    requestID
-	im           *EventWriteRequest
-	newStoreHash []byte
-	eventSeq     uint64
-	err          *Error
+	sessionID       requestID
+	im              *EventWriteRequest
+	decodedStoreEvt *StoreEvent
+	newStoreHash    []byte
+	eventSeq        uint64
+	err             *Error
 }
 
 // EventPushOp sends an EventPushRequest to the client
@@ -267,13 +278,13 @@ type EventPushOp struct {
 	err         *Error
 }
 
-// CommitCartOp finalizes an open cart by processing a CommitCartRequest.
+// CommitItemsToOrderOp finalizes an open order.
 // As a result, the relay will wait for the incoming transaction before creating a ChangeStock event.
-type CommitCartOp struct {
-	sessionID       requestID
-	im              *CommitCartRequest
-	cartFinalizedID eventID
-	err             *Error
+type CommitItemsToOrderOp struct {
+	sessionID        requestID
+	im               *CommitItemsToOrderRequest
+	orderFinalizedID eventID
+	err              *Error
 }
 
 // GetBlobUploadURLOp processes a GetBlobUploadURLRequest from the client
@@ -289,16 +300,19 @@ type GetBlobUploadURLOp struct {
 // KeyCardEnrolledInternalOp is triggered by a successful keycard enrollment.
 // It results in a KeyCardEnrolled Event on the stores log
 type KeyCardEnrolledInternalOp struct {
-	storeID          eventID
-	keyCardPublicKey []byte
-	userWallet       common.Address
+	storeID           eventID
+	keyCardIsGuest    bool
+	keyCardDatabaseID requestID
+	keyCardPublicKey  []byte
+	userWallet        common.Address
 }
 
+// PaymentFoundInternalOp is created by payment watchers
 type PaymentFoundInternalOp struct {
-	cartID eventID
-	txHash common.Hash
+	orderID eventID
+	txHash  common.Hash
 
-	// transaction, cartID, etc.
+	// transaction, orderID, etc.
 
 	done chan struct{}
 }
@@ -311,9 +325,9 @@ type Session struct {
 	version           uint
 	conn              net.Conn
 	messages          chan InMessage
-	activeInRequests  *MapRequestIds[time.Time]
+	activeInRequests  *MapRequestIDs[time.Time]
 	activeOutRequests *SetRequestIDs
-	activePushes      *MapRequestIds[SessionOp]
+	activePushes      *MapRequestIDs[SessionOp]
 	ops               chan SessionOp
 	databaseOps       chan RelayOp
 	metric            *Metric
@@ -327,9 +341,9 @@ func newSession(version uint, conn net.Conn, databaseOps chan RelayOp, metric *M
 		version:           version,
 		conn:              conn,
 		messages:          make(chan InMessage, limitMaxInRequests*2),
-		activeInRequests:  NewMapRequestIds[time.Time](),
+		activeInRequests:  NewMapRequestIDs[time.Time](),
 		activeOutRequests: NewSetRequestIDs(),
-		activePushes:      NewMapRequestIds[SessionOp](),
+		activePushes:      NewMapRequestIDs[SessionOp](),
 		ops:               make(chan SessionOp, (limitMaxInRequests+limitMaxOutRequests)*2),
 		databaseOps:       databaseOps,
 		metric:            metric,
@@ -562,7 +576,10 @@ func (im *PingResponse) handle(sess *Session) {
 	sess.sendDatabaseOp(op)
 }
 
-func (im *AuthenticateRequest) validate(_ uint) *Error {
+func (im *AuthenticateRequest) validate(version uint) *Error {
+	if version < 2 {
+		return minimumVersionError
+	}
 	return validateBytes(im.PublicKey, "public_key", publicKeyBytes)
 }
 
@@ -579,7 +596,10 @@ func (op *AuthenticateOp) handle(sess *Session) {
 	sess.writeMessage(om)
 }
 
-func (im *ChallengeSolvedRequest) validate(_ uint) *Error {
+func (im *ChallengeSolvedRequest) validate(version uint) *Error {
+	if version < 2 {
+		return minimumVersionError
+	}
 	return validateBytes(im.Signature, "signature", signatureBytes)
 }
 
@@ -610,49 +630,17 @@ func (im *SyncStatusResponse) handle(sess *Session) {
 
 func (op *EventPushOp) handle(sess *Session) {
 	assertLTE(len(op.eventStates), limitMaxOutBatchSize)
-	events := make([]*Event, len(op.eventStates))
+	events := make([]*anypb.Any, len(op.eventStates))
+	var err error
 	for i, eventState := range op.eventStates {
 		eventState.eventID.assert()
-		assert(eventState.eventType != "")
-		assertOneOfEvent(eventState)
-		e := &Event{}
-		e.Signature = eventState.signature
-		switch eventState.eventType {
-		case eventTypeStoreManifest:
-			e.Union = &Event_StoreManifest{eventState.storeManifest}
-		case eventTypeUpdateManifest:
-			e.Union = &Event_UpdateManifest{eventState.updateManifest}
-		case eventTypeCreateItem:
-			e.Union = &Event_CreateItem{eventState.createItem}
-		case eventTypeUpdateItem:
-			e.Union = &Event_UpdateItem{eventState.updateItem}
-		case eventTypeCreateTag:
-			e.Union = &Event_CreateTag{eventState.createTag}
-		case eventTypeAddToTag:
-			e.Union = &Event_AddToTag{eventState.addToTag}
-		case eventTypeRemoveFromTag:
-			e.Union = &Event_RemoveFromTag{eventState.removeFromTag}
-		case eventTypeRenameTag:
-			e.Union = &Event_RenameTag{eventState.renameTag}
-		case eventTypeDeleteTag:
-			e.Union = &Event_DeleteTag{eventState.deleteTag}
-		case eventTypeCreateCart:
-			e.Union = &Event_CreateCart{eventState.createCart}
-		case eventTypeChangeCart:
-			e.Union = &Event_ChangeCart{eventState.changeCart}
-		case eventTypeCartFinalized:
-			e.Union = &Event_CartFinalized{eventState.cartFinalized}
-		case eventTypeCartAbandoned:
-			e.Union = &Event_CartAbandoned{eventState.cartAbandoned}
-		case eventTypeChangeStock:
-			e.Union = &Event_ChangeStock{eventState.changeStock}
-		case eventTypeNewKeyCard:
-			e.Union = &Event_NewKeyCard{eventState.newKeyCard}
-		default:
-			panic(fmt.Errorf("unhandled eventType: %s", eventState.eventType))
+		events[i] = eventState.encodedEvent
+		assert(eventState.encodedEvent != nil)
+		if err != nil {
+			panic(fmt.Errorf("failed to create anypb for event: %w", err))
 		}
-		events[i] = e
 	}
+
 	om := &EventPushRequest{RequestId: newRequestID(), Events: events}
 	sess.activePushes.Set(om.RequestId, op)
 	sess.writeMessage(om)
@@ -674,39 +662,39 @@ func validateStoreManifest(_ uint, event *StoreManifest) *Error {
 	)
 }
 
-func validateUpdateManifest(_ uint, event *UpdateManifest) *Error {
+func validateUpdateStoreManifest(_ uint, event *UpdateStoreManifest) *Error {
 	errs := []*Error{validateEventID(event.EventId, "event_id")}
 	switch event.Field {
-	case UpdateManifest_MANIFEST_FIELD_DOMAIN:
-		strVal, ok := event.Value.(*UpdateManifest_String_)
+	case UpdateStoreManifest_MANIFEST_FIELD_DOMAIN:
+		strVal, ok := event.Value.(*UpdateStoreManifest_String_)
 		if ok {
 			errs = append(errs, validateURL(strVal.String_, "domain_value"))
 		} else {
-			errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid value type for domain"})
+			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for domain"})
 		}
-	case UpdateManifest_MANIFEST_FIELD_PUBLISHED_TAG:
-		idVal, ok := event.Value.(*UpdateManifest_TagId)
+	case UpdateStoreManifest_MANIFEST_FIELD_PUBLISHED_TAG:
+		idVal, ok := event.Value.(*UpdateStoreManifest_TagId)
 		if ok {
 			errs = append(errs, validateEventID(idVal.TagId, "published_tag"))
 		} else {
-			errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid value type for published_tag"})
+			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for published_tag"})
 		}
-	case UpdateManifest_MANIFEST_FIELD_ADD_ERC20:
-		val, ok := event.Value.(*UpdateManifest_Erc20Addr)
+	case UpdateStoreManifest_MANIFEST_FIELD_ADD_ERC20:
+		val, ok := event.Value.(*UpdateStoreManifest_Erc20Addr)
 		if ok {
 			errs = append(errs, validateEthAddressBytes(val.Erc20Addr, "erc20_token_addr"))
 		} else {
-			errs = append(errs, &Error{Code: invalidErrorCode, Message: fmt.Sprintf("Invalid value type for add_erc20 - got %T", event.Value)})
+			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("Invalid value type for add_erc20 - got %T", event.Value)})
 		}
-	case UpdateManifest_MANIFEST_FIELD_REMOVE_ERC20:
-		val, ok := event.Value.(*UpdateManifest_Erc20Addr)
+	case UpdateStoreManifest_MANIFEST_FIELD_REMOVE_ERC20:
+		val, ok := event.Value.(*UpdateStoreManifest_Erc20Addr)
 		if ok {
 			errs = append(errs, validateEthAddressBytes(val.Erc20Addr, "erc20_token_addr"))
 		} else {
-			errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid value type for remove_erc20"})
+			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for remove_erc20"})
 		}
 	default:
-		errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid update field"})
+		errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid update field"})
 	}
 	return coalesce(errs...)
 }
@@ -717,10 +705,10 @@ func validateCreateItem(_ uint, event *CreateItem) *Error {
 		validateDecimalPrice(event.Price, "price"),
 	}
 	if !json.Valid(event.Metadata) {
-		errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid metadata"})
+		errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid metadata"})
 	}
 	if len(event.Metadata) > maxItemMedataBytes {
-		errs = append(errs, &Error{Code: invalidErrorCode, Message: "Too much metadata"})
+		errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Too much metadata"})
 	}
 	return coalesce(errs...)
 }
@@ -734,21 +722,21 @@ func validateUpdateItem(_ uint, event *UpdateItem) *Error {
 	case UpdateItem_ITEM_FIELD_PRICE:
 		priceStr, ok := event.Value.(*UpdateItem_Price)
 		if !ok {
-			errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid value type for price"})
+			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for price"})
 		} else {
 			errs = append(errs, validateDecimalPrice(priceStr.Price, "price"))
 		}
 	case UpdateItem_ITEM_FIELD_METADATA:
 		v, ok := event.Value.(*UpdateItem_Metadata)
 		if !ok {
-			errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid value type for price"})
+			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for price"})
 		} else if !json.Valid(v.Metadata) {
-			errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid metadata"})
+			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid metadata"})
 		} else if len(v.Metadata) > maxItemMedataBytes {
-			errs = append(errs, &Error{Code: invalidErrorCode, Message: "Too much metadata"})
+			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Too much metadata"})
 		}
 	default:
-		errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid update field"})
+		errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid update field"})
 	}
 	return coalesce(errs...)
 }
@@ -760,43 +748,45 @@ func validateCreateTag(_ uint, event *CreateTag) *Error {
 	)
 }
 
-func validateRenameTag(_ uint, event *RenameTag) *Error {
-	return coalesce(
+func validateUpdateTag(_ uint, event *UpdateTag) *Error {
+	errs := []*Error{
 		validateEventID(event.EventId, "event_id"),
 		validateEventID(event.TagId, "tag_id"),
-		validateString(event.Name, "name", 64),
-	)
-}
-
-func validateDeleteTag(_ uint, event *DeleteTag) *Error {
-	return coalesce(
-		validateEventID(event.EventId, "event_id"),
-		validateEventID(event.TagId, "tag_id"),
-	)
-}
-
-func validateAddToTag(_ uint, event *AddToTag) *Error {
-	return coalesce(
-		validateEventID(event.EventId, "event_id"),
-		validateEventID(event.TagId, "tag_id"),
-		validateEventID(event.ItemId, "item_id"),
-	)
-}
-
-func validateRemoveFromTag(_ uint, event *RemoveFromTag) *Error {
-	return coalesce(
-		validateEventID(event.EventId, "event_id"),
-		validateEventID(event.TagId, "tag_id"),
-		validateEventID(event.ItemId, "item_id"),
-	)
+	}
+	switch event.Action {
+	case UpdateTag_TAG_ACTION_ADD_ITEM:
+		fallthrough
+	case UpdateTag_TAG_ACTION_REMOVE_ITEM:
+		itemID, ok := event.Value.(*UpdateTag_ItemId)
+		if !ok {
+			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for item_id"})
+		} else {
+			errs = append(errs, validateEventID(itemID.ItemId, "item_id"))
+		}
+	case UpdateTag_TAG_ACTION_RENAME:
+		newName, ok := event.Value.(*UpdateTag_NewName)
+		if !ok {
+			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for new_name"})
+		} else {
+			errs = append(errs, validateString(newName.NewName, "new_name", 32))
+		}
+	case UpdateTag_TAG_ACTION_DELETE_TAG:
+		_, ok := event.Value.(*UpdateTag_Delete)
+		if !ok {
+			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for delete"})
+		}
+	default:
+		errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid action"})
+	}
+	return coalesce(errs...)
 }
 
 func validateChangeStock(_ uint, event *ChangeStock) *Error {
-	if len(event.CartId) != 0 {
-		return &Error{Code: invalidErrorCode, Message: "CartId must be empty"}
+	if len(event.OrderId) != 0 {
+		return &Error{Code: ErrorCodes_invalid, Message: "OrderId must be empty"}
 	}
 	if len(event.ItemIds) != len(event.Diffs) {
-		return &Error{Code: invalidErrorCode, Message: "ItemId and Diff must have the same length"}
+		return &Error{Code: ErrorCodes_invalid, Message: "ItemId and Diff must have the same length"}
 	}
 	for i, item := range event.ItemIds {
 		if err := validateEventID(item, fmt.Sprintf("item_id[%d]", i)); err != nil {
@@ -806,63 +796,80 @@ func validateChangeStock(_ uint, event *ChangeStock) *Error {
 	return nil
 }
 
-func validateCreateCart(_ uint, event *CreateCart) *Error {
+func validateCreateOrder(_ uint, event *CreateOrder) *Error {
 	return coalesce(
 		validateEventID(event.EventId, "event_id"),
 	)
 }
 
-func validateChangeCart(_ uint, event *ChangeCart) *Error {
-	return coalesce(
+func validateUpdateOrder(_ uint, event *UpdateOrder) *Error {
+	errs := []*Error{
 		validateEventID(event.EventId, "event_id"),
-		validateEventID(event.CartId, "cart_id"),
+		validateEventID(event.OrderId, "order_id"),
+	}
+	switch tv := event.Action.(type) {
+	case *UpdateOrder_ChangeItems_:
+		errs = append(errs, validateChangeItems(2, tv.ChangeItems))
+	case *UpdateOrder_ItemsFinalized_:
+		errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "OrderFinalized is not allowed in EventWriteRequest"})
+	case *UpdateOrder_OrderCanceled_:
+		errs = append(errs, validateOrderCanceled(2, tv.OrderCanceled))
+	default:
+		panic(fmt.Sprintf("Unhandled action type: %T", tv))
+	}
+	return coalesce(errs...)
+}
+
+func validateChangeItems(_ uint, event *UpdateOrder_ChangeItems) *Error {
+	return coalesce(
 		validateEventID(event.ItemId, "item_id"),
 	)
 }
 
-func validateCartAbandoned(_ uint, event *CartAbandoned) *Error {
-	return validateEventID(event.CartId, "cart_id")
+func validateOrderCanceled(_ uint, event *UpdateOrder_OrderCanceled) *Error {
+	if event.Timestamp == 0 {
+		return &Error{Code: ErrorCodes_invalid, Message: "timestamp can't be 0"}
+	}
+	return nil
 }
 
 func (im *EventWriteRequest) validate(version uint) *Error {
-	if err := validateBytes(im.Event.Signature, "signature", signatureBytes); err != nil {
+	if version < 2 {
+		return minimumVersionError
+	}
+	var decodedEvt StoreEvent
+	if pberr := im.Event.UnmarshalTo(&decodedEvt); pberr != nil {
+		log("eventWriteRequest.validate: anypb unmarshal failed: %s", pberr.Error())
+		return &Error{Code: ErrorCodes_invalid, Message: "invalid protobuf encoding"}
+	}
+	if err := validateBytes(decodedEvt.Signature, "signature", signatureBytes); err != nil {
 		return err
 	}
 	var err *Error
-	switch union := im.Event.Union.(type) {
-	case *Event_StoreManifest:
+	switch union := decodedEvt.Union.(type) {
+	case *StoreEvent_StoreManifest:
 		err = validateStoreManifest(version, union.StoreManifest)
-	case *Event_UpdateManifest:
-		err = validateUpdateManifest(version, union.UpdateManifest)
-	case *Event_CreateItem:
+	case *StoreEvent_UpdateStoreManifest:
+		err = validateUpdateStoreManifest(version, union.UpdateStoreManifest)
+	case *StoreEvent_CreateItem:
 		err = validateCreateItem(version, union.CreateItem)
-	case *Event_UpdateItem:
+	case *StoreEvent_UpdateItem:
 		err = validateUpdateItem(version, union.UpdateItem)
-	case *Event_CreateTag:
+	case *StoreEvent_CreateTag:
 		err = validateCreateTag(version, union.CreateTag)
-	case *Event_AddToTag:
-		err = validateAddToTag(version, union.AddToTag)
-	case *Event_RemoveFromTag:
-		err = validateRemoveFromTag(version, union.RemoveFromTag)
-	case *Event_RenameTag:
-		err = validateRenameTag(version, union.RenameTag)
-	case *Event_DeleteTag:
-		err = validateDeleteTag(version, union.DeleteTag)
-	case *Event_ChangeStock:
+	case *StoreEvent_UpdateTag:
+		err = validateUpdateTag(version, union.UpdateTag)
+	case *StoreEvent_ChangeStock:
 		err = validateChangeStock(version, union.ChangeStock)
-	case *Event_CreateCart:
-		err = validateCreateCart(version, union.CreateCart)
-	case *Event_ChangeCart:
-		err = validateChangeCart(version, union.ChangeCart)
-	case *Event_CartFinalized:
-		err = &Error{Code: invalidErrorCode, Message: "CartFinalized is not allowed in EventWriteRequest"}
-	case *Event_CartAbandoned:
-		err = validateCartAbandoned(version, union.CartAbandoned)
-	case *Event_NewKeyCard:
-		err = &Error{Code: invalidErrorCode, Message: "NewKeyCard is not allowed in EventWriteRequest"}
+	case *StoreEvent_CreateOrder:
+		err = validateCreateOrder(version, union.CreateOrder)
+	case *StoreEvent_UpdateOrder:
+		err = validateUpdateOrder(version, union.UpdateOrder)
+	case *StoreEvent_NewKeyCard:
+		err = &Error{Code: ErrorCodes_invalid, Message: "NewKeyCard is not allowed in EventWriteRequest"}
 	default:
-		log("eventWriteRequest.validate: unrecognized event type: %T", im.Event.Union)
-		return &Error{Code: invalidErrorCode, Message: "Unrecognized event type"}
+		log("eventWriteRequest.validate: unrecognized event type: %T", decodedEvt.Union)
+		return &Error{Code: ErrorCodes_invalid, Message: "Unrecognized event type"}
 	}
 	if err != nil {
 		return err
@@ -871,7 +878,12 @@ func (im *EventWriteRequest) validate(version uint) *Error {
 }
 
 func (im *EventWriteRequest) handle(sess *Session) {
-	op := &EventWriteOp{sessionID: sess.id, im: im}
+	var decodedEvt StoreEvent
+	if pberr := im.Event.UnmarshalTo(&decodedEvt); pberr != nil {
+		// TODO: somehow fix double decode
+		check(pberr)
+	}
+	op := &EventWriteOp{sessionID: sess.id, im: im, decodedStoreEvt: &decodedEvt}
 	sess.sendDatabaseOp(op)
 }
 
@@ -884,33 +896,36 @@ func (op *EventWriteOp) handle(sess *Session) {
 	sess.writeMessage(om)
 }
 
-func (im *CommitCartRequest) validate(_ uint) *Error {
+func (im *CommitItemsToOrderRequest) validate(version uint) *Error {
+	if version < 2 {
+		return minimumVersionError
+	}
 	errs := []*Error{
-		validateEventID(im.CartId, "cart_id"),
+		validateEventID(im.OrderId, "order_id"),
 	}
 	if erc20 := im.GetErc20Addr(); erc20 != nil {
 		errs = append(errs, validateEthAddressBytes(erc20, "erc20_addr"))
 	}
-	if ea := im.GetEscrowAddr(); ea != nil {
-		errs = append(errs, validateEthAddressBytes(ea, "escrow_addr"))
-	}
 	return coalesce(errs...)
 }
 
-func (im *CommitCartRequest) handle(sess *Session) {
-	op := &CommitCartOp{sessionID: sess.id, im: im}
+func (im *CommitItemsToOrderRequest) handle(sess *Session) {
+	op := &CommitItemsToOrderOp{sessionID: sess.id, im: im}
 	sess.sendDatabaseOp(op)
 }
 
-func (op *CommitCartOp) handle(sess *Session) {
-	om := op.im.response(op.err).(*CommitCartResponse)
+func (op *CommitItemsToOrderOp) handle(sess *Session) {
+	om := op.im.response(op.err).(*CommitItemsToOrderResponse)
 	if op.err == nil {
-		om.CartFinalizedId = op.cartFinalizedID
+		om.OrderFinalizedId = op.orderFinalizedID
 	}
 	sess.writeMessage(om)
 }
 
-func (im *GetBlobUploadURLRequest) validate(_ uint) *Error {
+func (im *GetBlobUploadURLRequest) validate(version uint) *Error {
+	if version < 2 {
+		return minimumVersionError
+	}
 	return nil // req id is checked seperatly
 }
 
@@ -937,7 +952,7 @@ func (sess *Session) run() {
 		if sess.stopping {
 			sess.metric.counterAdd("sessions_stop", 1)
 			logS(sess.id, "session.run.stop")
-			sess.conn.Close()
+			_ = sess.conn.Close()
 			return
 		}
 
@@ -1004,8 +1019,7 @@ func getIpfsClient(ctx context.Context, errCount int, lastErr error) (*ipfsRpc.H
 
 // EventState represents the state of an event in the database.
 type EventState struct {
-	eventID   eventID
-	eventType eventType
+	eventID eventID
 
 	created struct {
 		at                     time.Time
@@ -1013,55 +1027,33 @@ type EventState struct {
 		byNetworkSchemaVersion uint64
 	}
 
-	// TODO: change to serverSeq to individual storeSeq for relay2relay sync
-	serverSeq uint64
-
 	storeSeq uint64
-	acked    bool
 
-	signature []byte
-	// one-of
-	storeManifest  *StoreManifest
-	updateManifest *UpdateManifest
+	kcSeq uint64
+	acked bool
 
-	createItem *CreateItem
-	updateItem *UpdateItem
-
-	createTag     *CreateTag
-	addToTag      *AddToTag
-	removeFromTag *RemoveFromTag
-	renameTag     *RenameTag
-	deleteTag     *DeleteTag
-
-	createCart    *CreateCart
-	changeCart    *ChangeCart
-	cartFinalized *CartFinalized
-	cartAbandoned *CartAbandoned
-
-	changeStock *ChangeStock
-
-	newKeyCard *NewKeyCard
+	encodedEvent *anypb.Any
 }
 
 // SessionState represents the state of a client in the database.
 type SessionState struct {
-	version                  uint
-	authChallenge            []byte
-	dbWorld                  chan<- RelayOp
-	sessionOps               chan SessionOp
-	keyCardID                requestID
-	keyCardPublicKey         []byte
-	storeID                  eventID
-	buffer                   []*EventState
-	initialStatus            bool
-	lastStatusedStoreSeq     uint64
-	lastBufferedStoreSeq     uint64
-	lastPushedStoreSeq       uint64
-	nextPushIndex            int
-	lastAckedStoreSeq        uint64
-	lastAckedStoreSeqFlushed uint64
-	lastSeenAt               time.Time
-	lastSeenAtFlushed        time.Time
+	version               uint
+	authChallenge         []byte
+	sessionOps            chan SessionOp
+	keyCardID             requestID
+	keyCardPublicKey      []byte
+	keyCardOfAGuest       bool
+	storeID               eventID
+	buffer                []*EventState
+	initialStatus         bool
+	lastStatusedKCSeq     uint64
+	lastBufferedKCSeq     uint64
+	lastPushedKCSeq       uint64
+	nextPushIndex         int
+	lastAckedKCSeq        uint64
+	lastAckedKCSeqFlushed uint64
+	lastSeenAt            time.Time
+	lastSeenAtFlushed     time.Time
 }
 
 // CachedMetadata represents data cached which is common to all events
@@ -1084,43 +1076,90 @@ func newMetadata(keyCardID requestID, storeID eventID, version uint16) CachedMet
 }
 
 // CachedStoreManifest is latest reduction of a StoreManifest.
-// It combines the intial StoreManifest and all UpdateManifests
+// It combines the intial StoreManifest and all UpdateStoreManifests
 type CachedStoreManifest struct {
 	CachedMetadata
-	inited bool
 
 	storeTokenID   []byte
 	domain         string
 	publishedTagID eventID
 	acceptedErc20s map[common.Address]struct{}
+
+	validKeyCardPublicKeys requestIDSlice
+	validKeyCardIDs        *MapRequestIDs[keyCardIdWithGuest]
+
+	init sync.Once
 }
 
-func (current *CachedStoreManifest) update(union *Event, meta CachedMetadata) {
+type keyCardIdWithGuest struct {
+	id      requestID
+	isGuest bool
+}
+
+func (current *CachedStoreManifest) getValidKeyCardIDs(pool *pgxpool.Pool) []keyCardIdWithGuest {
+	// turn pubkeys into keyCardIDs
+
+	valid := make([]keyCardIdWithGuest, len(current.validKeyCardPublicKeys))
+	i := 0
+
+	for _, publicKey := range current.validKeyCardPublicKeys {
+		kcId, has := current.validKeyCardIDs.GetHas(publicKey)
+		if !has {
+			// TODO: potentially batch these
+			const cardIdQry = `select id, isGuest from keyCards
+where storeId = $1 and unlinkedAt is null and cardPublicKey = $2`
+			row := pool.QueryRow(context.TODO(), cardIdQry, current.createdByStoreID, publicKey)
+
+			var loaded keyCardIdWithGuest
+			err := row.Scan(&loaded.id, &loaded.isGuest)
+			if err == pgx.ErrNoRows {
+				continue
+			} else {
+				check(err)
+			}
+
+			current.validKeyCardIDs.Set(publicKey, loaded)
+			kcId = loaded
+		}
+
+		valid[i] = kcId
+		i++
+	}
+
+	return valid
+}
+
+func (current *CachedStoreManifest) update(union *StoreEvent, meta CachedMetadata) {
+	current.init.Do(func() {
+		current.acceptedErc20s = make(map[common.Address]struct{})
+		current.validKeyCardIDs = NewMapRequestIDs[keyCardIdWithGuest]()
+	})
 	switch union.Union.(type) {
-	case *Event_StoreManifest:
-		assert(!current.inited)
+	case *StoreEvent_StoreManifest:
 		sm := union.GetStoreManifest()
 		current.CachedMetadata = meta
 		current.storeTokenID = sm.StoreTokenId
 		current.domain = sm.Domain
 		current.publishedTagID = sm.PublishedTagId
-		current.acceptedErc20s = make(map[common.Address]struct{})
-		current.inited = true
-	case *Event_UpdateManifest:
-		um := union.GetUpdateManifest()
-		if um.Field == UpdateManifest_MANIFEST_FIELD_DOMAIN {
-			current.domain = um.Value.(*UpdateManifest_String_).String_
-		} else if um.Field == UpdateManifest_MANIFEST_FIELD_PUBLISHED_TAG {
-			current.publishedTagID = um.Value.(*UpdateManifest_TagId).TagId
-		} else if um.Field == UpdateManifest_MANIFEST_FIELD_ADD_ERC20 {
-			erc20 := um.Value.(*UpdateManifest_Erc20Addr).Erc20Addr
+	case *StoreEvent_UpdateStoreManifest:
+		um := union.GetUpdateStoreManifest()
+		if um.Field == UpdateStoreManifest_MANIFEST_FIELD_DOMAIN {
+			current.domain = um.Value.(*UpdateStoreManifest_String_).String_
+		} else if um.Field == UpdateStoreManifest_MANIFEST_FIELD_PUBLISHED_TAG {
+			current.publishedTagID = um.Value.(*UpdateStoreManifest_TagId).TagId
+		} else if um.Field == UpdateStoreManifest_MANIFEST_FIELD_ADD_ERC20 {
+			erc20 := um.Value.(*UpdateStoreManifest_Erc20Addr).Erc20Addr
 			current.acceptedErc20s[common.Address(erc20)] = struct{}{}
-		} else if um.Field == UpdateManifest_MANIFEST_FIELD_REMOVE_ERC20 {
-			erc20 := um.Value.(*UpdateManifest_Erc20Addr).Erc20Addr
+		} else if um.Field == UpdateStoreManifest_MANIFEST_FIELD_REMOVE_ERC20 {
+			erc20 := um.Value.(*UpdateStoreManifest_Erc20Addr).Erc20Addr
 			delete(current.acceptedErc20s, common.Address(erc20))
 		} else {
 			panic(fmt.Sprintf("unhandled update field: %d", um.Field))
 		}
+	case *StoreEvent_NewKeyCard:
+		nkc := union.GetNewKeyCard()
+		current.CachedMetadata = meta
+		current.validKeyCardPublicKeys = append(current.validKeyCardPublicKeys, nkc.CardPublicKey)
 	}
 }
 
@@ -1135,10 +1174,10 @@ type CachedItem struct {
 	metadata []byte
 }
 
-func (current *CachedItem) update(union *Event, meta CachedMetadata) {
+func (current *CachedItem) update(union *StoreEvent, meta CachedMetadata) {
 	var err error
 	switch union.Union.(type) {
-	case *Event_CreateItem:
+	case *StoreEvent_CreateItem:
 		assert(!current.inited)
 		ci := union.GetCreateItem()
 		current.CachedMetadata = meta
@@ -1147,7 +1186,7 @@ func (current *CachedItem) update(union *Event, meta CachedMetadata) {
 		check(err)
 		current.metadata = ci.Metadata
 		current.inited = true
-	case *Event_UpdateItem:
+	case *StoreEvent_UpdateItem:
 		ui := union.GetUpdateItem()
 		if ui.Field == UpdateItem_ITEM_FIELD_PRICE {
 			current.price, _, err = apd.NewFromString(ui.GetPrice())
@@ -1170,81 +1209,91 @@ type CachedTag struct {
 	tagID   eventID
 	name    string
 	deleted bool
-	items   *SetEventIds
+	items   *SetEventIDs
 }
 
-func (current *CachedTag) update(evt *Event, meta CachedMetadata) {
+func (current *CachedTag) update(evt *StoreEvent, meta CachedMetadata) {
 	if current.items == nil && !current.inited {
-		current.items = NewSetEventIds()
+		current.items = NewSetEventIDs()
 	}
 	switch evt.Union.(type) {
-	case *Event_CreateTag:
+	case *StoreEvent_CreateTag:
 		assert(!current.inited)
 		current.CachedMetadata = meta
 		ct := evt.GetCreateTag()
 		current.name = ct.Name
 		current.tagID = ct.EventId
 		current.inited = true
-	case *Event_AddToTag:
-		at := evt.GetAddToTag()
-		current.items.Add(at.ItemId)
-	case *Event_RemoveFromTag:
-		rft := evt.GetRemoveFromTag()
-		current.items.Delete(rft.ItemId)
-	case *Event_RenameTag:
-		rt := evt.GetRenameTag()
-		current.name = rt.Name
-	case *Event_DeleteTag:
-		current.deleted = true
+
+	case *StoreEvent_UpdateTag:
+		ut := evt.GetUpdateTag()
+		switch ut.Action {
+		case UpdateTag_TAG_ACTION_REMOVE_ITEM:
+			fallthrough
+		case UpdateTag_TAG_ACTION_ADD_ITEM:
+			current.items.Add(ut.Value.(*UpdateTag_ItemId).ItemId)
+		case UpdateTag_TAG_ACTION_RENAME:
+			current.name = ut.Value.(*UpdateTag_NewName).NewName
+		case UpdateTag_TAG_ACTION_DELETE_TAG:
+			current.deleted = true
+		default:
+			panic(fmt.Sprintf("unhandled action type: %d", ut.Action))
+		}
 	default:
 		panic(fmt.Sprintf("unhandled event type: %T", evt.Union))
 	}
 }
 
-// CachedCart is the latest reduction of a Cart.
-// It combines the initial CreateCart and all ChangeCart events
-type CachedCart struct {
+// CachedOrder is the latest reduction of a Order.
+// It combines the initial CreateOrder and all ChangeOrder events
+type CachedOrder struct {
 	CachedMetadata
 	inited    bool
 	finalized bool
 	abandoned bool
 	payed     bool
 
-	purchaseAddr common.Address
+	paymentId []byte
 
 	txHash common.Hash
 
-	cartID eventID
-	items  *MapEventIds[int32]
+	orderID eventID
+	items   *MapEventIDs[int32]
 }
 
-func (current *CachedCart) update(evt *Event, meta CachedMetadata) {
+func (current *CachedOrder) update(evt *StoreEvent, meta CachedMetadata) {
 	if current.items == nil && !current.inited {
-		current.items = NewMapEventIds[int32]()
+		current.items = NewMapEventIDs[int32]()
 	}
 	switch evt.Union.(type) {
-	case *Event_CreateCart:
+	case *StoreEvent_CreateOrder:
 		assert(!current.inited)
-		ct := evt.GetCreateCart()
+		ct := evt.GetCreateOrder()
 		current.CachedMetadata = meta
-		current.cartID = ct.EventId
+		current.orderID = ct.EventId
 		current.inited = true
-	case *Event_ChangeCart:
-		atc := evt.GetChangeCart()
-		count := current.items.Get(atc.ItemId)
-		count += atc.Quantity
-		current.items.Set(atc.ItemId, count)
-	case *Event_CartFinalized:
-		cf := evt.GetCartFinalized()
-		current.purchaseAddr = common.Address(cf.PurchaseAddr)
-		// TODO: other fields?
-		current.finalized = true
-	case *Event_ChangeStock:
+	case *StoreEvent_UpdateOrder:
+		uo := evt.GetUpdateOrder()
+		switch tv := uo.Action.(type) {
+		case *UpdateOrder_ChangeItems_:
+			change := tv.ChangeItems
+			count := current.items.Get(change.ItemId)
+			count += change.Quantity
+			current.items.Set(change.ItemId, count)
+		case *UpdateOrder_ItemsFinalized_:
+			fin := tv.ItemsFinalized
+			current.paymentId = fin.PaymentId
+			current.finalized = true
+		case *UpdateOrder_OrderCanceled_:
+			current.abandoned = true
+
+		default:
+			panic(fmt.Sprintf("unhandled event type: %T", evt.Union))
+		}
+	case *StoreEvent_ChangeStock:
 		current.payed = true
 		cs := evt.GetChangeStock()
 		current.txHash = common.Hash(cs.TxHash)
-	case *Event_CartAbandoned:
-		current.abandoned = true
 	default:
 		panic(fmt.Sprintf("unhandled event type: %T", evt.Union))
 
@@ -1256,16 +1305,16 @@ func (current *CachedCart) update(evt *Event, meta CachedMetadata) {
 type CachedStock struct {
 	CachedMetadata
 
-	inventory *MapEventIds[int32]
+	inventory *MapEventIDs[int32]
 }
 
-func (current *CachedStock) update(evt *Event, _ CachedMetadata) {
+func (current *CachedStock) update(evt *StoreEvent, _ CachedMetadata) {
 	cs := evt.GetChangeStock()
 	if cs == nil {
 		return
 	}
 	if current.inventory == nil {
-		current.inventory = NewMapEventIds[int32]()
+		current.inventory = NewMapEventIDs[int32]()
 	}
 	for i := 0; i < len(cs.ItemIds); i++ {
 		itemID := cs.ItemIds[i]
@@ -1279,13 +1328,27 @@ func (current *CachedStock) update(evt *Event, _ CachedMetadata) {
 // CachedEvent is the interface for all cached events
 type CachedEvent interface {
 	comparable
-	update(*Event, CachedMetadata)
+	update(*StoreEvent, CachedMetadata)
 }
 
-// SeqPair helps with writing events to the database
-type SeqPair struct {
+type KeyCardEvent struct {
+	keyCardId     requestID
+	eventStoreSeq uint64
+	keyCardSeq    uint64
+}
+
+// SeqPairKeyCard helps with writing events to the database
+type SeqPairKeyCard struct {
+	lastUsedKCSeq    uint64
+	lastWrittenKCSeq uint64
+}
+
+// StoreState helps with writing events to the database
+type StoreState struct {
 	lastUsedStoreSeq    uint64
 	lastWrittenStoreSeq uint64
+
+	keyCards []requestID
 }
 
 // IO represents the input/output of the server.
@@ -1302,7 +1365,7 @@ type Relay struct {
 	writesEnabled bool // ensures to only create new entries if set to true
 
 	IO
-	sessionIdsToSessionStates *MapRequestIds[*SessionState]
+	sessionIDsToSessionStates *MapRequestIDs[*SessionState]
 	opsInternal               chan RelayOp
 	ops                       chan RelayOp
 
@@ -1310,17 +1373,18 @@ type Relay struct {
 	blobUploadTokensMu *sync.Mutex
 
 	// persistence
-	syncTx               pgx.Tx
-	queuedEventInserts   []*EventInsert
-	storeIdsToStoreSeqs  *MapEventIds[*SeqPair]
-	lastUsedServerSeq    uint64
-	lastWrittenServerSeq uint64
+	syncTx                  pgx.Tx
+	queuedEventInserts      []*EventInsert
+	keyCardIDsToKeyCardSeqs *MapRequestIDs[*SeqPairKeyCard]
+	storeIdsToStoreState    *MapEventIDs[*StoreState]
+	lastUsedServerSeq       uint64
+	lastWrittenServerSeq    uint64
 
 	// caching layer
 	storeManifestsByStoreID *ReductionLoader[*CachedStoreManifest]
 	itemsByItemID           *ReductionLoader[*CachedItem]
 	tagsByTagID             *ReductionLoader[*CachedTag]
-	cartsByCartID           *ReductionLoader[*CachedCart]
+	ordersByOrderID         *ReductionLoader[*CachedOrder]
 	stockByStoreID          *ReductionLoader[*CachedStock]
 	allLoaders              []Loader
 }
@@ -1335,74 +1399,62 @@ func newRelay(metric *Metric) *Relay {
 		r.prices = testingConverter{}
 	}
 
-	r.sessionIdsToSessionStates = NewMapRequestIds[*SessionState]()
+	r.sessionIDsToSessionStates = NewMapRequestIDs[*SessionState]()
 	r.opsInternal = make(chan RelayOp)
 
 	r.ops = make(chan RelayOp, databaseOpsChanSize)
-	r.storeIdsToStoreSeqs = NewMapEventIds[*SeqPair]()
+	r.storeIdsToStoreState = NewMapEventIDs[*StoreState]()
+	r.keyCardIDsToKeyCardSeqs = NewMapRequestIDs[*SeqPairKeyCard]()
 
-	storeFieldFn := func(evt *Event, meta CachedMetadata) eventID {
+	storeFieldFn := func(evt *StoreEvent, meta CachedMetadata) eventID {
 		return meta.createdByStoreID
 	}
-	r.storeManifestsByStoreID = newReductionLoader[*CachedStoreManifest](r, storeFieldFn, []eventType{eventTypeStoreManifest, eventTypeUpdateManifest}, "createdByStoreId")
-	itemsFieldFn := func(evt *Event, meta CachedMetadata) eventID {
+	r.storeManifestsByStoreID = newReductionLoader[*CachedStoreManifest](r, storeFieldFn, []eventType{eventTypeStoreManifest, eventTypeUpdateStoreManifest, eventTypeNewKeyCard}, "createdByStoreId")
+	itemsFieldFn := func(evt *StoreEvent, meta CachedMetadata) eventID {
 		switch evt.Union.(type) {
-		case *Event_CreateItem:
+		case *StoreEvent_CreateItem:
 			return evt.GetCreateItem().EventId
-		case *Event_UpdateItem:
+		case *StoreEvent_UpdateItem:
 			return evt.GetUpdateItem().ItemId
+		case *StoreEvent_NewKeyCard:
+			return evt.GetNewKeyCard().EventId
 		}
 		return nil
 	}
-	r.itemsByItemID = newReductionLoader[*CachedItem](r, itemsFieldFn, []eventType{eventTypeCreateItem, eventTypeUpdateItem}, "itemId")
-	tagsFieldFn := func(evt *Event, meta CachedMetadata) eventID {
+	r.itemsByItemID = newReductionLoader[*CachedItem](r, itemsFieldFn, []eventType{eventTypeCreateItem, eventTypeUpdateItem}, "referenceId")
+	tagsFieldFn := func(evt *StoreEvent, meta CachedMetadata) eventID {
 		switch evt.Union.(type) {
-		case *Event_CreateTag:
+		case *StoreEvent_CreateTag:
 			return evt.GetCreateTag().EventId
-		case *Event_AddToTag:
-			return evt.GetAddToTag().TagId
-		case *Event_RemoveFromTag:
-			return evt.GetRemoveFromTag().TagId
-		case *Event_RenameTag:
-			return evt.GetRenameTag().TagId
-		case *Event_DeleteTag:
-			return evt.GetDeleteTag().TagId
+		case *StoreEvent_UpdateTag:
+			return evt.GetUpdateTag().TagId
 		}
 		return nil
 	}
 	r.tagsByTagID = newReductionLoader[*CachedTag](r, tagsFieldFn, []eventType{
 		eventTypeCreateTag,
-		eventTypeAddToTag,
-		eventTypeRemoveFromTag,
-		eventTypeRenameTag,
-		eventTypeDeleteTag,
-	}, "tagId")
+		eventTypeUpdateTag,
+	}, "referenceId")
 
-	cartsFieldFn := func(evt *Event, meta CachedMetadata) eventID {
+	ordersFieldFn := func(evt *StoreEvent, meta CachedMetadata) eventID {
 		switch evt.Union.(type) {
-		case *Event_CreateCart:
-			return evt.GetCreateCart().EventId
-		case *Event_ChangeCart:
-			return evt.GetChangeCart().CartId
-		case *Event_CartFinalized:
-			return evt.GetCartFinalized().CartId
-		case *Event_ChangeStock:
+		case *StoreEvent_CreateOrder:
+			return evt.GetCreateOrder().EventId
+		case *StoreEvent_UpdateOrder:
+			return evt.GetUpdateOrder().OrderId
+		case *StoreEvent_ChangeStock:
 			cs := evt.GetChangeStock()
-			if len(cs.CartId) != 0 {
-				return cs.CartId
+			if len(cs.OrderId) != 0 {
+				return cs.OrderId
 			}
-		case *Event_CartAbandoned:
-			return evt.GetCartAbandoned().CartId
 		}
 		return nil
 	}
-	r.cartsByCartID = newReductionLoader[*CachedCart](r, cartsFieldFn, []eventType{
-		eventTypeCreateCart,
-		eventTypeChangeCart,
-		eventTypeCartFinalized,
+	r.ordersByOrderID = newReductionLoader[*CachedOrder](r, ordersFieldFn, []eventType{
+		eventTypeCreateOrder,
+		eventTypeUpdateOrder,
 		eventTypeChangeStock,
-		eventTypeCartAbandoned,
-	}, "cartId")
+	}, "referenceId")
 
 	r.stockByStoreID = newReductionLoader[*CachedStock](r, storeFieldFn, []eventType{eventTypeChangeStock}, "createdByStoreId")
 
@@ -1422,14 +1474,15 @@ func (r *Relay) connect() {
 
 // Send the op to the database (itself). Here a block is fatal because the
 // database loop won't be able to progress.
-func (db *SessionState) sendOp(op RelayOp) {
+func (db *Relay) sendDatabaseOp(op RelayOp) {
 	select {
-	case db.dbWorld <- op:
+	case db.ops <- op:
 	default:
-		panic(fmt.Errorf("sessionState.sendDatabaseOp.blocked: %+v", op))
+		panic(fmt.Sprintf("relay.sendDatabaseOp.blocked: %+v", op))
 	}
 }
 
+// TODO: generics solution to reduce [][]any copies
 // Returns two slices: rows inserted, and rows not inserted due to conflicts.
 func (r *Relay) bulkInsert(table string, columns []string, rows [][]interface{}) ([][]interface{}, [][]interface{}) {
 	assertNonemptyString(table)
@@ -1464,7 +1517,9 @@ func (r *Relay) bulkInsert(table string, columns []string, rows [][]interface{})
 		tx = r.syncTx
 	} else {
 		tx, err = r.connPool.Begin(ctx)
-		defer tx.Rollback(ctx)
+		defer func() {
+			_ = tx.Rollback(ctx)
+		}()
 		check(err)
 	}
 
@@ -1497,26 +1552,26 @@ func (r *Relay) bulkInsert(table string, columns []string, rows [][]interface{})
 	return insertedRows, conflictingRows
 }
 
-func (r *Relay) assertCursors(sessionID requestID, seqPair *SeqPair, sessionState *SessionState) {
+func (r *Relay) assertCursors(sessionID requestID, seqPair *SeqPairKeyCard, sessionState *SessionState) {
 	err := r.checkCursors(sessionID, seqPair, sessionState)
 	check(err)
 }
 
-func (r *Relay) checkCursors(_ requestID, seqPair *SeqPair, sessionState *SessionState) error {
-	if seqPair.lastUsedStoreSeq < seqPair.lastWrittenStoreSeq {
-		return fmt.Errorf("cursor lastUsedStoreSeq(%d) < lastWrittenStoreSeq(%d)", seqPair.lastUsedStoreSeq, seqPair.lastWrittenStoreSeq)
+func (r *Relay) checkCursors(_ requestID, seqPair *SeqPairKeyCard, sessionState *SessionState) error {
+	if seqPair.lastUsedKCSeq < seqPair.lastWrittenKCSeq {
+		return fmt.Errorf("cursor lastUsedStoreSeq(%d) < lastWrittenStoreSeq(%d)", seqPair.lastUsedKCSeq, seqPair.lastWrittenKCSeq)
 	}
-	if seqPair.lastWrittenStoreSeq < sessionState.lastStatusedStoreSeq {
-		return fmt.Errorf("cursor: lastWrittenStoreSeq(%d) < lastStatusedStoreSeq(%d)", seqPair.lastWrittenStoreSeq, sessionState.lastStatusedStoreSeq)
+	if seqPair.lastWrittenKCSeq < sessionState.lastStatusedKCSeq {
+		return fmt.Errorf("cursor: lastWrittenKCSeq(%d) < lastStatusedKCSeq(%d)", seqPair.lastWrittenKCSeq, sessionState.lastStatusedKCSeq)
 	}
-	if sessionState.lastStatusedStoreSeq < sessionState.lastBufferedStoreSeq {
-		return fmt.Errorf("cursor: lastStatusedStoreSeq(%d) < lastBufferedStoreSeq(%d)", sessionState.lastStatusedStoreSeq, sessionState.lastBufferedStoreSeq)
+	if sessionState.lastStatusedKCSeq < sessionState.lastBufferedKCSeq {
+		return fmt.Errorf("cursor: lastStatusedKCSeq(%d) < lastBufferedKCSeq(%d)", sessionState.lastStatusedKCSeq, sessionState.lastBufferedKCSeq)
 	}
-	if sessionState.lastBufferedStoreSeq < sessionState.lastPushedStoreSeq {
-		return fmt.Errorf("cursor: lastBufferedStoreSeq(%d) < lastPushedStoreSeq(%d)", sessionState.lastBufferedStoreSeq, sessionState.lastPushedStoreSeq)
+	if sessionState.lastBufferedKCSeq < sessionState.lastPushedKCSeq {
+		return fmt.Errorf("cursor: lastBufferedKCSeq(%d) < lastPushedKCSeq(%d)", sessionState.lastBufferedKCSeq, sessionState.lastPushedKCSeq)
 	}
-	if sessionState.lastPushedStoreSeq < sessionState.lastAckedStoreSeq {
-		return fmt.Errorf("cursor: lastPushedStoreSeq(%d) < lastAckedStoreSeq(%d)", sessionState.lastPushedStoreSeq, sessionState.lastAckedStoreSeq)
+	if sessionState.lastPushedKCSeq < sessionState.lastAckedKCSeq {
+		return fmt.Errorf("cursor: lastPushedKCSeq(%d) < lastAckedKCSeq(%d)", sessionState.lastPushedKCSeq, sessionState.lastAckedKCSeq)
 	}
 	return nil
 }
@@ -1535,21 +1590,67 @@ func (r *Relay) lastSeenAtTouch(sessionState *SessionState) time.Time {
 	return n
 }
 
-func (r *Relay) hydrateStores(storeIds *SetEventIds) {
+func (r *Relay) hydrateKeyCards(kcIds *SetRequestIDs) {
 	start := now()
 	ctx := context.Background()
-	novelStoreIds := NewSetEventIds()
+	novelKeyCardIds := NewSetRequestIDs()
+	kcIds.All(func(keyCardID requestID) {
+		if !r.keyCardIDsToKeyCardSeqs.Has(keyCardID) {
+			novelKeyCardIds.Add(keyCardID)
+		}
+	})
+	if sz := novelKeyCardIds.Size(); sz > 0 {
+		novelKeyCardIds.All(func(keyCardID requestID) {
+			seqPair := &SeqPairKeyCard{}
+			r.keyCardIDsToKeyCardSeqs.Set(keyCardID, seqPair)
+		})
+		for _, novelUserIdsSubslice := range subslice(novelKeyCardIds.Slice(), 256) {
+			// Index: userEntries(userId, userSeq)
+			query := `with wanted (keyCardId) as (select unnest($1::bytea[]))
+			select
+				wanted.keyCardId,
+				(select keyCardSeq from keyCardEvents where keyCardId = wanted.keyCardId order by keyCardSeq desc limit 1)
+			from wanted`
+			rows, err := r.connPool.Query(ctx, query, novelUserIdsSubslice)
+			check(err)
+			defer rows.Close()
+			for rows.Next() {
+				var keyCardID requestID
+				var lastWrittenKCSeq *uint64
+				err := rows.Scan(&keyCardID, &lastWrittenKCSeq)
+				check(err)
+				seqPair := r.keyCardIDsToKeyCardSeqs.MustGet(keyCardID)
+				// handle NULL values as userSeq=0, which is initiated by default anyway
+				if lastWrittenKCSeq != nil {
+					seqPair.lastWrittenKCSeq = *lastWrittenKCSeq
+					seqPair.lastUsedKCSeq = *lastWrittenKCSeq
+				}
+
+			}
+			check(rows.Err())
+		}
+	}
+	took := took(start)
+	if novelKeyCardIds.Size() > 0 || took > 1 {
+		log("db.hydrateUsers keyCards=%d novelKeyCards=%d took=%d", kcIds.Size(), novelKeyCardIds.Size(), took)
+	}
+}
+
+func (r *Relay) hydrateStores(storeIds *SetEventIDs) {
+	start := now()
+	ctx := context.Background()
+	novelStoreIds := NewSetEventIDs()
 	storeIds.All(func(storeId eventID) {
-		if !r.storeIdsToStoreSeqs.Has(storeId) {
+		if !r.storeIdsToStoreState.Has(storeId) {
 			novelStoreIds.Add(storeId)
 		}
 	})
 	if sz := novelStoreIds.Size(); sz > 0 {
 		novelStoreIds.All(func(storeId eventID) {
-			seqPair := &SeqPair{}
-			r.storeIdsToStoreSeqs.Set(storeId, seqPair)
+			seqPair := &StoreState{}
+			r.storeIdsToStoreState.Set(storeId, seqPair)
 		})
-		for _, novelStoreIdsSubslice := range novelStoreIds.Slice().subslice(256) {
+		for _, novelStoreIdsSubslice := range subslice(novelStoreIds.Slice(), 256) {
 			// Index: events(createdByStoreId, storeSeq)
 			query := `select createdByStoreId, max(storeSeq) from events where createdByStoreId = any($1) group by createdByStoreId`
 			rows, err := r.connPool.Query(ctx, query, novelStoreIdsSubslice)
@@ -1560,7 +1661,7 @@ func (r *Relay) hydrateStores(storeIds *SetEventIds) {
 				var lastWrittenStoreSeq *uint64
 				err := rows.Scan(&storeID, &lastWrittenStoreSeq)
 				check(err)
-				seqPair := r.storeIdsToStoreSeqs.MustGet(storeID)
+				seqPair := r.storeIdsToStoreState.MustGet(storeID)
 				if lastWrittenStoreSeq != nil {
 					seqPair.lastWrittenStoreSeq = *lastWrittenStoreSeq
 					seqPair.lastUsedStoreSeq = *lastWrittenStoreSeq
@@ -1571,7 +1672,8 @@ func (r *Relay) hydrateStores(storeIds *SetEventIds) {
 	}
 	elapsed := took(start)
 	if novelStoreIds.Size() > 0 || elapsed > 1 {
-		log("relay.hydrateUsers users=%d novelUsers=%d elapsed=%d", storeIds.Size(), novelStoreIds.Size(), elapsed)
+		log("relay.hydrateStores stores=%d novelStores=%d elapsed=%d", storeIds.Size(), novelStoreIds.Size(), elapsed)
+		r.metric.counterAdd("hydrate_users", float64(novelStoreIds.Size()))
 	}
 }
 
@@ -1598,11 +1700,7 @@ func (r *Relay) loadServerSeq() {
 func (r *Relay) readEvents(whereFragment string, indexedIds []eventID) []EventInsert {
 	// Index: events(field in whereFragment)
 	// The indicies eventsOnEventTypeAnd* should correspond to the various Loaders defined in newDatabase.
-	query := fmt.Sprintf(`select serverSeq, storeSeq, eventId, eventType, createdByKeyCardId, createdByStoreId, createdAt, createdByNetworkSchemaVersion, signature,
-	storeTokenId, domain, publishedTagId, manifestUpdateField, string, addr, referencedEventId, itemId, price,
-	metadata, itemUpdateField, name, tagId, cartId, quantity, itemIds, changes, txHash,
-    purchaseAddr, erc20Addr, subTotal, salesTax, total, totalInCrypto, paymentId, paymentTtl
-from events where %s order by serverSeq asc`, whereFragment)
+	query := fmt.Sprintf(`select serverSeq, storeSeq, eventType, createdByKeyCardId, createdByStoreId, createdAt, createdByNetworkSchemaVersion, encoded from events where %s order by serverSeq asc`, whereFragment)
 	var rows pgx.Rows
 	var err error
 	if r.syncTx != nil {
@@ -1615,222 +1713,18 @@ from events where %s order by serverSeq asc`, whereFragment)
 	events := make([]EventInsert, 0)
 	for rows.Next() {
 		var (
-			serverSeq               uint64
-			storeSeq                uint64
-			eID                     eventID
-			eventType               eventType
-			createdByKeyCardID      requestID
-			createdByStoreID        eventID
-			createdAt               time.Time
-			createdByNetworkVersion uint16
-			signature               []byte
-			storeTokenID            *[]byte
-			domain                  *string
-			publishedTagID          *[]byte
-			manifestUpdateField     *UpdateManifest_ManifestField
-			stringVal               *string
-			addrVal                 *[]byte
-			referencedEventID       *[]byte
-			itemID                  *[]byte
-			price                   *string
-			metadata                *[]byte
-			itemUpdateField         *UpdateItem_ItemField
-			name                    *string
-			tagID                   *[]byte
-			cartID                  *[]byte
-			quantity                *int32
-			itemIds                 *[][]byte
-			changes                 *[]int32
-			txHash                  *[]byte
-			purchaseAddr            *[]byte
-			erc20Addr               *[]byte
-			subTotal                *string
-			salesTax                *string
-			total                   *string
-			totalInCrypto           *string
-			paymentId               *[]byte
-			paymentTtl              *string
+			eventType eventType
+			createdAt time.Time
+			encoded   []byte
 		)
-		err := rows.Scan(&serverSeq, &storeSeq, &eID, &eventType, &createdByKeyCardID, &createdByStoreID, &createdAt, &createdByNetworkVersion, &signature,
-			&storeTokenID, &domain, &publishedTagID, &manifestUpdateField, &stringVal, &addrVal, &referencedEventID, &itemID, &price,
-			&metadata, &itemUpdateField, &name, &tagID, &cartID, &quantity, &itemIds, &changes, &txHash,
-			&purchaseAddr, &erc20Addr, &subTotal, &salesTax, &total, &totalInCrypto, &paymentId, &paymentTtl,
-		)
+		var m CachedMetadata
+		err := rows.Scan(&m.serverSeq, &m.storeSeq, &eventType, &m.createdByKeyCardID, &m.createdByStoreID, &createdAt, &m.createdByNetworkVersion, &encoded)
 		check(err)
-		m := CachedMetadata{
-			createdByStoreID:        createdByStoreID,
-			storeSeq:                storeSeq,
-			createdByKeyCardID:      createdByKeyCardID,
-			createdByNetworkVersion: createdByNetworkVersion,
-			createdAt:               uint64(createdAt.Unix()),
-			serverSeq:               serverSeq,
-		}
-		var e = &Event{}
-		e.Signature = signature
-		switch eventType {
-		case eventTypeStoreManifest:
-			assert(storeTokenID != nil)
-			assert(domain != nil)
-			assert(publishedTagID != nil)
-			sm := &StoreManifest{
-				EventId:        eID,
-				StoreTokenId:   *storeTokenID,
-				Domain:         *domain,
-				PublishedTagId: *publishedTagID,
-			}
-			e.Union = &Event_StoreManifest{StoreManifest: sm}
-		case eventTypeUpdateManifest:
-			assert(manifestUpdateField != nil)
-			um := &UpdateManifest{
-				EventId: eID,
-				Field:   *manifestUpdateField,
-			}
-			if *manifestUpdateField == UpdateManifest_MANIFEST_FIELD_DOMAIN {
-				assert(stringVal != nil)
-				um.Value = &UpdateManifest_String_{String_: *stringVal}
-			}
-			if *manifestUpdateField == UpdateManifest_MANIFEST_FIELD_PUBLISHED_TAG {
-				assert(referencedEventID != nil)
-				um.Value = &UpdateManifest_TagId{TagId: *referencedEventID}
-			} else if *manifestUpdateField == UpdateManifest_MANIFEST_FIELD_ADD_ERC20 || *manifestUpdateField == UpdateManifest_MANIFEST_FIELD_REMOVE_ERC20 {
-				assert(addrVal != nil)
-				um.Value = &UpdateManifest_Erc20Addr{Erc20Addr: *addrVal}
-			}
-			e.Union = &Event_UpdateManifest{UpdateManifest: um}
-		case eventTypeCreateItem:
-			assert(itemID != nil)
-			assert(price != nil)
-			assert(metadata != nil)
-			ci := &CreateItem{
-				EventId:  eID,
-				Price:    *price,
-				Metadata: *metadata,
-			}
-			e.Union = &Event_CreateItem{CreateItem: ci}
-		case eventTypeUpdateItem:
-			assert(itemID != nil)
-			assert(itemUpdateField != nil)
-			ui := &UpdateItem{
-				EventId: eID,
-				ItemId:  *itemID,
-				Field:   *itemUpdateField,
-			}
-			if *itemUpdateField == UpdateItem_ITEM_FIELD_PRICE {
-				assert(price != nil)
-				ui.Value = &UpdateItem_Price{Price: *price}
-			}
-			if *itemUpdateField == UpdateItem_ITEM_FIELD_METADATA {
-				assert(metadata != nil)
-				ui.Value = &UpdateItem_Metadata{Metadata: *metadata}
-			}
-			e.Union = &Event_UpdateItem{UpdateItem: ui}
-		case eventTypeCreateTag:
-			assert(tagID != nil)
-			assert(name != nil)
-			ct := &CreateTag{
-				EventId: eID,
-				Name:    *name,
-			}
-			e.Union = &Event_CreateTag{CreateTag: ct}
-		case eventTypeAddToTag:
-			assert(tagID != nil)
-			assert(itemID != nil)
-			at := &AddToTag{
-				EventId: eID,
-				TagId:   *tagID,
-				ItemId:  *itemID,
-			}
-			e.Union = &Event_AddToTag{AddToTag: at}
-		case eventTypeRemoveFromTag:
-			assert(tagID != nil)
-			assert(itemID != nil)
-			rft := &RemoveFromTag{
-				EventId: eID,
-				TagId:   *tagID,
-				ItemId:  *itemID,
-			}
-			e.Union = &Event_RemoveFromTag{RemoveFromTag: rft}
-		case eventTypeRenameTag:
-			assert(tagID != nil)
-			assert(name != nil)
-			rt := &RenameTag{
-				EventId: eID,
-				TagId:   *tagID,
-				Name:    *name,
-			}
-			e.Union = &Event_RenameTag{RenameTag: rt}
-		case eventTypeDeleteTag:
-			assert(tagID != nil)
-			dt := &DeleteTag{
-				EventId: eID,
-				TagId:   *tagID,
-			}
-			e.Union = &Event_DeleteTag{DeleteTag: dt}
-		case eventTypeChangeStock:
-			assert(itemIds != nil)
-			assert(changes != nil)
-			assert(len(*itemIds) == len(*changes))
-			cs := &ChangeStock{
-				EventId: eID,
-				ItemIds: *itemIds,
-				Diffs:   *changes,
-			}
-			if cartID != nil {
-				cs.CartId = *cartID
-				assert(txHash != nil)
-				cs.TxHash = *txHash
-			}
-			e.Union = &Event_ChangeStock{ChangeStock: cs}
-		case eventTypeCreateCart:
-			assert(cartID != nil)
-			cc := &CreateCart{
-				EventId: eID,
-			}
-			e.Union = &Event_CreateCart{CreateCart: cc}
-		case eventTypeChangeCart:
-			assert(cartID != nil)
-			assert(itemID != nil)
-			assert(quantity != nil)
-			atc := &ChangeCart{
-				EventId:  eID,
-				CartId:   *cartID,
-				ItemId:   *itemID,
-				Quantity: *quantity,
-			}
-			e.Union = &Event_ChangeCart{ChangeCart: atc}
-		case eventTypeCartFinalized:
-			assert(cartID != nil)
-			assert(purchaseAddr != nil)
-			assert(subTotal != nil)
-			assert(salesTax != nil)
-			assert(total != nil)
-			assert(totalInCrypto != nil)
-			cf := &CartFinalized{
-				EventId:       eID,
-				CartId:        *cartID,
-				PurchaseAddr:  *purchaseAddr,
-				SubTotal:      *subTotal,
-				SalesTax:      *salesTax,
-				Total:         *total,
-				TotalInCrypto: *totalInCrypto,
-				PaymentId:     *paymentId,
-				PaymentTtl:    *paymentTtl,
-			}
-			if erc20Addr != nil {
-				cf.Erc20Addr = *erc20Addr
-			}
-			e.Union = &Event_CartFinalized{CartFinalized: cf}
-		case eventTypeCartAbandoned:
-			assert(cartID != nil)
-			ca := &CartAbandoned{
-				EventId: eID,
-				CartId:  *cartID,
-			}
-			e.Union = &Event_CartAbandoned{CartAbandoned: ca}
-		default:
-			panic(fmt.Errorf("unrecognized type: %s", eventType))
-		}
-		events = append(events, EventInsert{CachedMetadata: m, evt: e})
+		m.createdAt = uint64(createdAt.Unix())
+		var e StoreEvent
+		err = proto.Unmarshal(encoded, &e)
+		check(err)
+		events = append(events, EventInsert{CachedMetadata: m, evt: &e, evtType: eventType})
 	}
 	check(rows.Err())
 	return events
@@ -1839,29 +1733,32 @@ from events where %s order by serverSeq asc`, whereFragment)
 // EventInsert is a struct that represents an event to be inserted into the database
 type EventInsert struct {
 	CachedMetadata
-	evt *Event
+	evtType eventType
+	evt     *StoreEvent
+	pbany   *anypb.Any
 }
 
-func newEventInsert(evt *Event, meta CachedMetadata) *EventInsert {
+func newEventInsert(evt *StoreEvent, meta CachedMetadata, abstract *anypb.Any) *EventInsert {
 	meta.createdAt = uint64(now().Unix())
 	return &EventInsert{
 		CachedMetadata: meta,
 		evt:            evt,
+		pbany:          abstract,
 	}
 }
 
-func (r *Relay) writeEvent(evt *Event, cm CachedMetadata) {
+func (r *Relay) writeEvent(evt *StoreEvent, cm CachedMetadata, abstract *anypb.Any) {
 	assert(r.writesEnabled)
 
 	nextServerSeq := r.lastUsedServerSeq + 1
 	cm.serverSeq = nextServerSeq
 	r.lastUsedServerSeq = nextServerSeq
 
-	seqPair := r.storeIdsToStoreSeqs.MustGet(cm.createdByStoreID)
-	cm.storeSeq = seqPair.lastUsedStoreSeq + 1
-	seqPair.lastUsedStoreSeq = cm.storeSeq
+	storeSeqPair := r.storeIdsToStoreState.MustGet(cm.createdByStoreID)
+	cm.storeSeq = storeSeqPair.lastUsedStoreSeq + 1
+	storeSeqPair.lastUsedStoreSeq = cm.storeSeq
 
-	insert := newEventInsert(evt, cm)
+	insert := newEventInsert(evt, cm, abstract)
 	r.queuedEventInserts = append(r.queuedEventInserts, insert)
 	r.applyEvent(insert)
 }
@@ -1886,14 +1783,75 @@ func (r *Relay) commitSyncTransaction() {
 	r.syncTx = nil
 }
 
-var dbEntryInsertColumns = []string{
-	"eventType", "eventId", "createdByKeyCardId", "createdByStoreId", "storeSeq", "createdAt", "createdByNetworkSchemaVersion", "serverSeq", "signature",
-	"storeTokenId", "domain", "publishedTagId", "manifestUpdateField", "string", "addr", "referencedEventId",
-	"itemId", "price", "metadata", "itemUpdateField",
-	"name", "tagId",
-	"cartId", "quantity", "itemIds", "changes", "txHash",
-	"purchaseAddr", "erc20Addr", "subTotal", "salesTax", "total", "totalInCrypto",
-	"userWallet", "cardPublicKey", "paymentId", "paymentTtl"}
+var dbEventInsertColumns = []string{"eventType", "eventId", "createdByKeyCardId", "createdByStoreId", "storeSeq", "createdAt", "createdByNetworkSchemaVersion", "serverSeq", "encoded", "referenceID"}
+
+func formInsert(ins *EventInsert) []interface{} {
+	var (
+		evtType eventType
+		evtID   eventID
+		refID   *eventID // used to stich together related events
+	)
+	switch ins.evt.Union.(type) {
+	case *StoreEvent_StoreManifest:
+		evtType = eventTypeStoreManifest
+		evtID = ins.evt.GetStoreManifest().EventId
+	case *StoreEvent_UpdateStoreManifest:
+		evtType = eventTypeUpdateStoreManifest
+		evtID = ins.evt.GetUpdateStoreManifest().EventId
+	case *StoreEvent_CreateItem:
+		evtType = eventTypeCreateItem
+		evtID = ins.evt.GetCreateItem().EventId
+		refID = &evtID
+	case *StoreEvent_UpdateItem:
+		evtType = eventTypeUpdateItem
+		ui := ins.evt.GetUpdateItem()
+		evtID = ui.EventId
+		refID = (*eventID)(&ui.ItemId)
+	case *StoreEvent_CreateTag:
+		evtType = eventTypeCreateTag
+		evtID = ins.evt.GetCreateTag().EventId
+		refID = &evtID
+	case *StoreEvent_UpdateTag:
+		evtType = eventTypeUpdateTag
+		ut := ins.evt.GetUpdateTag()
+		evtID = ut.EventId
+		refID = (*eventID)(&ut.TagId)
+	case *StoreEvent_ChangeStock:
+		evtType = eventTypeChangeStock
+		cs := ins.evt.GetChangeStock()
+		evtID = cs.EventId
+		if len(cs.OrderId) > 0 {
+			refID = (*eventID)(&cs.OrderId)
+		}
+	case *StoreEvent_CreateOrder:
+		evtType = eventTypeCreateOrder
+		cc := ins.evt.GetCreateOrder()
+		evtID = cc.EventId
+		refID = &evtID
+	case *StoreEvent_UpdateOrder:
+		evtType = eventTypeUpdateOrder
+		uo := ins.evt.GetUpdateOrder()
+		evtID = uo.EventId
+		refID = (*eventID)(&uo.OrderId)
+	case *StoreEvent_NewKeyCard:
+		evtType = eventTypeNewKeyCard
+		evtID = ins.evt.GetNewKeyCard().EventId
+	default:
+		panic(fmt.Errorf("formInsert.unrecognizeType eventType=%T", ins.evt.Union))
+	}
+	return []interface{}{
+		evtType,                     // eventType
+		evtID,                       // eventId
+		ins.createdByKeyCardID,      // createdByKeyCardId
+		ins.createdByStoreID,        // createdByStoreId
+		ins.storeSeq,                // storeSeq
+		now(),                       // createdAt
+		ins.createdByNetworkVersion, // createdByNetworkSchemaVersion
+		ins.serverSeq,               // serverSeq
+		ins.pbany.Value,             // encoded
+		refID,                       // referenceID
+	}
+}
 
 func (r *Relay) flushEvents() {
 	if len(r.queuedEventInserts) == 0 {
@@ -1905,26 +1863,57 @@ func (r *Relay) flushEvents() {
 
 	eventTuples := make([][]any, len(r.queuedEventInserts))
 	for i, ei := range r.queuedEventInserts {
-		eventTuples[i] = formInsert(ei.evt, ei.CachedMetadata)
+		eventTuples[i] = formInsert(ei)
 	}
 	assert(r.lastWrittenServerSeq < r.lastUsedServerSeq)
-	insertedEntryRows, conflictedEntryRows := r.bulkInsert("events", dbEntryInsertColumns, eventTuples)
-	for _, row := range insertedEntryRows {
+	insertedEventRows, conflictedEventRows := r.bulkInsert("events", dbEventInsertColumns, eventTuples)
+	for _, row := range insertedEventRows {
 		rowServerSeq := row[7].(uint64)
 		assert(r.lastWrittenServerSeq < rowServerSeq)
 		assert(rowServerSeq <= r.lastUsedServerSeq)
 		r.lastWrittenServerSeq = rowServerSeq
 		rowStoreID := row[3].(eventID)
 		rowStoreSeq := row[4].(uint64)
-		storeSeqPair := r.storeIdsToStoreSeqs.MustGet(rowStoreID)
+		storeSeqPair := r.storeIdsToStoreState.MustGet(rowStoreID)
 		assert(storeSeqPair.lastWrittenStoreSeq < rowStoreSeq)
 		assert(rowStoreSeq <= storeSeqPair.lastUsedStoreSeq)
 		storeSeqPair.lastWrittenStoreSeq = rowStoreSeq
 	}
 	assert(r.lastWrittenServerSeq <= r.lastUsedServerSeq)
 
+	// We only want to propagate the original event write and don't want to redo it if the
+	// event is written again idempotently (i.e. ends up in the discarded conflicted rows
+	// value above.)
+	// Don't do anything if there were no inserts because this would lead to an empty
+	// bulk insert.
+	if len(insertedEventRows) > 0 {
+		eventPropagationTuples := make([][]any, len(insertedEventRows))
+		for i, row := range insertedEventRows {
+			eventPropagationTuples[i] = []any{row[1].(eventID)}
+		}
+		r.bulkInsert("eventPropagations", []string{"eventId"}, eventPropagationTuples)
+		for _, row := range conflictedEventRows {
+			log("db.flushEntries.discardConflictedEvent eventId=%x", row[1].(eventID))
+		}
+	}
+
 	r.queuedEventInserts = nil
-	log("relay.flushEvents.finish insertedEntries=%d conflictedEntries=%d elapsed=%d", len(insertedEntryRows), len(conflictedEntryRows), took(start))
+	log("relay.flushEvents.finish insertedEntries=%d conflictedEntries=%d elapsed=%d", len(insertedEventRows), len(conflictedEventRows), took(start))
+}
+
+// returns true if the event is owned by the passed store and keyCard
+func (r *Relay) doesSessionOwnEvent(session *SessionState, eventID eventID) bool {
+	ctx := context.Background()
+
+	// crawl all keyCards of this user
+	const checkOrderOwnershipQuery = `select count(*) from events
+where createdByKeyCardId in (select id from keycards where userWalletAddr = (select userWalletAddr from keyCards where id = $1))
+and createdByStoreId = $2
+and eventId = $3`
+	var found int
+	err := r.connPool.QueryRow(ctx, checkOrderOwnershipQuery, session.keyCardID, session.storeID, eventID).Scan(&found)
+	check(err)
+	return found == 1
 }
 
 // Loader is an interface for all loaders.
@@ -1933,13 +1922,13 @@ type Loader interface {
 	applyEvent(*EventInsert)
 }
 
-type fieldFn func(*Event, CachedMetadata) eventID
+type fieldFn func(*StoreEvent, CachedMetadata) eventID
 
 // ReductionLoader is a struct that represents a loader for a specific event type
 type ReductionLoader[T CachedEvent] struct {
 	db            *Relay
 	fieldFn       fieldFn
-	loaded        *MapEventIds[T]
+	loaded        *MapEventIDs[T]
 	whereFragment string
 }
 
@@ -1947,7 +1936,7 @@ func newReductionLoader[T CachedEvent](r *Relay, fn fieldFn, pgTypes []eventType
 	sl := &ReductionLoader[T]{}
 	sl.db = r
 	sl.fieldFn = fn
-	sl.loaded = NewMapEventIds[T]()
+	sl.loaded = NewMapEventIDs[T]()
 	var quotedTypes = make([]string, len(pgTypes))
 	for i, pgType := range pgTypes {
 		quotedTypes[i] = fmt.Sprintf("'%s'", string(pgType))
@@ -1999,31 +1988,30 @@ func (r *Relay) applyEvent(e *EventInsert) {
 }
 
 func (op *StartOp) process(r *Relay) {
-	assert(!r.sessionIdsToSessionStates.Has(op.sessionID))
+	assert(!r.sessionIDsToSessionStates.Has(op.sessionID))
 	assert(op.sessionVersion != 0)
 	assert(op.sessionOps != nil)
 	logS(op.sessionID, "relay.startOp.start")
 	sessionState := &SessionState{
-		dbWorld:    r.ops,
 		version:    op.sessionVersion,
 		sessionOps: op.sessionOps,
 		buffer:     make([]*EventState, 0),
 	}
-	r.sessionIdsToSessionStates.Set(op.sessionID, sessionState)
+	r.sessionIDsToSessionStates.Set(op.sessionID, sessionState)
 	r.lastSeenAtTouch(sessionState)
 }
 
 func (op *StopOp) process(r *Relay) {
-	sessionState, sessionExists := r.sessionIdsToSessionStates.GetHas(op.sessionID)
+	sessionState, sessionExists := r.sessionIDsToSessionStates.GetHas(op.sessionID)
 	logS(op.sessionID, "relay.stopOp.start exists=%t", sessionExists)
 	if sessionExists {
-		r.sessionIdsToSessionStates.Delete(op.sessionID)
+		r.sessionIDsToSessionStates.Delete(op.sessionID)
 		r.sendSessionOp(sessionState, op)
 	}
 }
 
 func (op *HeartbeatOp) process(r *Relay) {
-	sessionState := r.sessionIdsToSessionStates.Get(op.sessionID)
+	sessionState := r.sessionIDsToSessionStates.Get(op.sessionID)
 	if sessionState == nil {
 		logS(op.sessionID, "relay.heartbeatOp.drain")
 		return
@@ -2034,7 +2022,7 @@ func (op *HeartbeatOp) process(r *Relay) {
 
 func (op *AuthenticateOp) process(r *Relay) {
 	// Make sure the session isn't gone or already authenticated.
-	sessionState := r.sessionIdsToSessionStates.Get(op.sessionID)
+	sessionState := r.sessionIDsToSessionStates.Get(op.sessionID)
 	if sessionState == nil {
 		logS(op.sessionID, "relay.authenticateOp.drain")
 		return
@@ -2070,7 +2058,7 @@ func (op *AuthenticateOp) process(r *Relay) {
 	// a dangling session that only the server side thinks is still alive.
 	// Reject this authentication attempt from the second device, but with the stop
 	// the client should be able to successfully retry shortly.
-	iter := r.sessionIdsToSessionStates.Iter()
+	iter := r.sessionIDsToSessionStates.Iter()
 
 	for {
 		otherSessionID, otherSessionState, ok := iter.Next()
@@ -2089,7 +2077,7 @@ func (op *AuthenticateOp) process(r *Relay) {
 
 	// generate challenge
 	ch := make([]byte, 32)
-	crand.Read(ch)
+	_, _ = crand.Read(ch)
 
 	op.challenge = ch
 	sessionState.authChallenge = ch
@@ -2102,13 +2090,13 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 	logS(op.sessionID, "relay.challengeSolvedOp.start")
 	challengeSolvedOpStart := now()
 
-	sessionState := r.sessionIdsToSessionStates.Get(op.sessionID)
+	sessionState := r.sessionIDsToSessionStates.Get(op.sessionID)
 	if sessionState == nil {
 		logS(op.sessionID, "relay.challengeSolvedOp.drain")
 		return
 	} else if sessionState.keyCardID == nil {
 		logS(op.sessionID, "relay.challengeSolvedOp.invalidSessionState")
-		op.err = &Error{Code: invalidErrorCode, Message: "authentication not started"}
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "authentication not started"}
 		r.sendSessionOp(sessionState, op)
 		return
 	} else if sessionState.storeID != nil {
@@ -2120,6 +2108,7 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 
 	var keyCardPublicKey []byte
 	var storeID eventID
+
 	logS(op.sessionID, "relay.challengeSolvedOp.query")
 	ctx := context.Background()
 	// Index: keyCards(publicKey)
@@ -2145,15 +2134,16 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 
 	// Create or update the device DB record.
 	var dbUnlinkedAt *time.Time
-	var dbLastAckedstoreSeq uint64
+	var dbLastAckedKCSeq uint64
 	var dbLastVersion int
+	var isGuestKeyCard bool
 	instant := now()
 	sessionState.lastSeenAt = instant
 	sessionState.lastSeenAtFlushed = instant
 
 	// Index: keyCards(id)
-	query = `select unlinkedAt, lastAckedstoreSeq, lastVersion from keyCards where id = $1`
-	err = r.connPool.QueryRow(ctx, query, sessionState.keyCardID).Scan(&dbUnlinkedAt, &dbLastAckedstoreSeq, &dbLastVersion)
+	query = `select unlinkedAt, lastAckedKCSeq, lastVersion, isGuest from keyCards where id = $1`
+	err = r.connPool.QueryRow(ctx, query, sessionState.keyCardID).Scan(&dbUnlinkedAt, &dbLastAckedKCSeq, &dbLastVersion, &isGuestKeyCard)
 	if err != nil {
 		panic(err)
 	} else if dbUnlinkedAt != nil {
@@ -2168,30 +2158,31 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 	}
 
 	logS(op.sessionID, "relay.challengeSolvedOp.existingDevice")
-	sessionState.lastStatusedStoreSeq = dbLastAckedstoreSeq
-	sessionState.lastBufferedStoreSeq = dbLastAckedstoreSeq
-	sessionState.lastPushedStoreSeq = dbLastAckedstoreSeq
-	sessionState.lastAckedStoreSeq = dbLastAckedstoreSeq
-	sessionState.lastAckedStoreSeqFlushed = dbLastAckedstoreSeq
+	// update sessionState
+	sessionState.keyCardOfAGuest = isGuestKeyCard
+	sessionState.lastStatusedKCSeq = dbLastAckedKCSeq
+	sessionState.lastBufferedKCSeq = dbLastAckedKCSeq
+	sessionState.lastPushedKCSeq = dbLastAckedKCSeq
+	sessionState.lastAckedKCSeq = dbLastAckedKCSeq
+	sessionState.lastAckedKCSeqFlushed = dbLastAckedKCSeq
 	query = `update keyCards set lastVersion = $1, lastSeenAt = $2 where id = $3`
 	_, err = r.connPool.Exec(ctx, query, sessionState.version, sessionState.lastSeenAt, sessionState.keyCardID)
 	check(err)
 
-	// update sessionState
 	sessionState.storeID = storeID
 	sessionState.initialStatus = false
 	sessionState.nextPushIndex = 0
 	sessionState.keyCardPublicKey = keyCardPublicKey
 
 	// Establish store seq.
-	r.hydrateStores(NewSetEventIds(storeID))
-	seqPair, has := r.storeIdsToStoreSeqs.GetHas(sessionState.storeID)
-	assert(has)
+	r.hydrateStores(NewSetEventIDs(sessionState.storeID))
+	r.hydrateKeyCards(NewSetRequestIDs(sessionState.keyCardID))
+	seqPair := r.keyCardIDsToKeyCardSeqs.MustGet(sessionState.keyCardID)
 
 	// Verify we have valid seq cursor relationships. We will check this whenever we move a cursor.
 	err = r.checkCursors(op.sessionID, seqPair, sessionState)
-	logS(op.sessionID, "relay.challengeSolvedOp.checkCursors lastWrittenStoreSeq=%d lastUsedstoreSeq=%d lastStatusedstoreSeq=%d lastBufferedstoreSeq=%d lastPushedstoreSeq=%d lastAckedstoreSeq=%d error=%t",
-		seqPair.lastWrittenStoreSeq, seqPair.lastUsedStoreSeq, sessionState.lastStatusedStoreSeq, sessionState.lastBufferedStoreSeq, sessionState.lastPushedStoreSeq, sessionState.lastAckedStoreSeq, err != nil)
+	logS(op.sessionID, "relay.challengeSolvedOp.checkCursors lastWrittenKCSeq=%d lastUsedKCSeq=%d lastStatusedKCSeq=%d lastBufferedKCSeq=%d lastPushedKCSeq=%d lastAckedKCSeq=%d error=%t",
+		seqPair.lastWrittenKCSeq, seqPair.lastUsedKCSeq, sessionState.lastStatusedKCSeq, sessionState.lastBufferedKCSeq, sessionState.lastPushedKCSeq, sessionState.lastAckedKCSeq, err != nil)
 	if err != nil {
 		logS(op.sessionID, "relay.challengeSolvedOp.brokenCursor err=%s", err.Error())
 		op.err = notFoundError
@@ -2222,7 +2213,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 	// 1. the manifest
 	manifestHash := sha3.NewLegacyKeccak256()
 	manifestHash.Write(storeManifest.storeTokenID)
-	fmt.Fprint(manifestHash, storeManifest.domain)
+	_, _ = fmt.Fprint(manifestHash, storeManifest.domain)
 	manifestHash.Write(storeManifest.publishedTagID)
 	//log("relay.storeRootHash manifest=%x", manifestHash.Sum(nil))
 
@@ -2258,7 +2249,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 		for _, id := range stockIds {
 			count := stock.inventory.MustGet(id)
 			stockHash.Write(id)
-			fmt.Fprintf(stockHash, "%d", count)
+			_, _ = fmt.Fprintf(stockHash, "%d", count)
 		}
 	}
 	//log("relay.storeRootHash stock=%x", stockHash.Sum(nil))
@@ -2279,7 +2270,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 func (op *EventWriteOp) process(r *Relay) {
 	sessionID := op.sessionID
 	requestID := op.im.RequestId
-	sessionState := r.sessionIdsToSessionStates.Get(sessionID)
+	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
 	if sessionState == nil {
 		logSR("relay.eventWriteOp.drain", sessionID, requestID)
 		return
@@ -2293,17 +2284,15 @@ func (op *EventWriteOp) process(r *Relay) {
 	r.lastSeenAtTouch(sessionState)
 
 	// check signature
-	if err := r.ethClient.eventVerify(op.im.Event, sessionState.keyCardPublicKey); err != nil {
+	if err := r.ethClient.eventVerify(op.decodedStoreEvt, sessionState.keyCardPublicKey); err != nil {
 		logSR("relay.eventWriteOp.verifyEventFailed err=%s", sessionID, requestID, err.Error())
-		op.err = &Error{Code: invalidErrorCode, Message: "invalid signature"}
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "invalid signature"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
-	// check and validate write
-	e := op.im.Event
 	meta := newMetadata(sessionState.keyCardID, sessionState.storeID, uint16(sessionState.version))
-	if err := r.checkWrite(e, meta, sessionState); err != nil {
+	if err := r.checkStoreEventWriteConsistency(op.decodedStoreEvt, meta, sessionState); err != nil {
 		logSR("relay.eventWriteOp.checkEventFailed code=%s msg=%s", sessionID, requestID, err.Code, err.Message)
 		op.err = err
 		r.sendSessionOp(sessionState, op)
@@ -2312,11 +2301,11 @@ func (op *EventWriteOp) process(r *Relay) {
 
 	// update store
 	r.beginSyncTransaction()
-	r.writeEvent(e, meta)
+	r.writeEvent(op.decodedStoreEvt, meta, op.im.Event)
 	r.commitSyncTransaction()
 
 	// compute resulting hash
-	storeSeq := r.storeIdsToStoreSeqs.MustGet(sessionState.storeID)
+	storeSeq := r.storeIdsToStoreState.MustGet(sessionState.storeID)
 	if storeSeq.lastUsedStoreSeq >= 3 {
 		hash := r.storeRootHash(sessionState.storeID)
 		op.newStoreHash = hash
@@ -2326,76 +2315,87 @@ func (op *EventWriteOp) process(r *Relay) {
 	r.sendSessionOp(sessionState, op)
 }
 
-func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *Error {
-	_, storeManifestExists := r.storeManifestsByStoreID.get(m.createdByStoreID)
+func (r *Relay) checkStoreEventWriteConsistency(union *StoreEvent, m CachedMetadata, sess *SessionState) *Error {
+	manifest, storeExists := r.storeManifestsByStoreID.get(m.createdByStoreID)
+	storeManifestExists := storeExists && len(manifest.storeTokenID) > 0
+
 	switch tv := union.Union.(type) {
-	case *Event_StoreManifest:
-		if storeManifestExists {
-			return &Error{Code: invalidErrorCode, Message: "store already exists"}
+
+	case *StoreEvent_StoreManifest:
+		if sess.keyCardOfAGuest {
+			return notFoundError
 		}
-	case *Event_UpdateManifest:
+		if storeManifestExists {
+			return &Error{Code: ErrorCodes_invalid, Message: "store already exists"}
+		}
+
+	case *StoreEvent_UpdateStoreManifest:
 		if !storeManifestExists {
 			return notFoundError
 		}
-		// this feels like a validation step but we dont have access to the relay there
-		if tv.UpdateManifest.Field == UpdateManifest_MANIFEST_FIELD_ADD_ERC20 {
+		if sess.keyCardOfAGuest {
+			return notFoundError
+		}
+		// this feels like a pre-op validation step but we dont have access to the relay there
+		if tv.UpdateStoreManifest.Field == UpdateStoreManifest_MANIFEST_FIELD_ADD_ERC20 {
 			callOpts := &bind.CallOpts{
 				Pending: false,
 				From:    r.ethClient.wallet,
 				Context: context.Background(),
 			}
 
-			erc20TokenAddr := tv.UpdateManifest.GetErc20Addr()
+			erc20TokenAddr := tv.UpdateStoreManifest.GetErc20Addr()
 
 			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 			defer cancel()
 
 			gethClient, err := r.ethClient.getClient(ctx)
 			if err != nil {
-				log("relay.checkWrite.failedToGetClient err=%s", err)
-				return &Error{Code: invalidErrorCode, Message: "internal server error"}
+				log("relay.validateWrite.failedToGetClient err=%s", err)
+				return &Error{Code: ErrorCodes_invalid, Message: "internal server error"}
 			}
 			defer gethClient.Close()
 
 			tokenCaller, err := NewERC20Caller(common.Address(erc20TokenAddr), gethClient)
 			if err != nil {
-				log("relay.checkWrite.newERC20Caller err=%s", err)
-				return &Error{Code: invalidErrorCode, Message: "failed to create token caller"}
+				log("relay.validateWrite.newERC20Caller err=%s", err)
+				return &Error{Code: ErrorCodes_invalid, Message: "failed to create token caller"}
 			}
 			decimalCount, err := tokenCaller.Decimals(callOpts)
 			if err != nil {
-				return &Error{Code: invalidErrorCode, Message: fmt.Sprintf("failed to get token decimals: %s", err)}
+				return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("failed to get token decimals: %s", err)}
 			}
 			if decimalCount < 1 || decimalCount > 18 {
-				return &Error{Code: invalidErrorCode, Message: "invalid token decimals"}
+				return &Error{Code: ErrorCodes_invalid, Message: "invalid token decimals"}
 			}
 			symbol, err := tokenCaller.Symbol(callOpts)
 			if err != nil {
-				return &Error{Code: invalidErrorCode, Message: fmt.Sprintf("failed to get token symbol: %s", err)}
+				return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("failed to get token symbol: %s", err)}
 			}
 			if symbol == "" {
-				return &Error{Code: invalidErrorCode, Message: "invalid token symbol"}
+				return &Error{Code: ErrorCodes_invalid, Message: "invalid token symbol"}
 			}
 
 			tokenName, err := tokenCaller.Name(callOpts)
 			if err != nil {
-				return &Error{Code: invalidErrorCode, Message: fmt.Sprintf("failed to get token name: %s", err)}
+				return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("failed to get token name: %s", err)}
 			}
 			if tokenName == "" {
-				return &Error{Code: invalidErrorCode, Message: "invalid token name"}
+				return &Error{Code: ErrorCodes_invalid, Message: "invalid token name"}
 			}
 		}
-	case *Event_CreateItem:
-		if !storeManifestExists {
+	case *StoreEvent_CreateItem:
+		if !storeManifestExists || sess.keyCardOfAGuest {
 			return notFoundError
 		}
 		evt := union.GetCreateItem()
 		_, itemExists := r.itemsByItemID.get(evt.EventId)
 		if itemExists {
-			return &Error{Code: invalidErrorCode, Message: "item already exists"}
+			return &Error{Code: ErrorCodes_invalid, Message: "item already exists"}
 		}
-	case *Event_UpdateItem:
-		if !storeManifestExists {
+
+	case *StoreEvent_UpdateItem:
+		if !storeManifestExists || sess.keyCardOfAGuest {
 			return notFoundError
 		}
 		evt := union.GetUpdateItem()
@@ -2403,23 +2403,25 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 		if !itemExists {
 			return notFoundError
 		}
-		if !item.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
+		if !item.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other store
 			return notFoundError
 		}
-	case *Event_CreateTag:
-		if !storeManifestExists {
+
+	case *StoreEvent_CreateTag:
+		if !storeManifestExists || sess.keyCardOfAGuest {
 			return notFoundError
 		}
 		evt := union.GetCreateTag()
 		_, tagExists := r.tagsByTagID.get(evt.EventId)
 		if tagExists {
-			return &Error{Code: invalidErrorCode, Message: "tag already exists"}
+			return &Error{Code: ErrorCodes_invalid, Message: "tag already exists"}
 		}
-	case *Event_AddToTag:
-		if !storeManifestExists {
+
+	case *StoreEvent_UpdateTag:
+		if !storeManifestExists || sess.keyCardOfAGuest {
 			return notFoundError
 		}
-		evt := union.GetAddToTag()
+		evt := union.GetUpdateTag()
 		tag, tagExists := r.tagsByTagID.get(evt.TagId)
 		if !tagExists {
 			return notFoundError
@@ -2427,58 +2429,28 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 		if !tag.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
 			return notFoundError
 		}
-		item, itemExists := r.itemsByItemID.get(evt.ItemId)
-		if !itemExists {
-			return notFoundError
+		switch evt.Action {
+		case UpdateTag_TAG_ACTION_ADD_ITEM:
+			fallthrough
+		case UpdateTag_TAG_ACTION_REMOVE_ITEM:
+			itemID := evt.GetItemId()
+			item, itemExists := r.itemsByItemID.get(itemID)
+			if !itemExists {
+				return notFoundError
+			}
+			if !item.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
+				return notFoundError
+			}
+		case UpdateTag_TAG_ACTION_RENAME:
+			// nothing to do
+		case UpdateTag_TAG_ACTION_DELETE_TAG:
+			// nothing to do
+		default:
+			panic(fmt.Errorf("eventWritesOp.validateWrite.unrecognizeType eventType=%T", union.Union))
 		}
-		if !item.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
-			return notFoundError
-		}
-	case *Event_RemoveFromTag:
-		if !storeManifestExists {
-			return notFoundError
-		}
-		evt := union.GetRemoveFromTag()
-		tag, tagExists := r.tagsByTagID.get(evt.TagId)
-		if !tagExists {
-			return notFoundError
-		}
-		if !tag.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
-			return notFoundError
-		}
-		item, itemExists := r.itemsByItemID.get(evt.ItemId)
-		if !itemExists {
-			return notFoundError
-		}
-		if !item.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
-			return notFoundError
-		}
-	case *Event_RenameTag:
-		if !storeManifestExists {
-			return notFoundError
-		}
-		evt := union.GetRenameTag()
-		tag, tagExists := r.tagsByTagID.get(evt.TagId)
-		if !tagExists {
-			return notFoundError
-		}
-		if !tag.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
-			return notFoundError
-		}
-	case *Event_DeleteTag:
-		if !storeManifestExists {
-			return notFoundError
-		}
-		evt := union.GetDeleteTag()
-		tag, tagExists := r.tagsByTagID.get(evt.TagId)
-		if !tagExists {
-			return notFoundError
-		}
-		if !tag.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
-			return notFoundError
-		}
-	case *Event_ChangeStock:
-		if !storeManifestExists {
+
+	case *StoreEvent_ChangeStock:
+		if !storeManifestExists || sess.keyCardOfAGuest {
 			return notFoundError
 		}
 		evt := union.GetChangeStock()
@@ -2496,74 +2468,75 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			if storeStockExists {
 				items, has := storeStock.inventory.GetHas(itemID)
 				if has && items+change < 0 {
-					return &Error{Code: outOfStockErrorCode, Message: "not enough stock"}
+					return &Error{Code: ErrorCodes_outOfStock, Message: "not enough stock"}
 				}
 			}
 		}
-	case *Event_CreateCart:
+
+	case *StoreEvent_CreateOrder:
 		if !storeManifestExists {
 			return notFoundError
 		}
-		evt := union.GetCreateCart()
-		_, cartExists := r.cartsByCartID.get(evt.EventId)
-		if cartExists {
-			return &Error{Code: invalidErrorCode, Message: "cart already exists"}
+		evt := union.GetCreateOrder()
+		_, orderExists := r.ordersByOrderID.get(evt.EventId)
+		if orderExists {
+			return &Error{Code: ErrorCodes_invalid, Message: "order already exists"}
 		}
-	case *Event_ChangeCart:
+
+	case *StoreEvent_UpdateOrder:
 		if !storeManifestExists {
 			return notFoundError
 		}
-		evt := union.GetChangeCart()
-		cart, cartExists := r.cartsByCartID.get(evt.CartId)
-		if !cartExists {
+		evt := union.GetUpdateOrder()
+		order, orderExists := r.ordersByOrderID.get(evt.OrderId)
+		if !orderExists {
 			return notFoundError
 		}
-		if cart.finalized {
-			return &Error{Code: invalidErrorCode, Message: "cart already finalized"}
-		}
-		if !cart.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
+		if !order.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
 			return notFoundError
 		}
-		item, itemExists := r.itemsByItemID.get(evt.ItemId)
-		if !itemExists {
+		if sess.keyCardOfAGuest && !r.doesSessionOwnEvent(sess, evt.OrderId) {
 			return notFoundError
 		}
-		if !item.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
-			return notFoundError
+		switch tv := evt.Action.(type) {
+		case *UpdateOrder_ChangeItems_:
+			if order.finalized {
+				return &Error{Code: ErrorCodes_invalid, Message: "order already finalized"}
+			}
+			change := tv.ChangeItems
+			item, itemExists := r.itemsByItemID.get(change.ItemId)
+			if !itemExists {
+				return notFoundError
+			}
+			if !item.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
+				return notFoundError
+			}
+			stock, has := r.stockByStoreID.get(m.createdByStoreID)
+			if !has {
+				return &Error{Code: ErrorCodes_invalid, Message: "not enough stock"}
+			}
+			inStock, has := stock.inventory.GetHas(change.ItemId)
+			if !has || inStock < change.Quantity {
+				return &Error{Code: ErrorCodes_invalid, Message: "not enough stock"}
+			}
+			inOrder := order.items.Get(change.ItemId)
+			if change.Quantity < 0 && inOrder+change.Quantity < 0 {
+				return &Error{Code: ErrorCodes_invalid, Message: "not enough items in order"}
+			}
+		case *UpdateOrder_OrderCanceled_:
+			if !order.finalized {
+				return &Error{Code: ErrorCodes_invalid, Message: "order is not finalized"}
+			}
 		}
-		stock, has := r.stockByStoreID.get(m.createdByStoreID)
-		if !has {
-			return &Error{Code: invalidErrorCode, Message: "not enough stock"}
-		}
-		// TODO: improve locking / also respect inStock in other carts
-		inStock, has := stock.inventory.GetHas(evt.ItemId)
-		if !has || inStock < evt.Quantity {
-			return &Error{Code: invalidErrorCode, Message: "not enough stock"}
-		}
-		inCart := cart.items.Get(evt.ItemId)
-		if evt.Quantity < 0 && inCart+evt.Quantity < 0 {
-			return &Error{Code: invalidErrorCode, Message: "not enough items in cart"}
-		}
-	case *Event_CartAbandoned:
-		if !storeManifestExists {
-			return notFoundError
-		}
-		evt := union.GetCartAbandoned()
-		cart, cartExists := r.cartsByCartID.get(evt.CartId)
-		if !cartExists {
-			return notFoundError
-		}
-		if !cart.finalized {
-			return &Error{Code: invalidErrorCode, Message: "cart is not finalized"}
-		}
+
 	default:
-		panic(fmt.Errorf("eventWritesOp.checkWrite.unrecognizeType eventType=%T", union.Union))
+		panic(fmt.Errorf("eventWritesOp.validateWrite.unrecognizeType eventType=%T", union.Union))
 	}
 	return nil
 }
 
 func (op *EventPushOp) process(r *Relay) {
-	sessionState := r.sessionIdsToSessionStates.Get(op.sessionID)
+	sessionState := r.sessionIDsToSessionStates.Get(op.sessionID)
 	if sessionState == nil {
 		logS(op.sessionID, "relay.eventPushOp.drain")
 		return
@@ -2576,93 +2549,101 @@ func (op *EventPushOp) process(r *Relay) {
 
 const DefaultPaymentTTL = 60 * 60 * 24
 
-func (op *CommitCartOp) process(r *Relay) {
+func (op *CommitItemsToOrderOp) process(r *Relay) {
 	ctx := context.Background()
 	sessionID := op.sessionID
 	requestID := op.im.RequestId
-	sessionState := r.sessionIdsToSessionStates.Get(sessionID)
+	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
 	if sessionState == nil {
-		logS(sessionID, "relay.commitCartOp.drain")
+		logS(sessionID, "relay.commitOrderOp.drain")
 		return
 	} else if sessionState.keyCardID == nil {
-		logSR("relay.commitCartOp.notAuthenticated", sessionID, requestID)
+		logSR("relay.commitOrderOp.notAuthenticated", sessionID, requestID)
 		op.err = notAuthenticatedError
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 	start := now()
-	logSR("relay.commitCartOp.process", sessionID, requestID)
+	logSR("relay.commitOrderOp.process", sessionID, requestID)
 	r.lastSeenAtTouch(sessionState)
 
-	// sum up cart content
+	// sum up order content
 	decimalCtx := apd.BaseContext.WithPrecision(20)
 	fiatSubtotal := new(apd.Decimal)
-	cart, has := r.cartsByCartID.get(op.im.CartId)
+	order, has := r.ordersByOrderID.get(op.im.OrderId)
 	if !has {
 		op.err = notFoundError
 		r.sendSessionOp(sessionState, op)
 		return
 	}
-	if cart.finalized {
-		op.err = &Error{Code: invalidErrorCode, Message: "cart is already finalized"}
+	// check ownership of the cart if it is a guest
+	if sessionState.keyCardOfAGuest {
+		if !r.doesSessionOwnEvent(sessionState, op.im.OrderId) {
+			op.err = notFoundError
+			r.sendSessionOp(sessionState, op)
+			return
+		}
+	}
+	if order.finalized {
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "order is already finalized"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
-	if cart.items.Size() == 0 {
-		op.err = &Error{Code: invalidErrorCode, Message: "cart is empty"}
+	if order.items.Size() == 0 {
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "order is empty"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
 	stock, has := r.stockByStoreID.get(sessionState.storeID)
 	if !has {
-		op.err = &Error{Code: invalidErrorCode, Message: "not enough stock"}
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "not enough stock"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
 	store, has := r.storeManifestsByStoreID.get(sessionState.storeID)
 	if !has {
-		op.err = &Error{Code: invalidErrorCode, Message: "store not found"}
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "store not found"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
-	// get all other carts that haven't been paid yet
-	otherCartRows, err := r.connPool.Query(ctx, `select cartId from payments where
+	// get all other orders that haven't been paid yet
+	otherOrderRows, err := r.connPool.Query(ctx, `select orderId from payments where
 	createdByStoreId = $1 and
-	cartId != $2 and
-	cartPayedAt is null`, sessionState.storeID, op.im.CartId)
+	orderId != $2 and
+	orderPayedAt is null`, sessionState.storeID, op.im.OrderId)
 	check(err)
-	defer otherCartRows.Close()
+	defer otherOrderRows.Close()
 
-	otherCartIds := NewMapEventIds[*CachedCart]()
-	for otherCartRows.Next() {
-		var otherCartID eventID
-		check(otherCartRows.Scan(&otherCartID))
-		otherCart, has := r.cartsByCartID.get(otherCartID)
+	otherOrderIds := NewMapEventIDs[*CachedOrder]()
+	for otherOrderRows.Next() {
+		var otherOrderID eventID
+		check(otherOrderRows.Scan(&otherOrderID))
+		otherOrder, has := r.ordersByOrderID.get(otherOrderID)
 		assert(has)
-		otherCartIds.Set(otherCartID, otherCart)
+		otherOrderIds.Set(otherOrderID, otherOrder)
 	}
-	check(otherCartRows.Err())
+	check(otherOrderRows.Err())
 
-	// for convenience, sum up all items in the  other carts
-	otherCartItemQuantities := NewMapEventIds[int32]()
-	otherCartIds.AllWithBreak(func(_ eventID, cart *CachedCart) bool {
-		if cart.abandoned {
+	// for convenience, sum up all items in the  other orders
+	otherOrderItemQuantities := NewMapEventIDs[int32]()
+	otherOrderIds.AllWithBreak(func(_ eventID, order *CachedOrder) bool {
+		if order.abandoned {
 			return false
 		}
-		cart.items.AllWithBreak(func(itemId eventID, quantity int32) bool {
-			current := otherCartItemQuantities.Get(itemId)
+		order.items.AllWithBreak(func(itemId eventID, quantity int32) bool {
+			current := otherOrderItemQuantities.Get(itemId)
 			current += quantity
-			otherCartItemQuantities.Set(itemId, current)
+			otherOrderItemQuantities.Set(itemId, current)
 			return false
 		})
 		return false
 	})
 
-	// iterate over this cart
-	cart.items.AllWithBreak(func(itemId eventID, quantity int32) bool {
+	// iterate over this order
+	order.items.AllWithBreak(func(itemId eventID, quantity int32) bool {
 		item, has := r.itemsByItemID.get(itemId)
 		if !has {
 			op.err = notFoundError
@@ -2676,13 +2657,13 @@ func (op *CommitCartOp) process(r *Relay) {
 
 		stockItems, has := stock.inventory.GetHas(itemId)
 		if !has {
-			op.err = &Error{Code: outOfStockErrorCode, Message: "not enough stock"}
+			op.err = &Error{Code: ErrorCodes_outOfStock, Message: "not enough stock"}
 			return true
 		}
 
-		usedInOtherCarts := otherCartItemQuantities.Get(itemId)
-		if stockItems-usedInOtherCarts < quantity {
-			op.err = &Error{Code: outOfStockErrorCode, Message: "not enough stock"}
+		usedInOtherOrders := otherOrderItemQuantities.Get(itemId)
+		if stockItems-usedInOtherOrders < quantity {
+			op.err = &Error{Code: ErrorCodes_outOfStock, Message: "not enough stock"}
 			return true
 		}
 
@@ -2690,8 +2671,10 @@ func (op *CommitCartOp) process(r *Relay) {
 
 		// total += quantity * price
 		quantTimesPrice := new(apd.Decimal)
-		decimalCtx.Mul(quantTimesPrice, decQuantityt, item.price)
-		decimalCtx.Add(fiatSubtotal, fiatSubtotal, quantTimesPrice)
+		_, err = decimalCtx.Mul(quantTimesPrice, decQuantityt, item.price)
+		check(err)
+		_, err = decimalCtx.Add(fiatSubtotal, fiatSubtotal, quantTimesPrice)
+		check(err)
 		return false
 	})
 	if op.err != nil {
@@ -2712,7 +2695,7 @@ func (op *CommitCartOp) process(r *Relay) {
 	_, err = decimalCtx.Add(fiatTotal, fiatSubtotal, salesTax)
 	check(err)
 
-	// create payment address for cart content
+	// create payment address for order content
 	var (
 		bigTotal = new(big.Int)
 
@@ -2725,8 +2708,8 @@ func (op *CommitCartOp) process(r *Relay) {
 	defer cancel()
 	gethClient, err := r.ethClient.getClient(ctx)
 	if err != nil {
-		logSR("relay.commitCartOp.failedToGetGethClient err=%s", sessionID, requestID, err.Error())
-		op.err = &Error{Code: invalidErrorCode, Message: "internal server error"}
+		logSR("relay.commitOrderOp.failedToGetGethClient err=%s", sessionID, requestID, err.Error())
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "internal server error"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2744,8 +2727,8 @@ func (op *CommitCartOp) process(r *Relay) {
 		var has bool
 		_, has = store.acceptedErc20s[erc20TokenAddr]
 		if !has {
-			logSR("relay.commitCartOp.noSuchAcceptedErc20s addr=%s", sessionID, requestID, erc20TokenAddr.Hex())
-			op.err = &Error{Code: invalidErrorCode, Message: "erc20 not accepted"}
+			logSR("relay.commitOrderOp.noSuchAcceptedErc20s addr=%s", sessionID, requestID, erc20TokenAddr.Hex())
+			op.err = &Error{Code: ErrorCodes_invalid, Message: "erc20 not accepted"}
 			r.sendSessionOp(sessionState, op)
 			return
 		}
@@ -2755,31 +2738,33 @@ func (op *CommitCartOp) process(r *Relay) {
 		// TODO: since this is a contract constant we could cache it when adding the token
 		tokenCaller, err := NewERC20Caller(erc20TokenAddr, gethClient)
 		if err != nil {
-			logSR("relay.commitCartOp.failedToCreateERC20Caller err=%s", sessionID, requestID, err.Error())
-			op.err = &Error{Code: invalidErrorCode, Message: "failed to create erc20 caller"}
+			logSR("relay.commitOrderOp.failedToCreateERC20Caller err=%s", sessionID, requestID, err.Error())
+			op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to create erc20 caller"}
 			r.sendSessionOp(sessionState, op)
 			return
 		}
 		decimalCount, err := tokenCaller.Decimals(callOpts)
 		if err != nil {
-			logSR("relay.commitCartOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
-			op.err = &Error{Code: invalidErrorCode, Message: "failed to establish contract decimals"}
+			logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
+			op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to establish contract decimals"}
 			r.sendSessionOp(sessionState, op)
 			return
 		}
 
-		decimalCtx.Mul(inBaseTokens, inErc20, apd.New(1, int32(decimalCount)))
+		_, err = decimalCtx.Mul(inBaseTokens, inErc20, apd.New(1, int32(decimalCount)))
+		check(err)
 	} else {
 		// convert decimal in USD to ethereum
 		inEth := r.prices.FromFiatToCoin(fiatTotal)
-		decimalCtx.Mul(inBaseTokens, inEth, apd.New(1, 18))
+		_, err = decimalCtx.Mul(inBaseTokens, inEth, apd.New(1, 18))
+		check(err)
 	}
 
 	bigTotal.SetString(inBaseTokens.Text('f'), 10)
 
-	// TODO: actual proof. for now we just use the hash of the internal cartId as a nonce
+	// TODO: actual proof. for now we just use the hash of the internal orderId as a nonce
 	hasher := sha3.NewLegacyKeccak256()
-	hasher.Write(cart.cartID)
+	hasher.Write(order.orderID)
 	copy(receiptHash[:], hasher.Sum(nil))
 
 	bigStoreTokenID := new(big.Int).SetBytes(store.storeTokenID)
@@ -2787,16 +2772,16 @@ func (op *CommitCartOp) process(r *Relay) {
 	// owner
 	storeReg, err := NewRegStoreCaller(r.ethClient.contractAddresses.StoreRegistry, gethClient)
 	if err != nil {
-		logSR("relay.commitCartOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
-		op.err = &Error{Code: invalidErrorCode, Message: "failed to create store registry caller"}
+		logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to create store registry caller"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
 	ownerAddr, err := storeReg.OwnerOf(callOpts, bigStoreTokenID)
 	if err != nil {
-		logSR("relay.commitCartOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
-		op.err = &Error{Code: invalidErrorCode, Message: "failed to get store owner"}
+		logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to get store owner"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2804,26 +2789,28 @@ func (op *CommitCartOp) process(r *Relay) {
 	// ttl
 	blockNo, err := gethClient.BlockNumber(ctx)
 	if err != nil {
-		op.err = &Error{Code: invalidErrorCode, Message: "failed to get block number"}
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to get block number"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
 	block, err := gethClient.BlockByNumber(ctx, new(big.Int).SetInt64(int64(blockNo)))
 	if err != nil {
-		op.err = &Error{Code: invalidErrorCode, Message: "failed to get block number"}
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to get block number"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
 	// if there is an escrow address use it for payee
-	ea := op.im.GetEscrowAddr()
-	isEndpoint := ea != nil
 	payeeAddress := ownerAddr
-	if isEndpoint {
-		isEndpoint = true
-		payeeAddress = common.Address(ea)
-	}
+	isEndpoint := false
+	/* TODO: configure payout endpoint
+	isEndpoint := ea != nil
+		if isEndpoint {
+			isEndpoint = true
+		    payeeAddress = common.Address(ea)
+		}
+	*/
 
 	var pr = PaymentRequest{}
 	pr.ChainId = new(big.Int).SetInt64(int64(r.ethClient.chainID))
@@ -2841,7 +2828,7 @@ func (op *CommitCartOp) process(r *Relay) {
 	paymentsContract, err := NewPaymentsByAddressCaller(r.ethClient.contractAddresses.Payments, gethClient)
 	if err != nil {
 		logSR("relay.commitCartOp.newPaymentsByAddressFailed err=%s", sessionID, requestID, err.Error())
-		op.err = &Error{Code: invalidErrorCode, Message: "contract interaction error"}
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "contract interaction error"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2849,38 +2836,50 @@ func (op *CommitCartOp) process(r *Relay) {
 	paymentId, err := paymentsContract.GetPaymentId(callOpts, pr)
 	if err != nil {
 		logSR("relay.commitCartOp.getPaymentIdFailed err=%s", sessionID, requestID, err.Error())
-		op.err = &Error{Code: invalidErrorCode, Message: "failed to paymentId"}
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to paymentId"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
 	purchaseAddr, err := paymentsContract.GetPaymentAddress(callOpts, pr, ownerAddr)
 	if err != nil {
-		op.err = &Error{Code: invalidErrorCode, Message: "failed to create payment address"}
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to create payment address"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
 	log("relay.commitCartOp.paymentRequest id=%s addr=%x total=%s currentBlock=%d", paymentId.Text(16), purchaseAddr, bigTotal.String(), blockNo)
 
-	// mark cart as finalized by creating the event and updating payments table
+	// mark order as finalized by creating the event and updating payments table
 	var (
-		cf CartFinalized
-		w  PaymentWaiter
+		fin UpdateOrder_ItemsFinalized
+		w   PaymentWaiter
 	)
-	cf.EventId = newEventID()
-	cf.CartId = cart.cartID
-	cf.PurchaseAddr = purchaseAddr.Bytes()
-	cf.TotalInCrypto = bigTotal.String()
-	cf.SubTotal = roundPrice(fiatSubtotal).Text('f')
-	cf.SalesTax = roundPrice(salesTax).Text('f')
-	cf.Total = roundPrice(fiatTotal).Text('f')
-	cf.PaymentId = paymentId.Bytes()
-	cf.PaymentTtl = pr.Ttl.String()
+	fin.PaymentId = paymentId.Bytes()
+
+	fin.SubTotal = roundPrice(fiatSubtotal).Text('f')
+	fin.SalesTax = roundPrice(salesTax).Text('f')
+	fin.Total = roundPrice(fiatTotal).Text('f')
+
+	fin.Ttl = pr.Ttl.String()
+	fin.OrderHash = receiptHash[:]
+	fin.CurrencyAddr = erc20TokenAddr[:]
+	fin.TotalInCrypto = bigTotal.String()
+	fin.PayeeAddr = payeeAddress[:]
+	fin.IsPaymentEndpoint = isEndpoint
+	fin.ShopSignature = pr.ShopSignature
+
+	update := &UpdateOrder{
+		EventId: newEventID(),
+		OrderId: order.orderID,
+		Action:  &UpdateOrder_ItemsFinalized_{&fin},
+	}
+
+	op.orderFinalizedID = update.EventId
 
 	w.waiterID = newRequestID()
-	w.cartID = op.im.CartId
-	w.cartFinalizedAt = now()
+	w.orderID = op.im.OrderId
+	w.orderFinalizedAt = now()
 	w.purchaseAddr = purchaseAddr
 	w.lastBlockNo.SetInt64(int64(blockNo))
 	w.coinsTotal.Set(bigTotal)
@@ -2888,35 +2887,43 @@ func (op *CommitCartOp) process(r *Relay) {
 	w.paymentId = SQLStringBigInt{*paymentId}
 
 	if usignErc20 {
-		cf.Erc20Addr = erc20TokenAddr[:]
 		w.erc20TokenAddr = &erc20TokenAddr
 	}
 
-	cfMetadata := newMetadata(relayKeyCardID, sessionState.storeID, 1)
-	cfEvent := &Event{Union: &Event_CartFinalized{&cf}}
+	cfMetadata := newMetadata(relayKeyCardID, sessionState.storeID, currentRelayVersion)
+	cfEvent := &StoreEvent{Union: &StoreEvent_UpdateOrder{update}}
+
 	err = r.ethClient.eventSign(cfEvent)
 	if err != nil {
-		logSR("relay.commitCartOp.eventSignFailed err=%s", sessionID, requestID, err)
-		op.err = &Error{Code: invalidErrorCode, Message: "interal server error"}
+		logSR("relay.commitOrderOp.eventSignFailed err=%s", sessionID, requestID, err)
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "interal server error"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
-	r.beginSyncTransaction()
-	r.writeEvent(cfEvent, cfMetadata)
 
-	seqPair := r.storeIdsToStoreSeqs.MustGet(sessionState.storeID)
-	// TODO: we could join against events instead for some of these fields but let's not disrupt this now
-	const insertPaymentWaiterQuery = `insert into payments (waiterId, storeSeqNo, createdByStoreId, cartId, cartFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr, paymentId)
+	cfAny, err := anypb.New(cfEvent)
+	if err != nil {
+		logSR("relay.commitOrderOp.anypb err=%s", sessionID, requestID, err)
+		op.err = &Error{Code: ErrorCodes_invalid, Message: "interal server error"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
+	r.beginSyncTransaction()
+	r.writeEvent(cfEvent, cfMetadata, cfAny)
+
+	seqPair := r.storeIdsToStoreState.MustGet(sessionState.storeID)
+	const insertPaymentWaiterQuery = `insert into payments (waiterId, storeSeqNo, createdByStoreId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr, paymentId)
 	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	_, err = r.syncTx.Exec(ctx, insertPaymentWaiterQuery,
-		w.waiterID, seqPair.lastWrittenStoreSeq, cart.createdByStoreID, w.cartID, w.cartFinalizedAt, w.purchaseAddr.Bytes(), w.lastBlockNo, w.coinsPayed, w.coinsTotal, w.erc20TokenAddr, w.paymentId.Bytes())
+		w.waiterID, seqPair.lastUsedStoreSeq, order.createdByStoreID, w.orderID, w.orderFinalizedAt, w.purchaseAddr.Bytes(), w.lastBlockNo, w.coinsPayed, w.coinsTotal, w.erc20TokenAddr, w.paymentId.Bytes())
 	check(err)
 
 	r.commitSyncTransaction()
 
-	op.cartFinalizedID = cf.EventId
+	op.orderFinalizedID = update.EventId
 
-	logSR("relay.commitCartOp.finish took=%d", sessionID, requestID, took(start))
+	logSR("relay.commitOrderOp.finish took=%d", sessionID, requestID, took(start))
 	r.sendSessionOp(sessionState, op)
 }
 
@@ -2935,7 +2942,7 @@ func (op *GetBlobUploadURLOp) process(r *Relay) {
 	initblobUplodBaseURLOnce.Do(initblobUplodBaseURL)
 	sessionID := op.sessionID
 	requestID := op.im.RequestId
-	sessionState := r.sessionIdsToSessionStates.Get(sessionID)
+	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
 	if sessionState == nil {
 		logS(sessionID, "relay.getBlobUploadURLOp.drain")
 		return
@@ -2953,7 +2960,7 @@ func (op *GetBlobUploadURLOp) process(r *Relay) {
 	var token string
 	var buf [32]byte
 	for {
-		crand.Read(buf[:])
+		_, _ = crand.Read(buf[:])
 		token = base64.URLEncoding.EncodeToString(buf[:])
 		if _, has := r.blobUploadTokens[token]; !has {
 			r.blobUploadTokens[token] = struct{}{}
@@ -2966,7 +2973,7 @@ func (op *GetBlobUploadURLOp) process(r *Relay) {
 
 	var uploadURL url.URL
 	uploadURL = *blobUplodBaseURL
-	uploadURL.Path = "/v1/upload_blob"
+	uploadURL.Path = fmt.Sprintf("/v%d/upload_blob", currentRelayVersion)
 	uploadURL.RawQuery = "token=" + token
 	op.uploadURL = &uploadURL
 
@@ -2984,22 +2991,106 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 	log("db.KeyCardEnrolledOp.start storeId=%s", op.storeID)
 	start := now()
 
-	r.hydrateStores(NewSetEventIds(op.storeID))
+	r.hydrateStores(NewSetEventIDs(op.storeID))
 
-	evt := &Event{
-		Union: &Event_NewKeyCard{NewKeyCard: &NewKeyCard{
+	ctx := context.Background()
+	r.beginSyncTransaction()
+
+	// get other keycards for public key
+	const previousKeyCardsQuery = `select id from keyCards where userWalletAddr = $1 and id != $2 and storeId = $3`
+	prevRows, err := r.syncTx.Query(ctx, previousKeyCardsQuery, op.userWallet, op.keyCardDatabaseID, op.storeID)
+	check(err)
+	defer prevRows.Close()
+
+	sameUserKeyCards := NewSetRequestIDs()
+	for prevRows.Next() {
+		var kcId requestID
+		err = prevRows.Scan(&kcId)
+		check(err)
+
+		sameUserKeyCards.Add(kcId)
+	}
+	check(prevRows.Err())
+
+	// replay previous store history
+	const existingStoreEventsQuery = `select eventType, storeSeq, createdByKeyCardId
+from events
+where createdByStoreId = $1
+order by storeSeq`
+	evtRows, err := r.connPool.Query(ctx, existingStoreEventsQuery, op.storeID)
+	check(err)
+	// TODO: check for missing closes
+	defer evtRows.Close()
+
+	var kcEvents []KeyCardEvent
+	kcSeqs := r.keyCardIDsToKeyCardSeqs.GetOrCreate(op.keyCardDatabaseID, func(_ requestID) *SeqPairKeyCard { return &SeqPairKeyCard{} })
+	for evtRows.Next() {
+		var (
+			kcEvt              KeyCardEvent
+			eventType          eventType
+			createdByKeyCardID requestID
+		)
+		err = evtRows.Scan(&eventType, &kcEvt.eventStoreSeq, &createdByKeyCardID)
+		check(err)
+
+		switch eventType {
+		// staff + that customer
+		case eventTypeNewKeyCard:
+			fallthrough
+		case eventTypeChangeStock:
+			fallthrough
+		case eventTypeCreateOrder:
+			fallthrough
+		case eventTypeUpdateOrder:
+			isFromRelay := bytes.Equal(createdByKeyCardID, relayKeyCardID)
+
+			// if its a guest, they get an event if its from one of their previous keycards,
+			// or if it's a keycard from a clerk
+			if op.keyCardIsGuest && !(sameUserKeyCards.Has(createdByKeyCardID) || (eventType == eventTypeNewKeyCard && isFromRelay)) {
+
+				log("createKeyCardLog type=%s isFromClerk=%v", eventType, isFromRelay)
+				continue // skip events for other users
+			}
+
+			// all other event types are public
+		}
+
+		kcEvt.keyCardId = op.keyCardDatabaseID
+		kcEvt.keyCardSeq = kcSeqs.lastWrittenKCSeq + 1
+		kcSeqs.lastUsedKCSeq = kcEvt.keyCardSeq
+		kcSeqs.lastWrittenKCSeq = kcEvt.keyCardSeq
+
+		kcEvents = append(kcEvents, kcEvt)
+	}
+	check(evtRows.Err())
+
+	if evtCount := len(kcEvents); evtCount > 0 {
+		keyCardEventRows := make([][]any, evtCount)
+		for i, ue := range kcEvents {
+			keyCardEventRows[i] = []interface{}{ue.keyCardId, ue.keyCardSeq, ue.eventStoreSeq}
+		}
+		insertedRows, _ := r.bulkInsert("keyCardEvents", []string{"keyCardId", "keyCardSeq", "eventStoreSeq"}, keyCardEventRows)
+		assertWithMessage(len(insertedRows) == len(kcEvents), "new keycard log isnt empty")
+	}
+
+	// emit new keycard event
+	evt := &StoreEvent{
+		Union: &StoreEvent_NewKeyCard{NewKeyCard: &NewKeyCard{
 			EventId:        newEventID(),
 			CardPublicKey:  op.keyCardPublicKey,
 			UserWalletAddr: op.userWallet[:],
 		}},
 	}
 
-	err := r.ethClient.eventSign(evt)
+	err = r.ethClient.eventSign(evt)
 	check(err)
 
-	r.beginSyncTransaction()
-	meta := newMetadata(relayKeyCardID, op.storeID, 1)
-	r.writeEvent(evt, meta)
+	anyEvt, err := anypb.New(evt)
+	check(err)
+
+	meta := newMetadata(relayKeyCardID, op.storeID, currentRelayVersion)
+	r.writeEvent(evt, meta, anyEvt)
+
 	r.commitSyncTransaction()
 	log("db.KeyCardEnrolledOp.finish storeId=%s took=%d", op.storeID, took(start))
 }
@@ -3008,760 +3099,56 @@ func (op *PaymentFoundInternalOp) getSessionID() requestID { panic("not implemen
 func (op *PaymentFoundInternalOp) setErr(_ *Error)         { panic("not implemented") }
 
 func (op *PaymentFoundInternalOp) process(r *Relay) {
-	cart, has := r.cartsByCartID.get(op.cartID)
-	assertWithMessage(has, fmt.Sprintf("cart not found for cartId=%s", op.cartID))
+	order, has := r.ordersByOrderID.get(op.orderID)
+	assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", op.orderID))
 
-	log("db.paymentFoundInternalOp.start cartID=%s", op.cartID)
+	log("db.paymentFoundInternalOp.start orderID=%s", op.orderID)
 	start := now()
 
 	r.beginSyncTransaction()
 
-	const markCartAsPayedQuery = `UPDATE payments SET cartPayedAt = NOW(), cartPayedTx = $1 WHERE cartId = $2;`
-	_, err := r.syncTx.Exec(context.Background(), markCartAsPayedQuery, op.txHash.Bytes(), op.cartID)
+	const markOrderAsPayedQuery = `UPDATE payments SET orderPayedAt = NOW(), orderPayedTx = $1 WHERE orderId = $2;`
+	_, err := r.syncTx.Exec(context.Background(), markOrderAsPayedQuery, op.txHash.Bytes(), op.orderID)
 	check(err)
 
 	meta := CachedMetadata{
 		createdByKeyCardID:      relayKeyCardID,
-		createdByStoreID:        cart.createdByStoreID,
-		createdByNetworkVersion: 1,
+		createdByStoreID:        order.createdByStoreID,
+		createdByNetworkVersion: currentRelayVersion,
 	}
-	r.hydrateStores(NewSetEventIds(cart.createdByStoreID))
+	r.hydrateStores(NewSetEventIDs(order.createdByStoreID))
 	// emit changeStock event
 	cs := &ChangeStock{
 		EventId: newEventID(),
-		CartId:  op.cartID,
+		OrderId: op.orderID,
 		TxHash:  op.txHash.Bytes(),
 	}
 
 	// fill diff
 	i := 0
-	cs.ItemIds = make([][]byte, cart.items.Size())
-	cs.Diffs = make([]int32, cart.items.Size())
-	cart.items.All(func(itemId eventID, quantity int32) {
+	cs.ItemIds = make([][]byte, order.items.Size())
+	cs.Diffs = make([]int32, order.items.Size())
+	order.items.All(func(itemId eventID, quantity int32) {
 		cs.ItemIds[i] = itemId
 		cs.Diffs[i] = -quantity
 		i++
 	})
 
-	evt := &Event{Union: &Event_ChangeStock{ChangeStock: cs}}
+	evt := &StoreEvent{Union: &StoreEvent_ChangeStock{ChangeStock: cs}}
+
 	err = r.ethClient.eventSign(evt)
 	check(err) // fatal code error
-	r.writeEvent(evt, meta)
+
+	evtAny, err := anypb.New(evt)
+	check(err) // fatal code error
+
+	r.writeEvent(evt, meta, evtAny)
 	r.commitSyncTransaction()
-	log("db.paymentFoundInternalOp.finish cartID=%s took=%d", op.cartID, took(start))
+	log("db.paymentFoundInternalOp.finish orderID=%s took=%d", op.orderID, took(start))
 	close(op.done)
 }
 
 // Database processing
-
-func formInsert(e *Event, meta CachedMetadata) []interface{} {
-	switch e.Union.(type) {
-	case *Event_StoreManifest:
-		sm := e.GetStoreManifest()
-		return []interface{}{
-			eventTypeStoreManifest,       // eventType
-			sm.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			sm.StoreTokenId,              // storeTokenId
-			sm.Domain,                    // domain
-			sm.PublishedTagId,            // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-			nil,                          // paymentId
-			nil,                          // paymentTtl
-		}
-
-	case *Event_UpdateManifest:
-		um := e.GetUpdateManifest()
-		var stringVal *string
-		var tagIDVal, addrVal *[]byte
-		if v, ok := um.Value.(*UpdateManifest_String_); ok {
-			stringVal = &v.String_
-		}
-		if v, ok := um.Value.(*UpdateManifest_TagId); ok {
-			tagIDVal = &v.TagId
-		}
-		if v, ok := um.Value.(*UpdateManifest_Erc20Addr); ok {
-			addrVal = &v.Erc20Addr
-		}
-		return []interface{}{
-			eventTypeUpdateManifest,      // eventType
-			um.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			um.Field,                     // manifestUpdateField
-			stringVal,                    // string
-			addrVal,                      // addr
-			tagIDVal,                     // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-			nil,                          // paymentId
-			nil,                          // paymentTtl
-		}
-
-	case *Event_CreateItem:
-		ci := e.GetCreateItem()
-		return []interface{}{
-			eventTypeCreateItem,          // eventType
-			ci.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			ci.EventId,                   // itemId
-			ci.Price,                     // price
-			ci.Metadata,                  // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-			nil,                          // paymentId
-			nil,                          // paymentTtl
-		}
-
-	case *Event_UpdateItem:
-		ui := e.GetUpdateItem()
-		var price *string
-		var metadata *[]byte
-		if v, ok := ui.Value.(*UpdateItem_Metadata); ok {
-			metadata = &v.Metadata
-		}
-		if v, ok := ui.Value.(*UpdateItem_Price); ok {
-			price = &v.Price
-		}
-		return []interface{}{
-			eventTypeUpdateItem,          // eventType
-			ui.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			ui.ItemId,                    // itemId
-			price,                        // price
-			metadata,                     // metadata
-			ui.Field,                     // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-			nil,                          // paymentId
-			nil,                          // paymentTtl
-		}
-
-	case *Event_CreateTag:
-		ct := e.GetCreateTag()
-		return []interface{}{
-			eventTypeCreateTag,           // eventType
-			ct.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			ct.Name,                      // name
-			ct.EventId,                   // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-			nil,                          // paymentId
-			nil,                          // paymentTtl
-		}
-
-	case *Event_AddToTag:
-		att := e.GetAddToTag()
-		return []interface{}{
-			eventTypeAddToTag,            // eventType
-			att.EventId,                  // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			att.ItemId,                   // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			att.TagId,                    // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-			nil,                          // paymentId
-			nil,                          // paymentTtl
-		}
-
-	case *Event_RemoveFromTag:
-		rft := e.GetRemoveFromTag()
-		return []interface{}{
-			eventTypeRemoveFromTag,       // eventType
-			rft.EventId,                  // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			rft.ItemId,                   // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			rft.TagId,                    // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-			nil,                          // paymentId
-			nil,                          // paymentTtl
-		}
-
-	case *Event_RenameTag:
-		rnt := e.GetRenameTag()
-		return []interface{}{
-			eventTypeRenameTag,           // eventType
-			rnt.EventId,                  // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			rnt.Name,                     // name
-			rnt.TagId,                    // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-			nil,                          // paymentId
-			nil,                          // paymentTtl
-		}
-
-	case *Event_DeleteTag:
-		dt := e.GetDeleteTag()
-		return []interface{}{
-			eventTypeDeleteTag,           // eventType
-			dt.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			dt.TagId,                     // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-			nil,                          // paymentId
-			nil,                          // paymentTtl
-		}
-
-	case *Event_CreateCart:
-		cc := e.GetCreateCart()
-		return []interface{}{
-			eventTypeCreateCart,          // eventType
-			cc.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			cc.EventId,                   // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-			nil,                          // paymentId
-			nil,                          // paymentTtl
-		}
-
-	case *Event_ChangeCart:
-		atc := e.GetChangeCart()
-		return []interface{}{
-			eventTypeChangeCart,          // eventType
-			atc.EventId,                  // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			atc.ItemId,                   // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			atc.CartId,                   // cartId
-			atc.Quantity,                 // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-			nil,                          // paymentId
-			nil,                          // paymentTtl
-		}
-
-	case *Event_ChangeStock:
-		cs := e.GetChangeStock()
-		itemIds := cs.ItemIds
-		changes := cs.Diffs
-		var optCartID *[]byte
-		if checkEventID(cs.CartId) {
-			optCartID = &cs.CartId
-		}
-		return []interface{}{
-			eventTypeChangeStock,         // eventType
-			cs.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			optCartID,                    // cartId
-			nil,                          // quantity
-			itemIds,                      // itemIds
-			changes,                      // changes
-			cs.TxHash,                    // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-			nil,                          // paymentId
-			nil,                          // paymentTtl
-		}
-	case *Event_CartFinalized:
-		cf := e.GetCartFinalized()
-		var erc20Addr *[]byte
-		if len(cf.Erc20Addr) == 20 {
-			erc20Addr = &cf.Erc20Addr
-		}
-		return []interface{}{
-			eventTypeCartFinalized,       // eventType
-			cf.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			cf.CartId,                    // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			cf.PurchaseAddr,              // purchaseAddr
-			erc20Addr,                    // erc20Addr
-			cf.SubTotal,                  // subTotal
-			cf.SalesTax,                  // salesTax
-			cf.Total,                     // total
-			cf.TotalInCrypto,             // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-			cf.PaymentId,                 // paymentId
-			cf.PaymentTtl,                // paymentTtl
-		}
-
-	case *Event_CartAbandoned:
-		ca := e.GetCartAbandoned()
-		return []interface{}{
-			eventTypeCartAbandoned,       // eventType
-			ca.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			ca.CartId,                    // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-			nil,                          // paymentId
-			nil,                          // paymentTtl
-		}
-
-	case *Event_NewKeyCard:
-		nkc := e.GetNewKeyCard()
-		return []interface{}{
-			eventTypeNewKeyCard,          // eventType
-			nkc.EventId,                  // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nkc.UserWalletAddr,           // userWallet
-			nkc.CardPublicKey,            // cardPublicKey
-			nil,                          // paymentId
-			nil,                          // paymentTtl
-		}
-
-		/*
-				case Foo:
-					ce := e.Get()
-				return []interface{}{
-						eventTypeUpdateManifest,      // eventType
-						ce.EventId,                   // eventId
-						meta.createdByKeyCardID,      // createdByKeyCardId
-						meta.createdByStoreID,        // createdByStoreId
-						meta.storeSeq,                // storeSeq
-						now(),                        // createdAt
-						meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-						meta.serverSeq,               // serverSeq
-						e.Signature,                  // signature
-						nil,                          // storeTokenId
-						nil,                          // domain
-						nil,                          // publishedTagId
-						nil,                          // manifestUpdateField
-						nil,                          // string
-						nil,                          // addr
-						nil,                          // referencedEventId
-						nil,                          // itemId
-						nil,                          // price
-						nil,                          // metadata
-						nil,                          // itemUpdateField
-						nil,                          // name
-						nil,                          // tagId
-						nil,                          // cartId
-						nil,                          // quantity
-						nil,                          // itemIds
-						nil,                          // changes
-						nil,                          // txHash
-						nil,                          // purchaseAddr
-						nil,                          // erc20Addr
-						nil,                          // subTotal
-						nil,                          // salesTax
-						nil,                          // total
-						nil,                          // totalInCrypto
-						nil,                          // userWallet
-						nil,                          // cardPublicKey
-			          	nil, // paymentId
-				        nil, // paymentTtl
-					}
-		*/
-
-	default:
-		panic(fmt.Errorf("formInsert.unrecognizeType eventType=%T", e.Union))
-	}
-}
 
 func (r *Relay) debounceSessions() {
 	// Process each session.
@@ -3769,13 +3156,13 @@ func (r *Relay) debounceSessions() {
 	start := now()
 	ctx := context.Background()
 
-	r.sessionIdsToSessionStates.All(func(sessionId requestID, sessionState *SessionState) {
+	r.sessionIDsToSessionStates.All(func(sessionId requestID, sessionState *SessionState) {
 		// Kick the session if we haven't received any recent messages from it, including ping responses.
 		if time.Since(sessionState.lastSeenAt) > sessionKickTimeout {
 			r.metric.emit("sessions.kick", 1)
 			logS(sessionId, "relay.debounceSessions.kick")
 			op := &StopOp{sessionID: sessionId}
-			sessionState.sendOp(op)
+			r.sendSessionOp(sessionState, op)
 			return
 		}
 
@@ -3785,7 +3172,7 @@ func (r *Relay) debounceSessions() {
 		}
 
 		// If the session is authenticated, we can get user info.
-		seqPair := r.storeIdsToStoreSeqs.MustGet(sessionState.storeID)
+		seqPair := r.keyCardIDsToKeyCardSeqs.MustGet(sessionState.keyCardID)
 		r.assertCursors(sessionId, seqPair, sessionState)
 
 		// Calculate the new user seq up to which the device has acked all pushes.
@@ -3801,12 +3188,12 @@ func (r *Relay) debounceSessions() {
 			if !entryState.acked {
 				break
 			}
-			assert(entryState.storeSeq > sessionState.lastAckedStoreSeq)
+			assert(entryState.kcSeq > sessionState.lastAckedKCSeq)
 			if i == 0 {
-				advancedFrom = sessionState.lastAckedStoreSeq
+				advancedFrom = sessionState.lastAckedKCSeq
 			}
-			sessionState.lastAckedStoreSeq = entryState.storeSeq
-			advancedTo = entryState.storeSeq
+			sessionState.lastAckedKCSeq = entryState.kcSeq
+			advancedTo = entryState.kcSeq
 		}
 		if i != 0 {
 			sessionState.buffer = sessionState.buffer[i:]
@@ -3819,24 +3206,27 @@ func (r *Relay) debounceSessions() {
 		// Use the boolean to ensure we always send an initial sync status for the session,
 		// including if the user has no writes yet.
 		// If everything for the device has been pushed, advance the buffered and pushed cursors too.
-		if !sessionState.initialStatus || sessionState.lastStatusedStoreSeq < seqPair.lastWrittenStoreSeq {
+		if !sessionState.initialStatus || sessionState.lastStatusedKCSeq < seqPair.lastWrittenKCSeq {
 			syncStatusStart := now()
 			op := &SyncStatusOp{sessionID: sessionId}
-			// Index: events(createdByStoreId, storeSeq)
-			query := `select count(*) from events e where createdByStoreId = $1
-				and storeSeq > $2
-				and createdByKeyCardId != $3`
-			err := r.connPool.QueryRow(ctx, query, sessionState.storeID, sessionState.lastPushedStoreSeq, sessionState.keyCardID).
+			// Index: keyCardEvents(keyCardId, keyCardSeq) -> events(createdByStoreId, storeSeq)
+			// TODO: fix count (see test.sql)
+			query := `select count(*) from keyCardEvents kce, events e
+where e.createdByStoreId = $1
+  and kce.eventStoreSeq = e.storeSeq
+  and kce.keyCardSeq > $2
+  and kce.keyCardId != $3`
+			err := r.connPool.QueryRow(ctx, query, sessionState.storeID, sessionState.lastPushedKCSeq, sessionState.keyCardID).
 				Scan(&op.unpushedEvents)
 			if err != pgx.ErrNoRows {
 				check(err)
 			}
 			r.sendSessionOp(sessionState, op)
 			sessionState.initialStatus = true
-			sessionState.lastStatusedStoreSeq = seqPair.lastWrittenStoreSeq
+			sessionState.lastStatusedKCSeq = seqPair.lastWrittenKCSeq
 			if op.unpushedEvents == 0 {
-				sessionState.lastBufferedStoreSeq = sessionState.lastStatusedStoreSeq
-				sessionState.lastPushedStoreSeq = sessionState.lastStatusedStoreSeq
+				sessionState.lastBufferedKCSeq = sessionState.lastStatusedKCSeq
+				sessionState.lastPushedKCSeq = sessionState.lastStatusedKCSeq
 			}
 			// TODO: maybe we should consider making this log line dynamic and just print the types where it's >0 ?
 			logS(sessionId, "relay.debounceSessions.syncStatus initialStatus=%t unpushedEvents=%d elapsed=%d", sessionState.initialStatus, op.unpushedEvents, took(syncStatusStart))
@@ -3844,7 +3234,7 @@ func (r *Relay) debounceSessions() {
 		r.assertCursors(sessionId, seqPair, sessionState)
 
 		// Check if more buffering is needed, and if so fill buffer.
-		writesNotBuffered := sessionState.lastBufferedStoreSeq < seqPair.lastWrittenStoreSeq
+		writesNotBuffered := sessionState.lastBufferedKCSeq < seqPair.lastWrittenKCSeq
 		var readsAllowed int
 		if len(sessionState.buffer) >= sessionBufferSizeRefill {
 			readsAllowed = 0
@@ -3855,236 +3245,47 @@ func (r *Relay) debounceSessions() {
 			readStart := now()
 			reads := 0
 			// Index: events(storeId, storeSeq)
-			query := `select serverSeq, storeSeq, eventId, eventType, createdByKeyCardId, createdByStoreId, createdAt, signature,
-			storeTokenId, domain, publishedTagId, manifestUpdateField, string, addr, referencedEventId, itemId, price,
-			metadata, itemUpdateField, name, tagId, cartId, quantity, itemIds, changes, txHash, userWallet, cardPublicKey,
-            purchaseAddr, erc20Addr, subTotal, salesTax, total, totalInCrypto, paymentId, paymentTtl
-from events
-where createdByStoreId = $1
-	and storeSeq > $2
-	and createdByKeyCardId != $3
-order by storeSeq asc limit $4`
-			// from entries where userId = $1 and seq > $2 and deviceId != $3 order by seq asc limit $4
-			rows, err := r.connPool.Query(ctx, query, sessionState.storeID, sessionState.lastBufferedStoreSeq, sessionState.keyCardID, readsAllowed)
+			query := `select kce.keycardseq, e.storeSeq, e.eventId, e.createdByKeyCardId, e.createdByStoreId, e.createdAt, e.encoded
+from events e, keyCardEvents kce
+where kce.keyCardSeq > $2
+    and kce.eventStoreSeq = e.storeSeq
+    and kce.keyCardId = $3
+	and e.createdByKeyCardId != $3
+    and e.createdByStoreId = $1
+order by kce.keyCardSeq asc limit $4`
+			rows, err := r.connPool.Query(ctx, query, sessionState.storeID, sessionState.lastPushedKCSeq, sessionState.keyCardID, readsAllowed)
 			check(err)
 			defer rows.Close()
 			for rows.Next() {
 				var (
-					eventState          = &EventState{}
-					storeTokenID        *[]byte
-					domain              *string
-					publishedTagID      *[]byte
-					manifestUpdateField *UpdateManifest_ManifestField
-					stringVal           *string
-					addrVal             *[]byte
-					referencedEventID   *[]byte
-					itemID              *[]byte
-					price               *string
-					metadata            *[]byte
-					itemUpdateField     *UpdateItem_ItemField
-					name                *string
-					tagID               *[]byte
-					cartID              *[]byte
-					quantity            *int32
-					itemIds             *[][]byte
-					changes             *[]int32
-					txHash              *[]byte
-					userWallet          *[]byte
-					cardPublicKey       *[]byte
-					purchaseAddr        *[]byte
-					erc20Addr           *[]byte
-					subTotal            *string
-					salesTax            *string
-					total               *string
-					totalInCrypto       *string
-					paymentID           *[]byte
-					paymentTtl          *string
+					eventState = &EventState{}
+					encoded    []byte
 				)
-				err := rows.Scan(&eventState.serverSeq, &eventState.storeSeq, &eventState.eventID, &eventState.eventType, &eventState.created.byDeviceID, &eventState.created.byStoreID, &eventState.created.at, &eventState.signature,
-					&storeTokenID, &domain, &publishedTagID, &manifestUpdateField, &stringVal, &addrVal, &referencedEventID, &itemID, &price, &metadata, &itemUpdateField, &name, &tagID, &cartID, &quantity, &itemIds, &changes, &txHash, &userWallet, &cardPublicKey,
-					&purchaseAddr, &erc20Addr, &subTotal, &salesTax, &total, &totalInCrypto, &paymentID, &paymentTtl,
-				)
+				err := rows.Scan(&eventState.kcSeq, &eventState.storeSeq, &eventState.eventID, &eventState.created.byDeviceID, &eventState.created.byStoreID, &eventState.created.at, &encoded)
 				check(err)
 				reads++
 				// log("relay.debounceSessions.debug event=%x", eventState.eventID)
-				switch eventState.eventType {
-				case eventTypeStoreManifest:
-					assert(storeTokenID != nil)
-					assert(publishedTagID != nil)
-					eventState.storeManifest = &StoreManifest{
-						EventId:        eventState.eventID,
-						StoreTokenId:   *storeTokenID,
-						Domain:         *domain,
-						PublishedTagId: *publishedTagID,
-					}
-				case eventTypeUpdateManifest:
-					assert(manifestUpdateField != nil)
-					um := &UpdateManifest{
-						EventId: eventState.eventID,
-						Field:   *manifestUpdateField,
-					}
-					switch *manifestUpdateField {
-					case UpdateManifest_MANIFEST_FIELD_DOMAIN:
-						assert(stringVal != nil)
-						um.Value = &UpdateManifest_String_{String_: *stringVal}
-					case UpdateManifest_MANIFEST_FIELD_PUBLISHED_TAG:
-						assert(referencedEventID != nil)
-						um.Value = &UpdateManifest_TagId{TagId: *referencedEventID}
-					case UpdateManifest_MANIFEST_FIELD_ADD_ERC20:
-						fallthrough
-					case UpdateManifest_MANIFEST_FIELD_REMOVE_ERC20:
-						assert(addrVal != nil)
-						um.Value = &UpdateManifest_Erc20Addr{*addrVal}
-					}
-					eventState.updateManifest = um
-				case eventTypeCreateItem:
-					assert(itemID != nil)
-					assert(price != nil)
-					assert(metadata != nil)
-					eventState.createItem = &CreateItem{
-						EventId:  eventState.eventID,
-						Price:    *price,
-						Metadata: *metadata,
-					}
-				case eventTypeUpdateItem:
-					assert(itemID != nil)
-					assert(itemUpdateField != nil)
-					assert(price != nil || metadata != nil)
-					ui := &UpdateItem{
-						EventId: eventState.eventID,
-						ItemId:  *itemID,
-						Field:   *itemUpdateField,
-					}
-					if price != nil {
-						ui.Value = &UpdateItem_Price{*price}
-					}
-					if metadata != nil {
-						ui.Value = &UpdateItem_Metadata{*metadata}
-					}
-					eventState.updateItem = ui
-				case eventTypeCreateTag:
-					assert(name != nil)
-					eventState.createTag = &CreateTag{
-						EventId: eventState.eventID,
-						Name:    *name,
-					}
-				case eventTypeAddToTag:
-					assert(itemID != nil)
-					assert(tagID != nil)
-					eventState.addToTag = &AddToTag{
-						EventId: eventState.eventID,
-						ItemId:  *itemID,
-						TagId:   *tagID,
-					}
-				case eventTypeRemoveFromTag:
-					assert(itemID != nil)
-					assert(tagID != nil)
-					eventState.removeFromTag = &RemoveFromTag{
-						EventId: eventState.eventID,
-						ItemId:  *itemID,
-						TagId:   *tagID,
-					}
-				case eventTypeRenameTag:
-					assert(name != nil)
-					assert(tagID != nil)
-					eventState.renameTag = &RenameTag{
-						EventId: eventState.eventID,
-						Name:    *name,
-						TagId:   *tagID,
-					}
-				case eventTypeDeleteTag:
-					assert(tagID != nil)
-					eventState.deleteTag = &DeleteTag{
-						EventId: eventState.eventID,
-						TagId:   *tagID,
-					}
-				case eventTypeChangeStock:
-					assert(itemIds != nil)
-					assert(changes != nil)
-					assert(len(*itemIds) == len(*changes))
-					cs := &ChangeStock{
-						EventId: eventState.eventID,
-					}
-					if cartID != nil {
-						cs.CartId = *cartID
-						assert(txHash != nil)
-						cs.TxHash = *txHash
-					}
-					cs.ItemIds = *itemIds
-					cs.Diffs = *changes
-					eventState.changeStock = cs
-				case eventTypeCreateCart:
-					assert(cartID != nil)
-					eventState.createCart = &CreateCart{
-						EventId: eventState.eventID,
-					}
-				case eventTypeChangeCart:
-					assert(itemID != nil)
-					assert(cartID != nil)
-					assert(quantity != nil)
-					eventState.changeCart = &ChangeCart{
-						EventId:  eventState.eventID,
-						ItemId:   *itemID,
-						CartId:   *cartID,
-						Quantity: *quantity,
-					}
-				case eventTypeCartFinalized:
-					assert(cartID != nil)
-					assert(purchaseAddr != nil)
-					assert(subTotal != nil)
-					assert(salesTax != nil)
-					assert(total != nil)
-					assert(totalInCrypto != nil)
-					assert(paymentID != nil)
-					assert(paymentTtl != nil)
-					cf := &CartFinalized{
-						EventId:       eventState.eventID,
-						CartId:        *cartID,
-						PurchaseAddr:  *purchaseAddr,
-						SubTotal:      *subTotal,
-						SalesTax:      *salesTax,
-						Total:         *total,
-						TotalInCrypto: *totalInCrypto,
-						PaymentId:     *paymentID,
-						PaymentTtl:    *paymentTtl,
-					}
-					if erc20Addr != nil {
-						cf.Erc20Addr = *erc20Addr
-					}
-					eventState.cartFinalized = cf
-				case eventTypeCartAbandoned:
-					assert(cartID != nil)
-					ca := &CartAbandoned{
-						EventId: eventState.eventID,
-						CartId:  *cartID,
-					}
-					eventState.cartAbandoned = ca
-				case eventTypeNewKeyCard:
-					assert(userWallet != nil)
-					assert(cardPublicKey != nil)
-					eventState.newKeyCard = &NewKeyCard{
-						EventId:        eventState.eventID,
-						UserWalletAddr: *userWallet,
-						CardPublicKey:  *cardPublicKey,
-					}
-				default:
-					panic(fmt.Errorf("unhandled eventType: %s", eventState.eventType))
-				}
 
 				eventState.acked = false
 				sessionState.buffer = append(sessionState.buffer, eventState)
-				assert(eventState.storeSeq > sessionState.lastBufferedStoreSeq)
-				sessionState.lastBufferedStoreSeq = eventState.storeSeq
+				assert(eventState.kcSeq > sessionState.lastBufferedKCSeq)
+				sessionState.lastBufferedKCSeq = eventState.kcSeq
+
+				// TODO: would prever to not craft this manually
+				eventState.encodedEvent = &anypb.Any{
+					TypeUrl: "type.googleapis.com/market.mass.StoreEvent",
+					Value:   encoded,
+				}
 			}
 			check(rows.Err())
 
 			// If the read rows didn't use the full limit, that means we must be at the end
 			// of this user's writes.
 			if reads < readsAllowed {
-				sessionState.lastBufferedStoreSeq = seqPair.lastWrittenStoreSeq
+				sessionState.lastBufferedKCSeq = seqPair.lastWrittenKCSeq
 			}
 
-			logS(sessionId, "relay.debounceSessions.read storeId=%s reads=%d readsAllowed=%d bufferLen=%d lastWrittenStoreSeq=%d, lastBufferedstoreSeq=%d elapsed=%d", sessionState.storeID, reads, readsAllowed, len(sessionState.buffer), seqPair.lastWrittenStoreSeq, sessionState.lastBufferedStoreSeq, took(readStart))
+			logS(sessionId, "relay.debounceSessions.read storeId=%s reads=%d readsAllowed=%d bufferLen=%d lastWrittenKCSeq=%d, lastBufferedKCSeq=%d elapsed=%d", sessionState.storeID, reads, readsAllowed, len(sessionState.buffer), seqPair.lastWrittenKCSeq, sessionState.lastBufferedKCSeq, took(readStart))
 			r.metric.counterAdd("relay_events_read", float64(reads))
 		}
 		r.assertCursors(sessionId, seqPair, sessionState)
@@ -4107,7 +3308,7 @@ order by storeSeq asc limit $4`
 				pushOps = append(pushOps, eventPushOp)
 			}
 			eventPushOp.eventStates = append(eventPushOp.eventStates, entryState)
-			sessionState.lastPushedStoreSeq = entryState.storeSeq
+			sessionState.lastPushedKCSeq = entryState.kcSeq
 			pushes++
 		}
 		for _, pushOp := range pushOps {
@@ -4119,61 +3320,191 @@ order by storeSeq asc limit $4`
 		r.assertCursors(sessionId, seqPair, sessionState)
 
 		// If there are no buffered events at this point, it's safe to advance the acked pointer.
-		if len(sessionState.buffer) == 0 && sessionState.lastAckedStoreSeq < sessionState.lastPushedStoreSeq {
-			logS(sessionId, "relay.debounceSessions.advanceStoreSeq reason=emptyBuffer from=%d to=%d", sessionState.lastAckedStoreSeq, sessionState.lastPushedStoreSeq)
-			sessionState.lastAckedStoreSeq = sessionState.lastPushedStoreSeq
+		if len(sessionState.buffer) == 0 && sessionState.lastAckedKCSeq < sessionState.lastPushedKCSeq {
+			logS(sessionId, "relay.debounceSessions.advanceKCSeq reason=emptyBuffer from=%d to=%d", sessionState.lastAckedKCSeq, sessionState.lastPushedKCSeq)
+			sessionState.lastAckedKCSeq = sessionState.lastPushedKCSeq
 		}
 		r.assertCursors(sessionId, seqPair, sessionState)
 
 		// Flush session state if sufficiently advanced.
-		lastAckedstoreSeqNeedsFlush := sessionState.lastAckedStoreSeq-sessionState.lastAckedStoreSeqFlushed > sessionLastAckedstoreSeqFlushLimit
+		lastAckedKCSeqNeedsFlush := sessionState.lastAckedKCSeq-sessionState.lastAckedKCSeqFlushed > sessionLastAckedKCSeqFlushLimit
 		lastSeenAtNeedsFlush := sessionState.lastSeenAt.Sub(sessionState.lastSeenAtFlushed) > sessionLastSeenAtFlushLimit
-		if lastAckedstoreSeqNeedsFlush || lastSeenAtNeedsFlush {
+		if lastAckedKCSeqNeedsFlush || lastSeenAtNeedsFlush {
 			flushStart := now()
-			// Index: devices(id)
-			query := `update keyCards set lastAckedstoreSeq = $1, lastSeenAt = $2 where id = $3`
-			_, err := r.connPool.Exec(ctx, query, sessionState.lastAckedStoreSeq, sessionState.lastSeenAt, sessionState.keyCardID)
+			// Index: keyCards(id)
+			query := `update keyCards set lastAckedKCSeq = $1, lastSeenAt = $2 where id = $3`
+			_, err := r.connPool.Exec(ctx, query, sessionState.lastAckedKCSeq, sessionState.lastSeenAt, sessionState.keyCardID)
 			check(err)
-			sessionState.lastAckedStoreSeqFlushed = sessionState.lastAckedStoreSeq
+			sessionState.lastAckedKCSeqFlushed = sessionState.lastAckedKCSeq
 			sessionState.lastSeenAtFlushed = sessionState.lastSeenAt
-			logS(sessionId, "relay.debounceSessions.flush lastAckedstoreSeqNeedsFlush=%t lastSeenAtNeedsFlush=%t lastAckedstoreSeq=%d elapsed=%d", lastAckedstoreSeqNeedsFlush, lastSeenAtNeedsFlush, sessionState.lastAckedStoreSeq, took(flushStart))
+			logS(sessionId, "relay.debounceSessions.flush lastAckedKCSeqNeedsFlush=%t lastSeenAtNeedsFlush=%t lastAckedKCSeq=%d elapsed=%d", lastAckedKCSeqNeedsFlush, lastSeenAtNeedsFlush, sessionState.lastAckedKCSeq, took(flushStart))
 		}
-		// logS(sessionId, "relay.debounce.cursors lastWrittenStoreSeq=%d lastStatusedstoreSeq=%d lastBufferedstoreSeq=%d lastPushedstoreSeq=%d lastAckedstoreSeq=%d", userState.lastWrittenStoreSeq, sessionState.lastStatusedstoreSeq, sessionState.lastBufferedstoreSeq, sessionState.lastPushedstoreSeq, sessionState.lastAckedstoreSeq)
+		// logS(sessionId, "relay.debounce.cursors lastWrittenKCSeq=%d lastStatusedstoreSeq=%d lastBufferedstoreSeq=%d lastPushedstoreSeq=%d lastAckedKCSeq=%d", userState.lastWrittenKCSeq, sessionState.lastStatusedstoreSeq, sessionState.lastBufferedstoreSeq, sessionState.lastPushedstoreSeq, sessionState.lastAckedKCSeq)
 	})
 
 	// Since we're polling this loop constantly, only log if takes a non-trivial amount of time.
 	debounceSessionsElapsed := took(start)
 	if debounceSessionsElapsed > 0 {
 		r.metric.emit("relay.debounceSessions.elapsed", uint64(debounceSessionsElapsed))
-		log("relay.debounceSessions.finish sessions=%d elapsed=%d", r.sessionIdsToSessionStates.Size(), debounceSessionsElapsed)
+		log("relay.debounceSessions.finish sessions=%d elapsed=%d", r.sessionIDsToSessionStates.Size(), debounceSessionsElapsed)
 	}
 }
 
-// TODO: should be one per store
-var relayKeyCardID requestID
+func (r *Relay) debounceEventPropagations() {
+	start := now()
+	ctx := context.Background()
 
-func init() {
-	relayKeyCardID = newRequestID()
-	copy(relayKeyCardID[:], []byte("relay"))
+	// Pick IDs from DB that are to be propagated, short circuit if there are non for this debounce.
+	eventIds := make([]eventID, 0)
+	// Index: none, events(eventId)
+	query := `select e.eventId from eventPropagations ep, events e where ep.eventId = e.eventId order by e.serverSeq asc limit $1`
+	rows, err := r.connPool.Query(ctx, query, databasePropagationEventLimit)
+	check(err)
+	defer rows.Close()
+	for rows.Next() {
+		var eventId eventID
+		err = rows.Scan(&eventId)
+		check(err)
+		eventIds = append(eventIds, eventId)
+	}
+	check(rows.Err())
+	if len(eventIds) == 0 {
+		return
+	}
+	log("relay.debounceEventPropagations.list events=%d took=%d", len(eventIds), took(start))
+
+	// Read in event data for listed event IDs.
+	readStart := now()
+	events := r.readEvents(`eventId = any($1)`, eventIds)
+	log("relay.debounceEventPropagations.read took=%d", took(readStart))
+
+	// Compute new keyCardEvent tuples propagating for all listed events.
+	deriveStart := now()
+	keyCardEvents := make([]*KeyCardEvent, 0)
+
+	for _, e := range events {
+		storeState, exists := r.storeManifestsByStoreID.get(e.createdByStoreID)
+		assert(exists)
+		fanOutKeyCards := storeState.getValidKeyCardIDs(r.connPool)
+
+		switch e.evtType {
+
+		// staff + that customer
+		// -===================-
+		case eventTypeChangeStock:
+			fallthrough
+		case eventTypeCreateOrder:
+			fallthrough
+		case eventTypeUpdateOrder:
+			for _, kc := range fanOutKeyCards {
+				if !kc.isGuest || e.createdByKeyCardID.Equal(kc.id) {
+					keyCardEvents = append(keyCardEvents, &KeyCardEvent{
+						keyCardId:     kc.id,
+						eventStoreSeq: e.storeSeq,
+					})
+				}
+			}
+
+			// public
+			// -====-
+			// TODO: decide if keyCards should be private
+			//   -> means guests cant verify signatures
+		case eventTypeNewKeyCard:
+			// first user
+			if len(fanOutKeyCards) == 0 {
+				keyCardEvents = append(keyCardEvents, &KeyCardEvent{
+					keyCardId:     e.createdByKeyCardID,
+					eventStoreSeq: e.storeSeq,
+				})
+			}
+			fallthrough
+		case eventTypeStoreManifest:
+			fallthrough
+		case eventTypeUpdateStoreManifest:
+			fallthrough
+		case eventTypeCreateItem:
+			fallthrough
+		case eventTypeUpdateItem:
+			fallthrough
+		case eventTypeCreateTag:
+			fallthrough
+		case eventTypeUpdateTag:
+			for _, kc := range fanOutKeyCards {
+				keyCardEvents = append(keyCardEvents, &KeyCardEvent{
+					keyCardId:     kc.id,
+					eventStoreSeq: e.storeSeq,
+				})
+			}
+		default:
+			panic(fmt.Sprintf("unhandeled event type: %s", e.evtType))
+		}
+	}
+	for _, kce := range keyCardEvents {
+		kce.keyCardId.assert()
+		assert(kce.eventStoreSeq != 0)
+		assert(kce.keyCardSeq == 0)
+	}
+	log("relay.debounceEventPropagations.derive keyCardEvents=%d took=%d", len(keyCardEvents), took(deriveStart))
+
+	// Hydrate users in preparation for enriching derived keyCardEvents with userSeqs.
+	// Then enrich derived keyCardEvents with userSeqs, in order they were emitted.
+	enrichStart := now()
+	keyCardIds := NewSetRequestIDs()
+	for _, ue := range keyCardEvents {
+		keyCardIds.Add(ue.keyCardId)
+	}
+	r.hydrateKeyCards(keyCardIds)
+	for _, ue := range keyCardEvents {
+		seqPair := r.keyCardIDsToKeyCardSeqs.MustGet(ue.keyCardId)
+		ue.keyCardSeq = seqPair.lastUsedKCSeq + 1
+		seqPair.lastUsedKCSeq = ue.keyCardSeq
+	}
+	log("relay.debounceEventPropagations.enrich took=%d", took(enrichStart))
+
+	// Insert derived and enriched keyCardEvents.
+	insertStart := now()
+	keyCardEventRows := make([][]any, len(keyCardEvents))
+	for i, ue := range keyCardEvents {
+		keyCardEventRows[i] = []interface{}{ue.keyCardId, ue.keyCardSeq, ue.eventStoreSeq}
+	}
+	insertedRows, _ := r.bulkInsert("keyCardEvents", []string{"keyCardId", "keyCardSeq", "eventStoreSeq"}, keyCardEventRows)
+	for _, row := range insertedRows {
+		kcID := row[0].(requestID)
+		kcSeq := row[1].(uint64)
+		seqPair := r.keyCardIDsToKeyCardSeqs.MustGet(kcID)
+		assert(seqPair.lastWrittenKCSeq < kcSeq)
+		assert(kcSeq <= seqPair.lastUsedKCSeq)
+		seqPair.lastWrittenKCSeq = kcSeq
+	}
+	log("relay.debounceEventPropagations.insert inserted=%d took=%d", len(insertedRows), took(insertStart))
+
+	// Delete from eventPropagations now that we've completed these propagations.
+	deleteStart := now()
+	query = `delete from eventPropagations ep where eventId = any($1)`
+	_, err = r.connPool.Exec(ctx, query, eventIds)
+	check(err)
+	log("relay.debounceEventPropagations.delete took=%d", took(deleteStart))
+
+	log("relay.debounceEventPropagations.finish took=%d", took(start))
 }
 
-// PaymentWaiter is a struct that holds the state of a cart that is waiting for payment.
+// PaymentWaiter is a struct that holds the state of a order that is waiting for payment.
 type PaymentWaiter struct {
-	waiterID        requestID
-	cartID          eventID
-	cartFinalizedAt time.Time
-	purchaseAddr    common.Address
-	lastBlockNo     SQLStringBigInt
-	coinsPayed      SQLStringBigInt
-	coinsTotal      SQLStringBigInt
-	paymentId       SQLStringBigInt
+	waiterID         requestID
+	orderID          eventID
+	orderFinalizedAt time.Time
+	purchaseAddr     common.Address
+	lastBlockNo      SQLStringBigInt
+	coinsPayed       SQLStringBigInt
+	coinsTotal       SQLStringBigInt
+	paymentId        SQLStringBigInt
 
 	// (optional) contract of the erc20 that we are looking for
 	erc20TokenAddr *common.Address
 
-	// set if cart was payed
-	cartPayedAt *time.Time
-	cartPayedTx *common.Hash
+	// set if order was payed
+	orderPayedAt *time.Time
+	orderPayedTx *common.Hash
 }
 
 var (
@@ -4196,17 +3527,17 @@ func (r *Relay) watchEthereumPayments() error {
 	ctx, cancel := context.WithDeadline(context.Background(), start.Add(watcherTimeout))
 	defer cancel()
 
-	openPaymentsQry := `SELECT waiterId, cartId, cartFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal
+	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal
 	FROM payments
-	WHERE cartPayedAt IS NULL
+	WHERE orderPayedAt IS NULL
 		AND erc20TokenAddr IS NULL -- see watchErc20Payments()
-		AND cartFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
+		AND orderFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
 	rows, err := r.connPool.Query(ctx, openPaymentsQry)
 	check(err)
 	defer rows.Close()
 	for rows.Next() {
 		var waiter PaymentWaiter
-		err := rows.Scan(&waiter.waiterID, &waiter.cartID, &waiter.cartFinalizedAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal)
+		err := rows.Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal)
 		check(err)
 
 		assert(waiter.lastBlockNo.Cmp(bigZero) != 0)
@@ -4229,7 +3560,7 @@ func (r *Relay) watchEthereumPayments() error {
 		return nil
 	}
 
-	log("relay.watchEthereumPayments.dbRead elapsed=%d waiters=%d lowestLastBlock=%s", took(start), len(waiters), lowestLastBlock)
+	log("relay.watchEthereumPayments.dbRead took=%d waiters=%d lowestLastBlock=%s", took(start), len(waiters), lowestLastBlock)
 
 	// make geth client
 	gethClient, err := r.ethClient.getClient(ctx)
@@ -4264,9 +3595,9 @@ func (r *Relay) watchEthereumPayments() error {
 			waiter, has := waiters[*to]
 			if has {
 				log("relay.watchEthereumPayments.checkTx waiter.lastBlockNo=%s checkingBlock=%s tx=%s to=%s", waiter.lastBlockNo.String(), block.Number().String(), tx.Hash().String(), tx.To().String())
-				cartID := waiter.cartID
-				// cart, has := r.cartsByCartID.get(cartID)
-				assertWithMessage(has, fmt.Sprintf("cart not found for cartId=%s", cartID))
+				orderID := waiter.orderID
+				// order, has := r.ordersByOrderID.get(orderID)
+				assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
 
 				// found a transaction to the purchase address
 				// check if it's the right amount
@@ -4276,21 +3607,21 @@ func (r *Relay) watchEthereumPayments() error {
 					// it is larger or equal
 
 					op := PaymentFoundInternalOp{
-						cartID: cartID,
-						txHash: tx.Hash(),
-						done:   make(chan struct{}),
+						orderID: orderID,
+						txHash:  tx.Hash(),
+						done:    make(chan struct{}),
 					}
 					r.opsInternal <- &op
 					<-op.done // wait for write
 
 					delete(waiters, waiter.purchaseAddr)
-					log("relay.watchEthereumPayments.completed cartId=%s", cartID)
+					log("relay.watchEthereumPayments.completed orderId=%s", orderID)
 				} else {
 					// it is still smaller
-					log("relay.watchEthereumPayments.partial cartId=%s inTx=%s subTotal=%s", cartID, inTx.String(), waiter.coinsPayed.String())
+					log("relay.watchEthereumPayments.partial orderId=%s inTx=%s subTotal=%s", orderID, inTx.String(), waiter.coinsPayed.String())
 					// update subtotal
-					const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE cartId = $2;`
-					_, err := r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, cartID)
+					const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE orderId = $2;`
+					_, err := r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, orderID)
 					check(err) // cant recover sql errors
 				}
 			}
@@ -4302,18 +3633,18 @@ func (r *Relay) watchEthereumPayments() error {
 			}
 			// lastBlockNo += 1
 			waiter.lastBlockNo.Add(&waiter.lastBlockNo.Int, bigOne)
-			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = lastBlockNo + 1 WHERE cartId = $1;`
-			cartID := waiter.cartID
-			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, cartID)
+			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = lastBlockNo + 1 WHERE orderId = $1;`
+			orderID := waiter.orderID
+			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, orderID)
 			check(err)
-			log("relay.watchEthereumPayments.advance cartId=%x newLastBlock=%s", cartID, waiter.lastBlockNo.String())
+			log("relay.watchEthereumPayments.advance orderId=%x newLastBlock=%s", orderID, waiter.lastBlockNo.String())
 		}
 		// increment iterator
 		lowestLastBlock.Add(lowestLastBlock, bigOne)
 	}
 
 	stillWaiting := len(waiters)
-	log("relay.watchEthereumPayments.finish elapsed=%d openWaiters=%d", took(start), stillWaiting)
+	log("relay.watchEthereumPayments.finish took=%d openWaiters=%d", took(start), stillWaiting)
 	r.metric.emit("relay_payments_eth_open", uint64(stillWaiting))
 	return nil
 }
@@ -4345,17 +3676,17 @@ func (r *Relay) watchErc20Payments() error {
 	}
 	defer gethClient.Close()
 
-	openPaymentsQry := `SELECT waiterId, cartId, cartFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr
+	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr
 		FROM payments
-		WHERE cartPayedAt IS NULL
+		WHERE orderPayedAt IS NULL
 			AND erc20TokenAddr IS NOT NULL -- see watchErc20Payments()
-			AND cartFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
+			AND orderFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
 	rows, err := r.connPool.Query(ctx, openPaymentsQry)
 	check(err)
 	defer rows.Close()
 	for rows.Next() {
 		var waiter PaymentWaiter
-		err := rows.Scan(&waiter.waiterID, &waiter.cartID, &waiter.cartFinalizedAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal, &waiter.erc20TokenAddr)
+		err := rows.Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal, &waiter.erc20TokenAddr)
 		check(err)
 		assert(waiter.lastBlockNo.Cmp(bigZero) != 0)
 
@@ -4429,12 +3760,12 @@ func (r *Relay) watchErc20Payments() error {
 		waiter, has := waiters[toHash]
 		if has && waiter.erc20TokenAddr.Cmp(vLog.Address) == 0 {
 			// We found a transfer to our address!
-			cartID := waiter.cartID
+			orderID := waiter.orderID
 
-			_, has := r.cartsByCartID.get(cartID)
-			assertWithMessage(has, fmt.Sprintf("cart not found for cartId=%s", cartID))
+			_, has := r.ordersByOrderID.get(orderID)
+			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
 
-			evts, err := r.ethClient.ABIs.erc20Contract.Unpack("Transfer", vLog.Data)
+			evts, err := r.ethClient.erc20ContractABI.Unpack("Transfer", vLog.Data)
 			if err != nil {
 				log("relay.watchErc20Payments.transferErc20.failedToUnpackTransfer err=%s", err)
 				continue
@@ -4442,29 +3773,29 @@ func (r *Relay) watchErc20Payments() error {
 
 			inTx, ok := evts[0].(*big.Int)
 			assertWithMessage(ok, fmt.Sprintf("unexpected unpack result for field 0 - type=%T", evts[0]))
-			log("relay.watchErc20Payments.foundTransfer cartId=%s from=%s to=%s amount=%s", cartID, fromHash.Hex(), toHash.Hex(), inTx.String())
+			log("relay.watchErc20Payments.foundTransfer orderId=%s from=%s to=%s amount=%s", orderID, fromHash.Hex(), toHash.Hex(), inTx.String())
 
 			waiter.coinsPayed.Add(&waiter.coinsPayed.Int, inTx)
 			if waiter.coinsPayed.Cmp(&waiter.coinsTotal.Int) != -1 {
 				// it is larger or equal
 
 				op := PaymentFoundInternalOp{
-					cartID: cartID,
-					txHash: vLog.TxHash,
-					done:   make(chan struct{}),
+					orderID: orderID,
+					txHash:  vLog.TxHash,
+					done:    make(chan struct{}),
 				}
 				r.opsInternal <- &op
 				<-op.done
 
 				delete(waiters, toHash)
-				log("relay.watchErc20Payments.completed cartId=%s", cartID)
+				log("relay.watchErc20Payments.completed orderId=%s", orderID)
 
 			} else {
 				// it is still smaller
-				log("relay.watchErc20Payments.partial cartId=%s inTx=%s subTotal=%s", cartID, inTx.String(), waiter.coinsPayed.String())
+				log("relay.watchErc20Payments.partial orderId=%s inTx=%s subTotal=%s", orderID, inTx.String(), waiter.coinsPayed.String())
 				// update subtotal
-				const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE cartId = $2;`
-				_, err = r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, cartID)
+				const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE orderId = $2;`
+				_, err = r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, orderID)
 				check(err)
 			}
 		}
@@ -4481,14 +3812,14 @@ func (r *Relay) watchErc20Payments() error {
 				continue
 			}
 			// move up block number
-			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = $2 WHERE cartId = $1;`
-			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, waiter.cartID, currentBlockNo.String())
+			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = $2 WHERE orderId = $1;`
+			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, waiter.orderID, currentBlockNo.String())
 			check(err)
-			log("relay.watchErc20Payments.advance cartId=%x newLastBlock=%s", waiter.cartID, waiter.lastBlockNo.String())
+			log("relay.watchErc20Payments.advance orderId=%x newLastBlock=%s", waiter.orderID, waiter.lastBlockNo.String())
 		}
 	}
 	stillWaiting := len(waiters)
-	log("relay.watchErc20Payments.finish elapsed=%d openWaiters=%d", took(start), stillWaiting)
+	log("relay.watchErc20Payments.finish took=%d openWaiters=%d", took(start), stillWaiting)
 	r.metric.emit("relay_payments_erc20_open", uint64(stillWaiting))
 	return nil
 }
@@ -4514,15 +3845,15 @@ func (r *Relay) watchPaymentMade() error {
 	}
 	defer gethClient.Close()
 
-	openPaymentsQry := `SELECT waiterId, cartId, cartFinalizedAt, paymentId, lastBlockNo
+	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, paymentId, lastBlockNo
 		FROM payments
-		WHERE cartPayedAt IS NULL AND cartFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
+		WHERE orderPayedAt IS NULL AND orderFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
 	rows, err := r.connPool.Query(ctx, openPaymentsQry)
 	check(err)
 	defer rows.Close()
 	for rows.Next() {
 		var waiter PaymentWaiter
-		err := rows.Scan(&waiter.waiterID, &waiter.cartID, &waiter.cartFinalizedAt, &waiter.paymentId, &waiter.lastBlockNo)
+		err := rows.Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.paymentId, &waiter.lastBlockNo)
 		check(err)
 		assert(waiter.lastBlockNo.Cmp(bigZero) != 0)
 
@@ -4580,22 +3911,22 @@ func (r *Relay) watchPaymentMade() error {
 		//log("relay.watchPaymentMade.seen pid=%s", paymentIdHash.Hex())
 
 		if waiter, has := waiters[paymentIdHash]; has {
-			cartID := waiter.cartID
-			//log("relay.watchPaymentMade.found cartId=%s txHash=%x", cartID, vLog.TxHash)
+			orderID := waiter.orderID
+			//log("relay.watchPaymentMade.found cartId=%s txHash=%x", orderID, vLog.TxHash)
 
-			_, has := r.cartsByCartID.get(cartID)
-			assertWithMessage(has, fmt.Sprintf("cart not found for cartId=%s", cartID))
+			_, has := r.ordersByOrderID.get(orderID)
+			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
 
 			op := PaymentFoundInternalOp{
-				cartID: cartID,
-				txHash: vLog.TxHash,
-				done:   make(chan struct{}),
+				orderID: orderID,
+				txHash:  vLog.TxHash,
+				done:    make(chan struct{}),
 			}
 			r.opsInternal <- &op
 			<-op.done // block until op was processed by server loop
 
 			delete(waiters, paymentIdHash)
-			log("relay.watchPaymentMade.completed cartId=%s txHash=%x", cartID, vLog.TxHash)
+			log("relay.watchPaymentMade.completed cartId=%s txHash=%x", orderID, vLog.TxHash)
 		}
 		if vLog.BlockNumber > lastBlockNo {
 			lastBlockNo = vLog.BlockNumber
@@ -4610,9 +3941,9 @@ func (r *Relay) watchPaymentMade() error {
 			}
 			// move up block number
 			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = $2 WHERE cartId = $1;`
-			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, waiter.cartID, currentBlockNo.String())
+			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, waiter.orderID, currentBlockNo.String())
 			check(err)
-			log("relay.watchPaymentMade.advance cartId=%x newLastBlock=%s", waiter.cartID, waiter.lastBlockNo.String())
+			log("relay.watchPaymentMade.advance cartId=%x newLastBlock=%s", waiter.orderID, waiter.lastBlockNo.String())
 		}
 	}
 	stillWaiting := len(waiters)
@@ -4626,9 +3957,9 @@ func (r *Relay) memoryStats() {
 	log("relay.memoryStats.start")
 
 	// Shared between old and sharing worlds.
-	sessionCount := r.sessionIdsToSessionStates.Size()
+	sessionCount := r.sessionIDsToSessionStates.Size()
 	sessionVersionCounts := make(map[uint]uint64)
-	r.sessionIdsToSessionStates.All(func(sessionId requestID, sessionState *SessionState) {
+	r.sessionIDsToSessionStates.All(func(sessionId requestID, sessionState *SessionState) {
 		sessionVersionCount := sessionVersionCounts[sessionState.version]
 		sessionVersionCounts[sessionState.version] = sessionVersionCount + 1
 	})
@@ -4636,12 +3967,12 @@ func (r *Relay) memoryStats() {
 	for version, versionCount := range sessionVersionCounts {
 		r.metric.emit(fmt.Sprintf("sessions.active.version.%d", version), versionCount)
 	}
-	r.metric.emit("relay.cached.stores", uint64(r.storeIdsToStoreSeqs.Size()))
+	r.metric.emit("relay.cached.stores", uint64(r.storeIdsToStoreState.Size()))
 
 	r.metric.emit("relay.ops.queued", uint64(len(r.ops)))
 
 	r.metric.emit("relay.cached.items", uint64(r.itemsByItemID.loaded.Size()))
-	r.metric.emit("relay.cached.carts", uint64(r.cartsByCartID.loaded.Size()))
+	r.metric.emit("relay.cached.orders", uint64(r.ordersByOrderID.loaded.Size()))
 
 	// Go runtime memory information
 	var runtimeMemory runtime.MemStats
@@ -4650,9 +3981,9 @@ func (r *Relay) memoryStats() {
 	r.metric.emit("go.runtime.inuse", runtimeMemory.HeapInuse)
 	r.metric.emit("go.runtime.gcpauses", runtimeMemory.PauseTotalNs)
 
-	memoryStatsElapsed := took(start)
-	r.metric.emit("relay.memoryStats.elapsed", uint64(memoryStatsElapsed))
-	log("relay.memoryStats.finish elapsed=%d", memoryStatsElapsed)
+	memoryStatsTook := took(start)
+	r.metric.emit("relay.memoryStats.took", uint64(memoryStatsTook))
+	log("relay.memoryStats.finish took=%d", memoryStatsTook)
 }
 
 func newPool() *pgxpool.Pool {
@@ -4699,9 +4030,9 @@ func (r *Relay) run() {
 	memoryStatsTimer := NewReusableTimer(memoryStatsInterval)
 	tickStatsTimer := NewReusableTimer(tickStatsInterval)
 
-	tickTypeToElapseds := make(map[tickType]time.Duration, len(allTickTypes))
+	tickTypeToTooks := make(map[tickType]time.Duration, len(allTickTypes))
 	for _, tt := range allTickTypes {
-		tickTypeToElapseds[tt] = 0
+		tickTypeToTooks[tt] = 0
 	}
 
 	for {
@@ -4724,6 +4055,7 @@ func (r *Relay) run() {
 
 		case <-debounceSessionsTimer.C:
 			tickType, tickSelected = timeTick(ttDebounceSessions)
+			r.debounceEventPropagations()
 			r.debounceSessions()
 			debounceSessionsTimer.Rewind()
 
@@ -4734,11 +4066,11 @@ func (r *Relay) run() {
 
 		case <-tickStatsTimer.C:
 			tickType, tickSelected = timeTick(ttTickStats)
-			for tt, e := range tickTypeToElapseds {
+			for tt, e := range tickTypeToTooks {
 				if e.Milliseconds() > 0 {
-					r.metric.emit(fmt.Sprintf("relay.run.tick.%s.elapsed", tt.String()), uint64(e.Milliseconds()))
+					r.metric.emit(fmt.Sprintf("relay.run.tick.%s.took", tt.String()), uint64(e.Milliseconds()))
 				}
-				tickTypeToElapseds[tt] = 0
+				tickTypeToTooks[tt] = 0
 			}
 			tickStatsTimer.Rewind()
 		}
@@ -4746,14 +4078,14 @@ func (r *Relay) run() {
 		assert(tickType != ttInvalid)
 		assert(!tickSelected.IsZero())
 		tickWait := tickSelected.Sub(tickStart)
-		tickElapsed := time.Since(tickSelected)
-		tickTypeToElapseds[ttWait] += tickWait
-		e, ok := tickTypeToElapseds[tickType]
+		tickTook := time.Since(tickSelected)
+		tickTypeToTooks[ttWait] += tickWait
+		e, ok := tickTypeToTooks[tickType]
 		assert(ok)
-		e += tickElapsed
-		tickTypeToElapseds[tickType] = e
-		if tickElapsed > tickBlockThreshold {
-			log("relay.run.tick.block type=%s elapsed=%d", tickType, tickElapsed.Milliseconds())
+		e += tickTook
+		tickTypeToTooks[tickType] = e
+		if tickTook > tickBlockThreshold {
+			log("relay.run.tick.block type=%s took=%d", tickType, tickTook.Milliseconds())
 		}
 	}
 }
@@ -4912,13 +4244,18 @@ func uploadBlobHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.Requ
 				}
 				log("relay.blobUpload.pinata ipfs_cid=%s pinata_id=%s status=%s", uploadedCid, pinResp.ID, pinResp.Status)
 				r.metric.counterAdd("blob_pinata", 1)
-				r.metric.counterAdd("blob_pinata_elapsed", float64(took(startPin)))
+				r.metric.counterAdd("blob_pinata_took", float64(took(startPin)))
 			}()
 		}
 
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{"ipfs_path": uploadedCid.String(), "url": "https://cloudflare-ipfs.com" + uploadedCid.String()})
-		return http.StatusCreated, nil
+		const status = http.StatusCreated
+		w.WriteHeader(status)
+		err = json.NewEncoder(w).Encode(map[string]any{"ipfs_path": uploadedCid.String(), "url": "https://cloudflare-ipfs.com" + uploadedCid.String()})
+		if err != nil {
+			log("relay.blobUpload.writeFailed err=%s", err)
+			// returning nil since responding with an error is not possible at this point
+		}
+		return status, nil
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		code, err := fn(w, req)
@@ -4927,7 +4264,10 @@ func uploadBlobHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.Requ
 			jsonEnc := json.NewEncoder(w)
 			log("relay.blobUploadHandler err=%s", err)
 			w.WriteHeader(code)
-			jsonEnc.Encode(map[string]any{"handler": "getBlobUpload", "error": err.Error()})
+			err = jsonEnc.Encode(map[string]any{"handler": "getBlobUpload", "error": err.Error()})
+			if err != nil {
+				log("relay.blobUpload.writeFailed err=%s", err)
+			}
 			return
 		}
 	}
@@ -4971,36 +4311,59 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			From:    r.ethClient.wallet,
 			Context: ctx,
 		}
+
 		var bigTokenID big.Int
 		bigTokenID.SetBytes(data.StoreTokenID)
 
-		// updateRootHash PERM is equivalent to Clerk or higher
-		perm, err := storeReg.PERMUpdateRootHash(opts)
+		//  check if store exists
+		_, err = storeReg.OwnerOf(opts, &bigTokenID)
 		if err != nil {
-			return http.StatusBadRequest, fmt.Errorf("failed to get updateRootHash PERM: %w", err)
-		}
-		has, err := storeReg.HasPermission(opts, &bigTokenID, userWallet, perm)
-		if err != nil {
-			return http.StatusInternalServerError, fmt.Errorf("contract call error: %w", err)
-		}
-		log("relay.enrollKeyCard.verifyAccess storeTokenID=%s userWallet=%s has=%v", bigTokenID.String(), userWallet.Hex(), has)
-		if !has {
-			return http.StatusForbidden, errors.New("access denied")
+			return http.StatusNotFound, fmt.Errorf("no owner for store: %w", err)
 		}
 
+		var isGuest bool = req.URL.Query().Get("guest") == "1"
+		if !isGuest {
+			// updateRootHash PERM is equivalent to Clerk or higher
+			perm, err := storeReg.PERMUpdateRootHash(opts)
+			if err != nil {
+				return http.StatusBadRequest, fmt.Errorf("failed to get updateRootHash PERM: %w", err)
+			}
+			has, err := storeReg.HasPermission(opts, &bigTokenID, userWallet, perm)
+			if err != nil {
+				return http.StatusInternalServerError, fmt.Errorf("contract call error: %w", err)
+			}
+			log("relay.enrollKeyCard.verifyAccess storeTokenID=%s userWallet=%s has=%v", bigTokenID.String(), userWallet.Hex(), has)
+			if !has {
+				return http.StatusForbidden, errors.New("access denied")
+			}
+		}
+
+		dbCtx := context.Background()
 		storeID := r.getOrCreateInternalStoreID(bigTokenID)
-		const insertKeyCard = `insert into keyCards (id, storeId, cardPublicKey, userWalletAddr, linkedAt, lastAckedStoreSeq, lastSeenAt, lastVersion)
-		VALUES ($1, $2, $3, $4, now(), 0, now(), 1)`
-		_, err = r.connPool.Exec(context.Background(), insertKeyCard, newRequestID(), storeID, data.KeyCardPublicKey, userWallet)
+		newKeyCardID := newRequestID()
+		const insertKeyCard = `insert into keyCards (id, storeId, cardPublicKey, userWalletAddr, linkedAt, lastAckedKCSeq, lastSeenAt, lastVersion, isGuest)
+		VALUES ($1, $2, $3, $4, now(), 0, now(), $5, $6)`
+		_, err = r.connPool.Exec(dbCtx, insertKeyCard, newKeyCardID, storeID, data.KeyCardPublicKey, userWallet, currentRelayVersion, isGuest)
 		check(err)
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{"success": true})
+		err = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		if err != nil {
+			log("relay.enrollKeyCard.responseFailure err=%s", err)
+			// returning an error would mean sending error code
+			// we already sent one so we cant
+			_, err = r.connPool.Exec(dbCtx, `delete from keyCards where id = $1`, newKeyCardID)
+			check(err)
+			return 0, nil
+		}
+
 		go func() {
 			r.opsInternal <- &KeyCardEnrolledInternalOp{
-				storeID:          storeID,
-				keyCardPublicKey: data.KeyCardPublicKey,
-				userWallet:       userWallet,
+				storeID:           storeID,
+				keyCardIsGuest:    isGuest,
+				keyCardDatabaseID: newKeyCardID,
+				keyCardPublicKey:  data.KeyCardPublicKey,
+				userWallet:        userWallet,
 			}
 		}()
 		return http.StatusCreated, nil
@@ -5010,9 +4373,12 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 		r.metric.httpStatusCodes.WithLabelValues(strconv.Itoa(code), req.URL.Path).Inc()
 		if err != nil {
 			jsonEnc := json.NewEncoder(w)
-			log("relay.enrollKeyCard err=%s", err)
+			log("relay.enrollKeyCard.failed err=%s", err)
 			w.WriteHeader(code)
-			jsonEnc.Encode(map[string]any{"handler": "enrollKeyCard", "error": err.Error()})
+			err = jsonEnc.Encode(map[string]any{"handler": "enrollKeyCard", "error": err.Error()})
+			if err != nil {
+				log("relay.enrollKeyCard.failedToRespond err=%s", err)
+			}
 			return
 		}
 	}
@@ -5030,14 +4396,21 @@ func healthHandleFunc(r *Relay) func(http.ResponseWriter, *http.Request) {
 			log("relay.health.dbs.fail")
 			w.WriteHeader(500)
 			r.metric.httpStatusCodes.WithLabelValues("500", req.URL.Path).Inc()
-			fmt.Fprintln(w, "database unavailable")
+			_, err = fmt.Fprintln(w, "database unavailable")
+			if err != nil {
+				log("relay.health.okFailed error=%s", err)
+			}
 			return
 		}
 
 		log("relay.health.pass")
-		fmt.Fprintln(w, "health OK")
+		_, err = fmt.Fprintln(w, "health OK")
+		if err != nil {
+			log("relay.health.okFailed error=%s", err)
+			return
+		}
 		r.metric.httpStatusCodes.WithLabelValues("200", req.URL.Path).Inc()
-		log("relay.health.finish elapsed=%d", took(start))
+		log("relay.health.finish took=%d", took(start))
 	}
 }
 

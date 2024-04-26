@@ -72,11 +72,11 @@ func assertNonemptyString(s string) {
 
 func validateString(s string, field string, maxLength int) *Error {
 	if s == "" {
-		return &Error{Code: invalidErrorCode, Message: fmt.Sprintf("Field `%s` must be a non-empty string", field)}
+		return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("Field `%s` must be a non-empty string", field)}
 	}
 	runeCount := utf8.RuneCountInString(s)
 	if runeCount > maxLength {
-		return &Error{Code: invalidErrorCode, Message: fmt.Sprintf("Field `%s` must be no more than %d characters, got %d", field, maxLength, runeCount)}
+		return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("Field `%s` must be no more than %d characters, got %d", field, maxLength, runeCount)}
 	}
 	return nil
 }
@@ -88,7 +88,7 @@ const (
 
 func validateBytes(val []byte, field string, want uint) *Error {
 	if n := len(val); uint(n) != want {
-		return &Error{Code: invalidErrorCode, Message: fmt.Sprintf("Field `%s` must have correct amount of bytes, got %d", field, n)}
+		return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("Field `%s` must have correct amount of bytes, got %d", field, n)}
 	}
 	return nil
 }
@@ -103,14 +103,14 @@ func validateEthAddressBytes(addr []byte, field string) *Error {
 
 func validateEthAddressHexString(k string, field string) *Error {
 	if !common.IsHexAddress(k) {
-		return &Error{Code: invalidErrorCode, Message: fmt.Sprintf("Field `%s` must be a valid ethereum address", field)}
+		return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("Field `%s` must be a valid ethereum address", field)}
 	}
 	return nil
 }
 
 func validateURL(k string, field string) *Error {
 	if _, err := url.Parse(k); err != nil {
-		return &Error{Code: invalidErrorCode, Message: fmt.Sprintf("Field `%s` must be a valid URL", field)}
+		return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("Field `%s` must be a valid URL", field)}
 	}
 	return nil
 }
@@ -120,74 +120,24 @@ var decimalRegex = regexp.MustCompile(`^\d+\.\d{2}$`)
 
 func validateDecimalPrice(value string, field string) *Error {
 	if !decimalRegex.MatchString(value) {
-		return &Error{Code: invalidErrorCode, Message: fmt.Sprintf("Field `%s` does not have two decimal places", field)}
+		return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("Field `%s` does not have two decimal places", field)}
 	}
 	// check if the value has 8 or less digits before the decimal point
 	if len(value) > 11 {
-		return &Error{Code: invalidErrorCode, Message: fmt.Sprintf("Field `%s` must have 8 or less digits before the decimal point", field)}
+		return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("Field `%s` must have 8 or less digits before the decimal point", field)}
 	}
 	parsed, _, err := apd.NewFromString(value)
 	if err != nil {
-		return &Error{Code: invalidErrorCode, Message: fmt.Sprintf("Field `%s` must be a valid decimal number", field)}
+		return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("Field `%s` must be a valid decimal number", field)}
 	}
 	if parsed.Cmp(apd.New(0, 0)) < 0 {
-		return &Error{Code: invalidErrorCode, Message: fmt.Sprintf("Field `%s` must be a positive number", field)}
+		return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("Field `%s` must be a positive number", field)}
 	}
 	return nil
 }
 
 func assertLTE(v int, max int) {
 	assertWithMessage(v <= max, fmt.Sprintf("value was greater than max: %d > %d", v, max))
-}
-
-func assertOneOfEvent(es *EventState) {
-	has := 0
-	if es.storeManifest != nil {
-		has++
-	}
-	if es.updateManifest != nil {
-		has++
-	}
-	if es.createItem != nil {
-		has++
-	}
-	if es.updateItem != nil {
-		has++
-	}
-	if es.createTag != nil {
-		has++
-	}
-	if es.addToTag != nil {
-		has++
-	}
-	if es.removeFromTag != nil {
-		has++
-	}
-	if es.renameTag != nil {
-		has++
-	}
-	if es.deleteTag != nil {
-		has++
-	}
-	if es.createCart != nil {
-		has++
-	}
-	if es.changeCart != nil {
-		has++
-	}
-	if es.cartFinalized != nil {
-		has++
-	}
-	if es.changeStock != nil {
-		has++
-	}
-	if es.cartAbandoned != nil {
-		has++
-	}
-	if es.newKeyCard != nil {
-		has++
-	}
-	assertWithMessage(has == 1, fmt.Sprintf("eventState has %d entries", has))
 }
 
 func check(e error) {

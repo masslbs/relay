@@ -70,7 +70,7 @@ jobs:
       - name: Extract branches
         shell: bash
         run: |
-          echo "contracts=$(jq -r '.nodes.contracts.original.ref' relay/flake.lock)" >> $GITHUB_OUTPUT
+          echo "contracts=$(jq -r '.nodes.contracts.locked.rev' relay/flake.lock)" >> $GITHUB_OUTPUT
           echo "relay_pr=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
         id: branches
 

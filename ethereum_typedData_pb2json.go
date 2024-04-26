@@ -11,6 +11,15 @@ import (
 
 // TODO: this code could be generated at some point
 
+func (evt *NewKeyCard) typedDataMap() map[string]any {
+	return map[string]any{
+		"event_id":         evt.EventId,
+		"user_wallet_addr": evt.UserWalletAddr,
+		"card_public_key":  evt.CardPublicKey,
+		"is_guest":         evt.IsGuest,
+	}
+}
+
 func (evt *StoreManifest) typedDataMap() map[string]any {
 	return map[string]any{
 		"event_id":         evt.EventId,
@@ -20,21 +29,21 @@ func (evt *StoreManifest) typedDataMap() map[string]any {
 	}
 }
 
-func (evt *UpdateManifest) typedDataMap() map[string]any {
+func (evt *UpdateStoreManifest) typedDataMap() map[string]any {
 	m := map[string]any{
 		"event_id": evt.EventId,
 		"field":    big.NewInt(int64(evt.Field)),
 	}
 	switch evt.Field {
-	case UpdateManifest_MANIFEST_FIELD_DOMAIN:
-		m["string"] = evt.Value.(*UpdateManifest_String_).String_
-	case UpdateManifest_MANIFEST_FIELD_PUBLISHED_TAG:
-		m["tag_id"] = evt.Value.(*UpdateManifest_TagId).TagId
-	case UpdateManifest_MANIFEST_FIELD_ADD_ERC20:
-		def := evt.Value.(*UpdateManifest_Erc20Addr).Erc20Addr
+	case UpdateStoreManifest_MANIFEST_FIELD_DOMAIN:
+		m["string"] = evt.Value.(*UpdateStoreManifest_String_).String_
+	case UpdateStoreManifest_MANIFEST_FIELD_PUBLISHED_TAG:
+		m["tag_id"] = evt.Value.(*UpdateStoreManifest_TagId).TagId
+	case UpdateStoreManifest_MANIFEST_FIELD_ADD_ERC20:
+		def := evt.Value.(*UpdateStoreManifest_Erc20Addr).Erc20Addr
 		m["erc20_addr"] = def
-	case UpdateManifest_MANIFEST_FIELD_REMOVE_ERC20:
-		def := evt.Value.(*UpdateManifest_Erc20Addr).Erc20Addr
+	case UpdateStoreManifest_MANIFEST_FIELD_REMOVE_ERC20:
+		def := evt.Value.(*UpdateStoreManifest_Erc20Addr).Erc20Addr
 		m["erc20_addr"] = def
 	default:
 		panic(fmt.Sprintf("unknown field: %v", evt.Field))
@@ -75,75 +84,73 @@ func (evt *CreateTag) typedDataMap() map[string]any {
 	}
 }
 
-func (evt *AddToTag) typedDataMap() map[string]any {
-	return map[string]any{
-		"event_id": evt.EventId,
-		"tag_id":   evt.TagId,
-		"item_id":  evt.ItemId,
-	}
-}
-
-func (evt *RemoveFromTag) typedDataMap() map[string]any {
-	return map[string]any{
-		"event_id": evt.EventId,
-		"tag_id":   evt.TagId,
-		"item_id":  evt.ItemId,
-	}
-}
-
-func (evt *RenameTag) typedDataMap() map[string]any {
-	return map[string]any{
-		"event_id": evt.EventId,
-		"tag_id":   evt.TagId,
-		"name":     evt.Name,
-	}
-}
-
-func (evt *DeleteTag) typedDataMap() map[string]any {
-	return map[string]any{
-		"event_id": evt.EventId,
-		"tag_id":   evt.TagId,
-	}
-}
-
-func (evt *CreateCart) typedDataMap() map[string]any {
-	return map[string]any{
-		"event_id": evt.EventId,
-	}
-}
-
-func (evt *ChangeCart) typedDataMap() map[string]any {
-	return map[string]any{
-		"event_id": evt.EventId,
-		"cart_id":  evt.CartId,
-		"item_id":  evt.ItemId,
-		"quantity": big.NewInt(int64(evt.Quantity)),
-	}
-}
-
-func (evt *CartFinalized) typedDataMap() map[string]any {
+func (evt *UpdateTag) typedDataMap() map[string]any {
 	m := map[string]any{
-		"event_id":        evt.EventId,
-		"cart_id":         evt.CartId,
-		"purchase_addr":   evt.PurchaseAddr,
-		"sub_total":       evt.SubTotal,
-		"sales_tax":       evt.SalesTax,
-		"total":           evt.Total,
-		"total_in_crypto": evt.TotalInCrypto,
-		"payment_id":      evt.PaymentId,
-		"payment_ttl":     evt.PaymentTtl,
+		"event_id": evt.EventId,
+		"tag_id":   evt.TagId,
+		"action":   big.NewInt(int64(evt.Action)),
 	}
-	if len(evt.Erc20Addr) == 20 {
-		m["erc20_addr"] = evt.Erc20Addr
+	switch evt.Action {
+	case UpdateTag_TAG_ACTION_ADD_ITEM:
+		fallthrough
+	case UpdateTag_TAG_ACTION_REMOVE_ITEM:
+		itemID := evt.Value.(*UpdateTag_ItemId).ItemId
+		m["item_id"] = itemID
+	case UpdateTag_TAG_ACTION_RENAME:
+		m["new_name"] = evt.Value.(*UpdateTag_NewName).NewName
+	case UpdateTag_TAG_ACTION_DELETE_TAG:
+		m["delete"] = true
+	default:
+		panic(fmt.Sprintf("unknown action: %v", evt.Action))
 	}
 	return m
 }
 
-func (evt *CartAbandoned) typedDataMap() map[string]any {
+func (evt *CreateOrder) typedDataMap() map[string]any {
 	return map[string]any{
 		"event_id": evt.EventId,
-		"cart_id":  evt.CartId,
 	}
+}
+
+func (evt *UpdateOrder) typedDataMap() map[string]any {
+	m := map[string]any{
+		"event_id": evt.EventId,
+		"order_id": evt.OrderId,
+	}
+	switch tv := evt.Action.(type) {
+	case *UpdateOrder_ChangeItems_:
+		ci := tv.ChangeItems
+		m["change_items"] = map[string]any{
+			"item_id":  ci.ItemId,
+			"quantity": big.NewInt(int64(ci.Quantity)),
+		}
+	case *UpdateOrder_ItemsFinalized_:
+		fin := tv.ItemsFinalized
+		finMap := map[string]any{
+			"payment_id":          fin.PaymentId,
+			"sub_total":           fin.SubTotal,
+			"sales_tax":           fin.SalesTax,
+			"total":               fin.Total,
+			"total_in_crypto":     fin.TotalInCrypto,
+			"ttl":                 fin.Ttl,
+			"order_hash":          fin.OrderHash,
+			"payee_addr":          fin.PayeeAddr,
+			"is_payment_endpoint": fin.IsPaymentEndpoint,
+			"shop_signature":      fin.ShopSignature,
+		}
+		if len(fin.CurrencyAddr) == 20 {
+			finMap["currency_addr"] = fin.CurrencyAddr
+		}
+		m["items_finalized"] = finMap
+	case *UpdateOrder_OrderCanceled_:
+		oc := tv.OrderCanceled
+		m["order_canceled"] = map[string]any{
+			"timestamp": big.NewInt(int64(oc.Timestamp)),
+		}
+	default:
+		panic(fmt.Sprintf("unknown action: %v", evt.Action))
+	}
+	return m
 }
 
 func (evt *ChangeStock) typedDataMap() map[string]any {
@@ -153,17 +160,9 @@ func (evt *ChangeStock) typedDataMap() map[string]any {
 	}
 	return map[string]any{
 		"event_id": evt.EventId,
-		"cart_id":  evt.CartId,
+		"order_id": evt.OrderId,
 		"tx_hash":  evt.TxHash,
 		"item_ids": evt.ItemIds,
 		"diffs":    bigDiffs,
-	}
-}
-
-func (evt *NewKeyCard) typedDataMap() map[string]any {
-	return map[string]any{
-		"event_id":         evt.EventId,
-		"user_wallet_addr": evt.UserWalletAddr,
-		"card_public_key":  evt.CardPublicKey,
 	}
 }

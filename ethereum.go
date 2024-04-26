@@ -32,6 +32,8 @@ import (
 	"github.com/ssgreg/repeat"
 )
 
+var relayKeyCardID requestID
+
 type ethClient struct {
 	rpcUrls []string
 	chainID uint
@@ -39,10 +41,7 @@ type ethClient struct {
 	gasTipCap *big.Int
 	gasFeeCap *big.Int
 
-	ABIs struct {
-		erc20Contract abi.ABI
-		payments      abi.ABI
-	}
+	erc20ContractABI abi.ABI
 
 	contractAddresses struct {
 		Payments      common.Address `json:"Payments"`
@@ -104,10 +103,14 @@ func newEthClient() *ethClient {
 	publicKey := c.secret.Public()
 	publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
 	assertWithMessage(ok, "Error casting public key to ECDSA")
+
 	c.wallet = crypto.PubkeyToAddress(*publicKeyECDSA)
 	log("ethClient.newEthClient wallet=%s", c.wallet.Hex())
+
+	relayKeyCardID = make([]byte, requestIDBytes)
+	copy(relayKeyCardID, c.wallet.Bytes())
+
 	has := c.hasBalance(ctx, c.wallet)
-	// assert(has)
 	_ = has
 
 	addrData, err := genContractAddresses.ReadFile("gen_contract_addresses.json")
@@ -117,12 +120,9 @@ func newEthClient() *ethClient {
 
 	log("ethClient.newEthClient storeRegAddr=%s", c.contractAddresses.StoreRegistry.Hex())
 	log("ethClient.newEthClient relayRegAddr=%s", c.contractAddresses.RelayRegistry.Hex())
-	log("ethClient.newEthClient paymentsByAddressAddr=%s", c.contractAddresses.Payments.Hex())
+	log("ethClient.newEthClient paymentsAddr=%s", c.contractAddresses.Payments.Hex())
 
-	c.ABIs.erc20Contract, err = abi.JSON(strings.NewReader(ERC20MetaData.ABI))
-	check(err)
-
-	c.ABIs.payments, err = abi.JSON(strings.NewReader(PaymentsByAddressMetaData.ABI))
+	c.erc20ContractABI, err = abi.JSON(strings.NewReader(ERC20MetaData.ABI))
 	check(err)
 
 	callOpts := &bind.CallOpts{
@@ -130,11 +130,6 @@ func newEthClient() *ethClient {
 		From:    c.wallet,
 		Context: ctx,
 	}
-
-	// var h [32]byte
-	// addr, err := c.paymentFactory.GetPaymentAddress(callOpts, c.wallet, c.wallet, big.NewInt(123), common.Address{}, h)
-	// check(err)
-	// log("ethClient.testing PaymentAddress=%s", addr.Hex())
 
 	// register a new nft for the relay
 	relaysReg, gethc, err := c.newRelayReg(ctx)
@@ -157,10 +152,9 @@ func newEthClient() *ethClient {
 		relayTokenID.SetBytes(buf)
 
 		// working around a little qurik where big.Int.Text(16) doesn't encode zeros as expected.
-		// if the final or last word is 0, it just omits it. This trips up the python library.
+		// if the first word is 0, it just omits it. This trips up the python library, thinking it's just 31 bytes long
 		// This way we should also get a non-zero end byte.
-		buf[0] ^= 0xff
-		buf[31] ^= 0xff
+		buf[0] |= 0x80
 
 		txOpts, err := c.makeTxOpts(ctx)
 		check(err)

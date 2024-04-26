@@ -10,6 +10,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"strings"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -25,7 +27,6 @@ var eip712spec = []apitypes.Type{
 	{Name: "verifyingContract", Type: "address"},
 }
 
-// TODO: extract signed data like with SignedMassEvent
 func (c ethClient) verifyChallengeResponse(publicKey, challange, signature []byte) error {
 	typedData := apitypes.TypedData{
 		Types: map[string][]apitypes.Type{
@@ -121,35 +122,55 @@ func (c ethClient) verifyKeyCardEnroll(keyCardPublicKey, signature []byte) (comm
 	return recoveredAddress, nil
 }
 
-func findEventType(t apitypes.Types) (string, bool) {
-	for _, k := range t["MassEvent"] {
-		if k.Name == "event" {
-			return k.Type, true
-		}
-	}
-	return "", false
-}
-
 type typedDataMaper interface {
 	typedDataMap() map[string]any
 }
 
-//go:embed gen_network_typedData.json
-var genNetworkTypedData embed.FS
+type typedDataFieldDefinition struct {
+	apitypes.Type
+	Message []apitypes.Type
+}
 
-var eventToTypedData = make(apitypes.Types)
+var (
 
-var parseEventToTypedDataOnce sync.Once
+	//go:embed gen_network_typedData.json
+	genNetworkTypedData embed.FS
+
+	eventNestedTypes          = make(apitypes.Types)
+	eventToTypedData          = make(apitypes.Types)
+	parseEventToTypedDataOnce sync.Once
+)
 
 func parseEventToTypedData() {
 	// check if we can parse the network-schema data into the apitypes struct
 	data, err := genNetworkTypedData.ReadFile("gen_network_typedData.json")
 	check(err)
-	err = json.Unmarshal(data, &eventToTypedData)
+
+	var allTheData map[string][]typedDataFieldDefinition
+	err = json.Unmarshal(data, &allTheData)
 	check(err)
+
+	var cleanedUp = make(apitypes.Types)
+
+	for typeName, fields := range allTheData {
+		var prunedFields []apitypes.Type
+
+		for _, field := range fields {
+
+			if len(field.Message) > 0 {
+				eventNestedTypes[field.Name] = field.Message
+			} else {
+				prunedFields = append(prunedFields, field.Type)
+			}
+		}
+
+		cleanedUp[typeName] = prunedFields
+	}
+
+	eventToTypedData = cleanedUp
 }
 
-func (c ethClient) eventHash(evt *Event) ([]byte, error) {
+func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
 	parseEventToTypedDataOnce.Do(parseEventToTypedData)
 
 	typeName, message := evt.typeAndTypedDataMap()
@@ -159,24 +180,28 @@ func (c ethClient) eventHash(evt *Event) ([]byte, error) {
 		return nil, fmt.Errorf("Event.hash: no typed data specification for %s", typeName)
 	}
 
+	var types = map[string][]apitypes.Type{
+		"EIP712Domain": eip712spec,
+	}
+
 	var usedTypeSpec []apitypes.Type
 	// these two types follow the 'field=x oneof value' pattern
 	// for these we ned to remove the fields from the spec that are not set
 	// since we already omit the values from the message in TypeAndTypedDataMap()
-	if um := evt.GetUpdateManifest(); um != nil {
+	if um := evt.GetUpdateStoreManifest(); um != nil {
 		usedTypeSpec = make([]apitypes.Type, 3)
 		copy(usedTypeSpec, tdTypeSpec[:2])
 		switch um.Field {
-		case UpdateManifest_MANIFEST_FIELD_DOMAIN:
+		case UpdateStoreManifest_MANIFEST_FIELD_DOMAIN:
 			// keep type: string
 			usedTypeSpec[2] = tdTypeSpec[2]
-		case UpdateManifest_MANIFEST_FIELD_PUBLISHED_TAG:
+		case UpdateStoreManifest_MANIFEST_FIELD_PUBLISHED_TAG:
 			// keep type: id
 			usedTypeSpec[2] = tdTypeSpec[3]
-		case UpdateManifest_MANIFEST_FIELD_ADD_ERC20:
+		case UpdateStoreManifest_MANIFEST_FIELD_ADD_ERC20:
 			// keep type: erc20_addr
 			usedTypeSpec[2] = tdTypeSpec[4]
-		case UpdateManifest_MANIFEST_FIELD_REMOVE_ERC20:
+		case UpdateStoreManifest_MANIFEST_FIELD_REMOVE_ERC20:
 			// keep type: erc20_addr
 			usedTypeSpec[2] = tdTypeSpec[4]
 		default:
@@ -195,26 +220,53 @@ func (c ethClient) eventHash(evt *Event) ([]byte, error) {
 		default:
 			panic(fmt.Sprintf("eventHash: unknown updateItem field: %v", ui.Field))
 		}
-	} else if cs := evt.GetChangeStock(); cs != nil && len(cs.CartId) == 0 {
+	} else if ut := evt.GetUpdateTag(); ut != nil {
+		usedTypeSpec = make([]apitypes.Type, 4)
+		copy(usedTypeSpec, tdTypeSpec[:3])
+		switch ut.Action {
+		case UpdateTag_TAG_ACTION_ADD_ITEM:
+			fallthrough
+		case UpdateTag_TAG_ACTION_REMOVE_ITEM:
+			// keep type: item_id
+			usedTypeSpec[3] = tdTypeSpec[3]
+		case UpdateTag_TAG_ACTION_RENAME:
+			// keep type: new_name
+			usedTypeSpec[3] = tdTypeSpec[4]
+		case UpdateTag_TAG_ACTION_DELETE_TAG:
+			// keep type: delete
+			usedTypeSpec[3] = tdTypeSpec[5]
+		default:
+			panic(fmt.Sprintf("eventHash: unknown updateTag action: %v", ut.Action))
+		}
+	} else if cs := evt.GetChangeStock(); cs != nil && len(cs.OrderId) == 0 {
 		// for ChangeStock we need to remove the cart_id field if it's not set
 		usedTypeSpec = tdTypeSpec[:3]
-		delete(message, "cart_id")
+		delete(message, "order_id")
 		delete(message, "tx_hash")
-	} else if cf := evt.GetCartFinalized(); cf != nil && len(cf.Erc20Addr) == 0 {
-		// splice out erc20_addr
-		usedTypeSpec = make([]apitypes.Type, len(tdTypeSpec)-1)
-		copy(usedTypeSpec[:3], tdTypeSpec[:3])
-		copy(usedTypeSpec[3:], tdTypeSpec[4:])
-		delete(message, "erc20_addr")
+	} else if uo := evt.GetUpdateOrder(); uo != nil {
+		actionFieldName := uo.schemaFieldName()
+		actionFieldSpec := eventNestedTypes[actionFieldName]
+
+		usedTypeSpec = append(tdTypeSpec, apitypes.Type{Name: actionFieldName, Type: actionFieldName})
+
+		fin, ok := uo.Action.(*UpdateOrder_ItemsFinalized_)
+		if ok && len(fin.ItemsFinalized.CurrencyAddr) == 0 {
+			// splice out erc20_addr
+			copiedSpec := make([]apitypes.Type, len(actionFieldSpec)-1)
+			copy(copiedSpec, actionFieldSpec[:5])
+			copy(copiedSpec[6:], actionFieldSpec[7:])
+			actionFieldSpec = copiedSpec
+		}
+		types[actionFieldName] = actionFieldSpec
+
 	} else {
 		usedTypeSpec = tdTypeSpec
 	}
 
+	types[typeName] = usedTypeSpec
+
 	typedData := apitypes.TypedData{
-		Types: map[string][]apitypes.Type{
-			"EIP712Domain": eip712spec,
-			typeName:       usedTypeSpec,
-		},
+		Types:       types,
 		PrimaryType: typeName,
 		Domain: apitypes.TypedDataDomain{
 			Name:              "MassMarket",
@@ -228,20 +280,31 @@ func (c ethClient) eventHash(evt *Event) ([]byte, error) {
 	// EIP-712 typed data marshalling
 	sighash, _, err := apitypes.TypedDataAndHash(typedData)
 	if err != nil {
-		fmt.Printf("M:  %+v\n", message)
-		fmt.Printf("used: %+v\n", usedTypeSpec)
-		fmt.Printf("total: %+v\n", tdTypeSpec)
 		return nil, fmt.Errorf("Event.hash: TypedDataAndHash error: %w", err)
 	}
 
-	log("Event.hash eventId=%x hash=%x", message["event_id"], sighash)
 	return sighash, nil
 }
 
-func (c ethClient) eventVerify(evt *Event, publicKey []byte) error {
+// TODO: codegen this mapping. parsing the struct tag every time is hideous
+func (uo *UpdateOrder) schemaFieldName() string {
+	rt := reflect.TypeOf(uo.Action).Elem()
+	tag := rt.Field(0).Tag
+	pbtag := tag.Get("protobuf")
+	for _, val := range strings.Split(pbtag, ",") {
+		if strings.HasPrefix(val, "name=") {
+			fn := val[5:]
+			return fn
+		}
+	}
+	panic("unreachable")
+}
+
+func (c ethClient) eventVerify(evt *StoreEvent, publicKey []byte) error {
+	assert(evt != nil)
 	sighash, err := c.eventHash(evt)
 	if err != nil {
-		return err
+		return fmt.Errorf("verifyEvent: failed to hash %T: %w", evt.Union, err)
 	}
 
 	signature := evt.Signature
@@ -268,7 +331,7 @@ func (c ethClient) eventVerify(evt *Event, publicKey []byte) error {
 	return nil
 }
 
-func (c ethClient) eventSign(evt *Event) error {
+func (c ethClient) eventSign(evt *StoreEvent) error {
 	sighash, err := c.eventHash(evt)
 	if err != nil {
 		return err

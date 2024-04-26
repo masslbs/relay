@@ -233,11 +233,11 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1717159533,
-        "narHash": "sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth/3Xuw=",
+        "lastModified": 1717530100,
+        "narHash": "sha256-b4Dn+PnrZoVZ/BoR9JN2fTxXxplJrAsdSUIePf4Cacs=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "a62e6edd6d5e1fa0329b8653c801147986f8d446",
+        "rev": "a2e1d0414259a144ebdc048408a807e69e0565af",
         "type": "github"
       },
       "original": {
@@ -313,16 +313,16 @@
     "schema": {
       "flake": false,
       "locked": {
-        "lastModified": 1717518765,
-        "narHash": "sha256-OdWkCu3FgivDDRDjbKJDNoT+CFVZHj+LuFcGHGUNess=",
+        "lastModified": 1717583933,
+        "narHash": "sha256-iT5fTPaJvo3SiYxWVOPk7Rss1HfiJrbzNQkf1aMcNKI=",
         "owner": "masslbs",
         "repo": "network-schema",
-        "rev": "5a04b2d1bd64145d573898b9317281ca67db3d7c",
+        "rev": "64d582e035063484932d49537ca0bb135c1cd36c",
         "type": "github"
       },
       "original": {
         "owner": "masslbs",
-        "ref": "payments-v2-intergration",
+        "ref": "wip/v2",
         "repo": "network-schema",
         "type": "github"
       }

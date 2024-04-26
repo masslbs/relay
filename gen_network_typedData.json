@@ -17,7 +17,7 @@
       "type": "bytes32"
     }
   ],
-  "UpdateManifest": [
+  "UpdateStoreManifest": [
     {
       "name": "event_id",
       "type": "bytes32"
@@ -85,7 +85,7 @@
       "type": "string"
     }
   ],
-  "AddToTag": [
+  "UpdateTag": [
     {
       "name": "event_id",
       "type": "bytes32"
@@ -95,122 +95,107 @@
       "type": "bytes32"
     },
     {
-      "name": "item_id",
-      "type": "bytes32"
-    }
-  ],
-  "RemoveFromTag": [
-    {
-      "name": "event_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "tag_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "item_id",
-      "type": "bytes32"
-    }
-  ],
-  "RenameTag": [
-    {
-      "name": "event_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "tag_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "name",
-      "type": "string"
-    }
-  ],
-  "DeleteTag": [
-    {
-      "name": "event_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "tag_id",
-      "type": "bytes32"
-    }
-  ],
-  "CreateCart": [
-    {
-      "name": "event_id",
-      "type": "bytes32"
-    }
-  ],
-  "ChangeCart": [
-    {
-      "name": "event_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "cart_id",
-      "type": "bytes32"
+      "name": "action",
+      "type": "int256"
     },
     {
       "name": "item_id",
       "type": "bytes32"
     },
     {
-      "name": "quantity",
-      "type": "int32"
+      "name": "new_name",
+      "type": "string"
+    },
+    {
+      "name": "delete",
+      "type": "bool"
     }
   ],
-  "CartFinalized": [
+  "CreateOrder": [
+    {
+      "name": "event_id",
+      "type": "bytes32"
+    }
+  ],
+  "UpdateOrder": [
     {
       "name": "event_id",
       "type": "bytes32"
     },
     {
-      "name": "cart_id",
+      "name": "order_id",
       "type": "bytes32"
     },
     {
-      "name": "purchase_addr",
-      "type": "address"
+      "name": "change_items",
+      "message": [
+        {
+          "name": "item_id",
+          "type": "bytes32"
+        },
+        {
+          "name": "quantity",
+          "type": "int32"
+        }
+      ]
     },
     {
-      "name": "erc20_addr",
-      "type": "address"
+      "name": "items_finalized",
+      "message": [
+        {
+          "name": "payment_id",
+          "type": "bytes32"
+        },
+        {
+          "name": "sub_total",
+          "type": "string"
+        },
+        {
+          "name": "sales_tax",
+          "type": "string"
+        },
+        {
+          "name": "total",
+          "type": "string"
+        },
+        {
+          "name": "ttl",
+          "type": "string"
+        },
+        {
+          "name": "order_hash",
+          "type": "bytes32"
+        },
+        {
+          "name": "currency_addr",
+          "type": "address"
+        },
+        {
+          "name": "total_in_crypto",
+          "type": "string"
+        },
+        {
+          "name": "payee_addr",
+          "type": "address"
+        },
+        {
+          "name": "is_payment_endpoint",
+          "type": "bool"
+        },
+        {
+          "name": "shop_signature",
+          "type": "bytes"
+        }
+      ]
     },
     {
-      "name": "sub_total",
-      "type": "string"
-    },
-    {
-      "name": "sales_tax",
-      "type": "string"
-    },
-    {
-      "name": "total",
-      "type": "string"
-    },
-    {
-      "name": "total_in_crypto",
-      "type": "string"
-    },
-    {
-      "name": "payment_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "payment_ttl",
-      "type": "string"
-    }
-  ],
-  "CartAbandoned": [
-    {
-      "name": "event_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "cart_id",
-      "type": "bytes32"
+      "name": "order_canceled",
+      "message": [
+        {
+          "name": "timestamp",
+          "type": "uint64"
+        }
+      ]
     }
   ],
   "ChangeStock": [
@@ -227,7 +212,7 @@
       "type": "int32[]"
     },
     {
-      "name": "cart_id",
+      "name": "order_id",
       "type": "bytes32"
     },
     {
@@ -247,6 +232,10 @@
     {
       "name": "card_public_key",
       "type": "bytes"
+    },
+    {
+      "name": "is_guest",
+      "type": "bool"
     }
   ]
 }
