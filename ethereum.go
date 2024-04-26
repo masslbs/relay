@@ -159,10 +159,9 @@ func newEthClient() *ethClient {
 		relayTokenID.SetBytes(buf)
 
 		// working around a little qurik where big.Int.Text(16) doesn't encode zeros as expected.
-		// if the final or last word is 0, it just omits it. This trips up the python library.
+		// if the first word is 0, it just omits it. This trips up the python library, thinking it's just 31 bytes long
 		// This way we should also get a non-zero end byte.
-		buf[0] ^= 0xff
-		buf[31] ^= 0xff
+		buf[0] |= 0x80
 
 		txOpts, err := c.makeTxOpts(ctx)
 		check(err)
