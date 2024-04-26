@@ -49,6 +49,7 @@ import (
 	"github.com/ssgreg/repeat"
 	"golang.org/x/crypto/sha3"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // Server configuration.
@@ -254,11 +255,12 @@ type SyncStatusOp struct {
 
 // EventWriteOp processes a write of an event to the database
 type EventWriteOp struct {
-	sessionID    requestID
-	im           *EventWriteRequest
-	newStoreHash []byte
-	eventSeq     uint64
-	err          *Error
+	sessionID       requestID
+	im              *EventWriteRequest
+	decodedStoreEvt *Event
+	newStoreHash    []byte
+	eventSeq        uint64
+	err             *Error
 }
 
 // EventPushOp sends an EventPushRequest to the client
@@ -611,49 +613,17 @@ func (im *SyncStatusResponse) handle(sess *Session) {
 
 func (op *EventPushOp) handle(sess *Session) {
 	assertLTE(len(op.eventStates), limitMaxOutBatchSize)
-	events := make([]*Event, len(op.eventStates))
+	events := make([]*anypb.Any, len(op.eventStates))
+	var err error
 	for i, eventState := range op.eventStates {
 		eventState.eventID.assert()
 		assert(eventState.eventType != "")
-		assertOneOfEvent(eventState)
-		e := &Event{}
-		e.Signature = eventState.signature
-		switch eventState.eventType {
-		case eventTypeStoreManifest:
-			e.Union = &Event_StoreManifest{eventState.storeManifest}
-		case eventTypeUpdateManifest:
-			e.Union = &Event_UpdateManifest{eventState.updateManifest}
-		case eventTypeCreateItem:
-			e.Union = &Event_CreateItem{eventState.createItem}
-		case eventTypeUpdateItem:
-			e.Union = &Event_UpdateItem{eventState.updateItem}
-		case eventTypeCreateTag:
-			e.Union = &Event_CreateTag{eventState.createTag}
-		case eventTypeAddToTag:
-			e.Union = &Event_AddToTag{eventState.addToTag}
-		case eventTypeRemoveFromTag:
-			e.Union = &Event_RemoveFromTag{eventState.removeFromTag}
-		case eventTypeRenameTag:
-			e.Union = &Event_RenameTag{eventState.renameTag}
-		case eventTypeDeleteTag:
-			e.Union = &Event_DeleteTag{eventState.deleteTag}
-		case eventTypeCreateCart:
-			e.Union = &Event_CreateCart{eventState.createCart}
-		case eventTypeChangeCart:
-			e.Union = &Event_ChangeCart{eventState.changeCart}
-		case eventTypeCartFinalized:
-			e.Union = &Event_CartFinalized{eventState.cartFinalized}
-		case eventTypeCartAbandoned:
-			e.Union = &Event_CartAbandoned{eventState.cartAbandoned}
-		case eventTypeChangeStock:
-			e.Union = &Event_ChangeStock{eventState.changeStock}
-		case eventTypeNewKeyCard:
-			e.Union = &Event_NewKeyCard{eventState.newKeyCard}
-		default:
-			panic(fmt.Errorf("unhandled eventType: %s", eventState.eventType))
+		events[i] = eventState.encodedEvent
+		if err != nil {
+			panic(fmt.Errorf("failed to create anypb for event: %w", err))
 		}
-		events[i] = e
 	}
+
 	om := &EventPushRequest{RequestId: newRequestID(), Events: events}
 	sess.activePushes.Set(om.RequestId, op)
 	sess.writeMessage(om)
@@ -675,32 +645,32 @@ func validateStoreManifest(_ uint, event *StoreManifest) *Error {
 	)
 }
 
-func validateUpdateManifest(_ uint, event *UpdateManifest) *Error {
+func validateUpdateStoreManifest(_ uint, event *UpdateStoreManifest) *Error {
 	errs := []*Error{validateEventID(event.EventId, "event_id")}
 	switch event.Field {
-	case UpdateManifest_MANIFEST_FIELD_DOMAIN:
-		strVal, ok := event.Value.(*UpdateManifest_String_)
+	case UpdateStoreManifest_MANIFEST_FIELD_DOMAIN:
+		strVal, ok := event.Value.(*UpdateStoreManifest_String_)
 		if ok {
 			errs = append(errs, validateURL(strVal.String_, "domain_value"))
 		} else {
 			errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid value type for domain"})
 		}
-	case UpdateManifest_MANIFEST_FIELD_PUBLISHED_TAG:
-		idVal, ok := event.Value.(*UpdateManifest_TagId)
+	case UpdateStoreManifest_MANIFEST_FIELD_PUBLISHED_TAG:
+		idVal, ok := event.Value.(*UpdateStoreManifest_TagId)
 		if ok {
 			errs = append(errs, validateEventID(idVal.TagId, "published_tag"))
 		} else {
 			errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid value type for published_tag"})
 		}
-	case UpdateManifest_MANIFEST_FIELD_ADD_ERC20:
-		val, ok := event.Value.(*UpdateManifest_Erc20Addr)
+	case UpdateStoreManifest_MANIFEST_FIELD_ADD_ERC20:
+		val, ok := event.Value.(*UpdateStoreManifest_Erc20Addr)
 		if ok {
 			errs = append(errs, validateEthAddressBytes(val.Erc20Addr, "erc20_token_addr"))
 		} else {
 			errs = append(errs, &Error{Code: invalidErrorCode, Message: fmt.Sprintf("Invalid value type for add_erc20 - got %T", event.Value)})
 		}
-	case UpdateManifest_MANIFEST_FIELD_REMOVE_ERC20:
-		val, ok := event.Value.(*UpdateManifest_Erc20Addr)
+	case UpdateStoreManifest_MANIFEST_FIELD_REMOVE_ERC20:
+		val, ok := event.Value.(*UpdateStoreManifest_Erc20Addr)
 		if ok {
 			errs = append(errs, validateEthAddressBytes(val.Erc20Addr, "erc20_token_addr"))
 		} else {
@@ -761,35 +731,39 @@ func validateCreateTag(_ uint, event *CreateTag) *Error {
 	)
 }
 
-func validateRenameTag(_ uint, event *RenameTag) *Error {
-	return coalesce(
+func validateUpdateTag(_ uint, event *UpdateTag) *Error {
+	errs := []*Error{
 		validateEventID(event.EventId, "event_id"),
 		validateEventID(event.TagId, "tag_id"),
-		validateString(event.Name, "name", 64),
-	)
-}
-
-func validateDeleteTag(_ uint, event *DeleteTag) *Error {
-	return coalesce(
-		validateEventID(event.EventId, "event_id"),
-		validateEventID(event.TagId, "tag_id"),
-	)
-}
-
-func validateAddToTag(_ uint, event *AddToTag) *Error {
-	return coalesce(
-		validateEventID(event.EventId, "event_id"),
-		validateEventID(event.TagId, "tag_id"),
-		validateEventID(event.ItemId, "item_id"),
-	)
-}
-
-func validateRemoveFromTag(_ uint, event *RemoveFromTag) *Error {
-	return coalesce(
-		validateEventID(event.EventId, "event_id"),
-		validateEventID(event.TagId, "tag_id"),
-		validateEventID(event.ItemId, "item_id"),
-	)
+	}
+	switch event.Action {
+	case UpdateTag_TAG_ACTION_ADD_ITEM:
+		fallthrough
+	case UpdateTag_TAG_ACTION_REMOVE_ITEM:
+		itemID, ok := event.Value.(*UpdateTag_ItemId)
+		if !ok {
+			errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid value type for item_id"})
+		} else {
+			errs = append(errs, validateEventID(itemID.ItemId, "item_id"))
+		}
+	case UpdateTag_TAG_ACTION_RENAME:
+		newName, ok := event.Value.(*UpdateTag_NewName)
+		if !ok {
+			errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid value type for new_name"})
+		} else {
+			errs = append(errs, validateString(newName.NewName, "new_name", 32))
+		}
+	case UpdateTag_TAG_ACTION_DELETE_TAG:
+		// TODO: implement deletion
+		errs = append(errs, &Error{Code: invalidErrorCode, Message: "delete not yet supported"})
+		// _, ok := event.Value.(*UpdateTag_Delete)
+		// if !ok {
+		// 	errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid value type for delete"})
+		// }
+	default:
+		errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid action"})
+	}
+	return coalesce(errs...)
 }
 
 func validateChangeStock(_ uint, event *ChangeStock) *Error {
@@ -826,29 +800,28 @@ func validateCartAbandoned(_ uint, event *CartAbandoned) *Error {
 }
 
 func (im *EventWriteRequest) validate(version uint) *Error {
-	if err := validateBytes(im.Event.Signature, "signature", signatureBytes); err != nil {
+	var decodedEvt Event
+	if pberr := im.Event.UnmarshalTo(&decodedEvt); pberr != nil {
+		log("eventWriteRequest.validate: anypb unmarshal failed: %s", pberr.Error())
+		return &Error{Code: invalidErrorCode, Message: "invalid protobuf encoding"}
+	}
+	if err := validateBytes(decodedEvt.Signature, "signature", signatureBytes); err != nil {
 		return err
 	}
 	var err *Error
-	switch union := im.Event.Union.(type) {
+	switch union := decodedEvt.Union.(type) {
 	case *Event_StoreManifest:
 		err = validateStoreManifest(version, union.StoreManifest)
-	case *Event_UpdateManifest:
-		err = validateUpdateManifest(version, union.UpdateManifest)
+	case *Event_UpdateStoreManifest:
+		err = validateUpdateStoreManifest(version, union.UpdateStoreManifest)
 	case *Event_CreateItem:
 		err = validateCreateItem(version, union.CreateItem)
 	case *Event_UpdateItem:
 		err = validateUpdateItem(version, union.UpdateItem)
 	case *Event_CreateTag:
 		err = validateCreateTag(version, union.CreateTag)
-	case *Event_AddToTag:
-		err = validateAddToTag(version, union.AddToTag)
-	case *Event_RemoveFromTag:
-		err = validateRemoveFromTag(version, union.RemoveFromTag)
-	case *Event_RenameTag:
-		err = validateRenameTag(version, union.RenameTag)
-	case *Event_DeleteTag:
-		err = validateDeleteTag(version, union.DeleteTag)
+	case *Event_UpdateTag:
+		err = validateUpdateTag(version, union.UpdateTag)
 	case *Event_ChangeStock:
 		err = validateChangeStock(version, union.ChangeStock)
 	case *Event_CreateCart:
@@ -862,7 +835,7 @@ func (im *EventWriteRequest) validate(version uint) *Error {
 	case *Event_NewKeyCard:
 		err = &Error{Code: invalidErrorCode, Message: "NewKeyCard is not allowed in EventWriteRequest"}
 	default:
-		log("eventWriteRequest.validate: unrecognized event type: %T", im.Event.Union)
+		log("eventWriteRequest.validate: unrecognized event type: %T", decodedEvt.Union)
 		return &Error{Code: invalidErrorCode, Message: "Unrecognized event type"}
 	}
 	if err != nil {
@@ -1011,28 +984,7 @@ type EventState struct {
 	storeSeq uint64
 	acked    bool
 
-	signature []byte
-	// one-of
-	storeManifest  *StoreManifest
-	updateManifest *UpdateManifest
-
-	createItem *CreateItem
-	updateItem *UpdateItem
-
-	createTag     *CreateTag
-	addToTag      *AddToTag
-	removeFromTag *RemoveFromTag
-	renameTag     *RenameTag
-	deleteTag     *DeleteTag
-
-	createCart    *CreateCart
-	changeCart    *ChangeCart
-	cartFinalized *CartFinalized
-	cartAbandoned *CartAbandoned
-
-	changeStock *ChangeStock
-
-	newKeyCard *NewKeyCard
+	encodedEvent *anypb.Any
 }
 
 // SessionState represents the state of a client in the database.
@@ -1076,7 +1028,7 @@ func newMetadata(keyCardID requestID, storeID eventID, version uint16) CachedMet
 }
 
 // CachedStoreManifest is latest reduction of a StoreManifest.
-// It combines the intial StoreManifest and all UpdateManifests
+// It combines the intial StoreManifest and all UpdateStoreManifests
 type CachedStoreManifest struct {
 	CachedMetadata
 	inited bool
@@ -1098,17 +1050,17 @@ func (current *CachedStoreManifest) update(union *Event, meta CachedMetadata) {
 		current.publishedTagID = sm.PublishedTagId
 		current.acceptedErc20s = make(map[common.Address]struct{})
 		current.inited = true
-	case *Event_UpdateManifest:
-		um := union.GetUpdateManifest()
-		if um.Field == UpdateManifest_MANIFEST_FIELD_DOMAIN {
-			current.domain = um.Value.(*UpdateManifest_String_).String_
-		} else if um.Field == UpdateManifest_MANIFEST_FIELD_PUBLISHED_TAG {
-			current.publishedTagID = um.Value.(*UpdateManifest_TagId).TagId
-		} else if um.Field == UpdateManifest_MANIFEST_FIELD_ADD_ERC20 {
-			erc20 := um.Value.(*UpdateManifest_Erc20Addr).Erc20Addr
+	case *Event_UpdateStoreManifest:
+		um := union.GetUpdateStoreManifest()
+		if um.Field == UpdateStoreManifest_MANIFEST_FIELD_DOMAIN {
+			current.domain = um.Value.(*UpdateStoreManifest_String_).String_
+		} else if um.Field == UpdateStoreManifest_MANIFEST_FIELD_PUBLISHED_TAG {
+			current.publishedTagID = um.Value.(*UpdateStoreManifest_TagId).TagId
+		} else if um.Field == UpdateStoreManifest_MANIFEST_FIELD_ADD_ERC20 {
+			erc20 := um.Value.(*UpdateStoreManifest_Erc20Addr).Erc20Addr
 			current.acceptedErc20s[common.Address(erc20)] = struct{}{}
-		} else if um.Field == UpdateManifest_MANIFEST_FIELD_REMOVE_ERC20 {
-			erc20 := um.Value.(*UpdateManifest_Erc20Addr).Erc20Addr
+		} else if um.Field == UpdateStoreManifest_MANIFEST_FIELD_REMOVE_ERC20 {
+			erc20 := um.Value.(*UpdateStoreManifest_Erc20Addr).Erc20Addr
 			delete(current.acceptedErc20s, common.Address(erc20))
 		} else {
 			panic(fmt.Sprintf("unhandled update field: %d", um.Field))
@@ -1177,17 +1129,21 @@ func (current *CachedTag) update(evt *Event, meta CachedMetadata) {
 		current.name = ct.Name
 		current.tagID = ct.EventId
 		current.inited = true
-	case *Event_AddToTag:
-		at := evt.GetAddToTag()
-		current.items.Add(at.ItemId)
-	case *Event_RemoveFromTag:
-		rft := evt.GetRemoveFromTag()
-		current.items.Delete(rft.ItemId)
-	case *Event_RenameTag:
-		rt := evt.GetRenameTag()
-		current.name = rt.Name
-	case *Event_DeleteTag:
-		current.deleted = true
+
+	case *Event_UpdateTag:
+		ut := evt.GetUpdateTag()
+		switch ut.Action {
+		case UpdateTag_TAG_ACTION_REMOVE_ITEM:
+			fallthrough
+		case UpdateTag_TAG_ACTION_ADD_ITEM:
+			current.items.Add(ut.Value.(*UpdateTag_ItemId).ItemId)
+		case UpdateTag_TAG_ACTION_RENAME:
+			current.name = ut.Value.(*UpdateTag_NewName).NewName
+		case UpdateTag_TAG_ACTION_DELETE_TAG:
+			current.deleted = true
+		default:
+			panic(fmt.Sprintf("unhandled action type: %d", ut.Action))
+		}
 	default:
 		panic(fmt.Sprintf("unhandled event type: %T", evt.Union))
 	}
@@ -1336,7 +1292,7 @@ func newRelay(metric *Metric) *Relay {
 	storeFieldFn := func(evt *Event, meta CachedMetadata) eventID {
 		return meta.createdByStoreID
 	}
-	r.storeManifestsByStoreID = newReductionLoader[*CachedStoreManifest](r, storeFieldFn, []eventType{eventTypeStoreManifest, eventTypeUpdateManifest}, "createdByStoreId")
+	r.storeManifestsByStoreID = newReductionLoader[*CachedStoreManifest](r, storeFieldFn, []eventType{eventTypeStoreManifest, eventTypeUpdateStoreManifest}, "createdByStoreId")
 	itemsFieldFn := func(evt *Event, meta CachedMetadata) eventID {
 		switch evt.Union.(type) {
 		case *Event_CreateItem:
@@ -1351,23 +1307,14 @@ func newRelay(metric *Metric) *Relay {
 		switch evt.Union.(type) {
 		case *Event_CreateTag:
 			return evt.GetCreateTag().EventId
-		case *Event_AddToTag:
-			return evt.GetAddToTag().TagId
-		case *Event_RemoveFromTag:
-			return evt.GetRemoveFromTag().TagId
-		case *Event_RenameTag:
-			return evt.GetRenameTag().TagId
-		case *Event_DeleteTag:
-			return evt.GetDeleteTag().TagId
+		case *Event_UpdateTag:
+			return evt.GetUpdateTag().TagId
 		}
 		return nil
 	}
 	r.tagsByTagID = newReductionLoader[*CachedTag](r, tagsFieldFn, []eventType{
 		eventTypeCreateTag,
-		eventTypeAddToTag,
-		eventTypeRemoveFromTag,
-		eventTypeRenameTag,
-		eventTypeDeleteTag,
+		eventTypeUpdateTag,
 	}, "tagId")
 
 	cartsFieldFn := func(evt *Event, meta CachedMetadata) eventID {
@@ -1590,11 +1537,7 @@ func (r *Relay) loadServerSeq() {
 func (r *Relay) readEvents(whereFragment string, indexedIds []eventID) []EventInsert {
 	// Index: events(field in whereFragment)
 	// The indicies eventsOnEventTypeAnd* should correspond to the various Loaders defined in newDatabase.
-	query := fmt.Sprintf(`select serverSeq, storeSeq, eventId, eventType, createdByKeyCardId, createdByStoreId, createdAt, createdByNetworkSchemaVersion, signature,
-	storeTokenId, domain, publishedTagId, manifestUpdateField, string, addr, referencedEventId, itemId, price,
-	metadata, itemUpdateField, name, tagId, cartId, quantity, itemIds, changes, txHash,
-    purchaseAddr, erc20Addr, subTotal, salesTax, total, totalInCrypto
-from events where %s order by serverSeq asc`, whereFragment)
+	query := fmt.Sprintf(`select serverSeq, storeSeq, eventId, eventType, createdByKeyCardId, createdByStoreId, createdAt, createdByNetworkSchemaVersion, encoded from events where %s order by serverSeq asc`, whereFragment)
 	var rows pgx.Rows
 	var err error
 	if r.syncTx != nil {
@@ -1615,37 +1558,9 @@ from events where %s order by serverSeq asc`, whereFragment)
 			createdByStoreID        eventID
 			createdAt               time.Time
 			createdByNetworkVersion uint16
-			signature               []byte
-			storeTokenID            *[]byte
-			domain                  *string
-			publishedTagID          *[]byte
-			manifestUpdateField     *UpdateManifest_ManifestField
-			stringVal               *string
-			addrVal                 *[]byte
-			referencedEventID       *[]byte
-			itemID                  *[]byte
-			price                   *string
-			metadata                *[]byte
-			itemUpdateField         *UpdateItem_ItemField
-			name                    *string
-			tagID                   *[]byte
-			cartID                  *[]byte
-			quantity                *int32
-			itemIds                 *[][]byte
-			changes                 *[]int32
-			txHash                  *[]byte
-			purchaseAddr            *[]byte
-			erc20Addr               *[]byte
-			subTotal                *string
-			salesTax                *string
-			total                   *string
-			totalInCrypto           *string
+			encoded                 []byte
 		)
-		err := rows.Scan(&serverSeq, &storeSeq, &eID, &eventType, &createdByKeyCardID, &createdByStoreID, &createdAt, &createdByNetworkVersion, &signature,
-			&storeTokenID, &domain, &publishedTagID, &manifestUpdateField, &stringVal, &addrVal, &referencedEventID, &itemID, &price,
-			&metadata, &itemUpdateField, &name, &tagID, &cartID, &quantity, &itemIds, &changes, &txHash,
-			&purchaseAddr, &erc20Addr, &subTotal, &salesTax, &total, &totalInCrypto,
-		)
+		err := rows.Scan(&serverSeq, &storeSeq, &eID, &eventType, &createdByKeyCardID, &createdByStoreID, &createdAt, &createdByNetworkVersion, &encoded)
 		check(err)
 		m := CachedMetadata{
 			createdByStoreID:        createdByStoreID,
@@ -1655,170 +1570,10 @@ from events where %s order by serverSeq asc`, whereFragment)
 			createdAt:               uint64(createdAt.Unix()),
 			serverSeq:               serverSeq,
 		}
-		var e = &Event{}
-		e.Signature = signature
-		switch eventType {
-		case eventTypeStoreManifest:
-			assert(storeTokenID != nil)
-			assert(domain != nil)
-			assert(publishedTagID != nil)
-			sm := &StoreManifest{
-				EventId:        eID,
-				StoreTokenId:   *storeTokenID,
-				Domain:         *domain,
-				PublishedTagId: *publishedTagID,
-			}
-			e.Union = &Event_StoreManifest{StoreManifest: sm}
-		case eventTypeUpdateManifest:
-			assert(manifestUpdateField != nil)
-			um := &UpdateManifest{
-				EventId: eID,
-				Field:   *manifestUpdateField,
-			}
-			if *manifestUpdateField == UpdateManifest_MANIFEST_FIELD_DOMAIN {
-				assert(stringVal != nil)
-				um.Value = &UpdateManifest_String_{String_: *stringVal}
-			}
-			if *manifestUpdateField == UpdateManifest_MANIFEST_FIELD_PUBLISHED_TAG {
-				assert(referencedEventID != nil)
-				um.Value = &UpdateManifest_TagId{TagId: *referencedEventID}
-			} else if *manifestUpdateField == UpdateManifest_MANIFEST_FIELD_ADD_ERC20 || *manifestUpdateField == UpdateManifest_MANIFEST_FIELD_REMOVE_ERC20 {
-				assert(addrVal != nil)
-				um.Value = &UpdateManifest_Erc20Addr{Erc20Addr: *addrVal}
-			}
-			e.Union = &Event_UpdateManifest{UpdateManifest: um}
-		case eventTypeCreateItem:
-			assert(itemID != nil)
-			assert(price != nil)
-			assert(metadata != nil)
-			ci := &CreateItem{
-				EventId:  eID,
-				Price:    *price,
-				Metadata: *metadata,
-			}
-			e.Union = &Event_CreateItem{CreateItem: ci}
-		case eventTypeUpdateItem:
-			assert(itemID != nil)
-			assert(itemUpdateField != nil)
-			ui := &UpdateItem{
-				EventId: eID,
-				ItemId:  *itemID,
-				Field:   *itemUpdateField,
-			}
-			if *itemUpdateField == UpdateItem_ITEM_FIELD_PRICE {
-				assert(price != nil)
-				ui.Value = &UpdateItem_Price{Price: *price}
-			}
-			if *itemUpdateField == UpdateItem_ITEM_FIELD_METADATA {
-				assert(metadata != nil)
-				ui.Value = &UpdateItem_Metadata{Metadata: *metadata}
-			}
-			e.Union = &Event_UpdateItem{UpdateItem: ui}
-		case eventTypeCreateTag:
-			assert(tagID != nil)
-			assert(name != nil)
-			ct := &CreateTag{
-				EventId: eID,
-				Name:    *name,
-			}
-			e.Union = &Event_CreateTag{CreateTag: ct}
-		case eventTypeAddToTag:
-			assert(tagID != nil)
-			assert(itemID != nil)
-			at := &AddToTag{
-				EventId: eID,
-				TagId:   *tagID,
-				ItemId:  *itemID,
-			}
-			e.Union = &Event_AddToTag{AddToTag: at}
-		case eventTypeRemoveFromTag:
-			assert(tagID != nil)
-			assert(itemID != nil)
-			rft := &RemoveFromTag{
-				EventId: eID,
-				TagId:   *tagID,
-				ItemId:  *itemID,
-			}
-			e.Union = &Event_RemoveFromTag{RemoveFromTag: rft}
-		case eventTypeRenameTag:
-			assert(tagID != nil)
-			assert(name != nil)
-			rt := &RenameTag{
-				EventId: eID,
-				TagId:   *tagID,
-				Name:    *name,
-			}
-			e.Union = &Event_RenameTag{RenameTag: rt}
-		case eventTypeDeleteTag:
-			assert(tagID != nil)
-			dt := &DeleteTag{
-				EventId: eID,
-				TagId:   *tagID,
-			}
-			e.Union = &Event_DeleteTag{DeleteTag: dt}
-		case eventTypeChangeStock:
-			assert(itemIds != nil)
-			assert(changes != nil)
-			assert(len(*itemIds) == len(*changes))
-			cs := &ChangeStock{
-				EventId: eID,
-				ItemIds: *itemIds,
-				Diffs:   *changes,
-			}
-			if cartID != nil {
-				cs.CartId = *cartID
-				assert(txHash != nil)
-				cs.TxHash = *txHash
-			}
-			e.Union = &Event_ChangeStock{ChangeStock: cs}
-		case eventTypeCreateCart:
-			assert(cartID != nil)
-			cc := &CreateCart{
-				EventId: eID,
-			}
-			e.Union = &Event_CreateCart{CreateCart: cc}
-		case eventTypeChangeCart:
-			assert(cartID != nil)
-			assert(itemID != nil)
-			assert(quantity != nil)
-			atc := &ChangeCart{
-				EventId:  eID,
-				CartId:   *cartID,
-				ItemId:   *itemID,
-				Quantity: *quantity,
-			}
-			e.Union = &Event_ChangeCart{ChangeCart: atc}
-		case eventTypeCartFinalized:
-			assert(cartID != nil)
-			assert(purchaseAddr != nil)
-			assert(subTotal != nil)
-			assert(salesTax != nil)
-			assert(total != nil)
-			assert(totalInCrypto != nil)
-			cf := &CartFinalized{
-				EventId:       eID,
-				CartId:        *cartID,
-				PurchaseAddr:  *purchaseAddr,
-				SubTotal:      *subTotal,
-				SalesTax:      *salesTax,
-				Total:         *total,
-				TotalInCrypto: *totalInCrypto,
-			}
-			if erc20Addr != nil {
-				cf.Erc20Addr = *erc20Addr
-			}
-			e.Union = &Event_CartFinalized{CartFinalized: cf}
-		case eventTypeCartAbandoned:
-			assert(cartID != nil)
-			ca := &CartAbandoned{
-				EventId: eID,
-				CartId:  *cartID,
-			}
-			e.Union = &Event_CartAbandoned{CartAbandoned: ca}
-		default:
-			panic(fmt.Errorf("unrecognized type: %s", eventType))
-		}
-		events = append(events, EventInsert{CachedMetadata: m, evt: e})
+		var e Event
+		err = proto.Unmarshal(encoded, &e)
+		check(err)
+		events = append(events, EventInsert{CachedMetadata: m, evt: &e})
 	}
 	check(rows.Err())
 	return events
@@ -1827,18 +1582,20 @@ from events where %s order by serverSeq asc`, whereFragment)
 // EventInsert is a struct that represents an event to be inserted into the database
 type EventInsert struct {
 	CachedMetadata
-	evt *Event
+	evt   *Event
+	pbany *anypb.Any
 }
 
-func newEventInsert(evt *Event, meta CachedMetadata) *EventInsert {
+func newEventInsert(evt *Event, meta CachedMetadata, abstract *anypb.Any) *EventInsert {
 	meta.createdAt = uint64(now().Unix())
 	return &EventInsert{
 		CachedMetadata: meta,
 		evt:            evt,
+		pbany:          abstract,
 	}
 }
 
-func (r *Relay) writeEvent(evt *Event, cm CachedMetadata) {
+func (r *Relay) writeEvent(evt *Event, cm CachedMetadata, abstract *anypb.Any) {
 	assert(r.writesEnabled)
 
 	nextServerSeq := r.lastUsedServerSeq + 1
@@ -1849,7 +1606,7 @@ func (r *Relay) writeEvent(evt *Event, cm CachedMetadata) {
 	cm.storeSeq = seqPair.lastUsedStoreSeq + 1
 	seqPair.lastUsedStoreSeq = cm.storeSeq
 
-	insert := newEventInsert(evt, cm)
+	insert := newEventInsert(evt, cm, abstract)
 	r.queuedEventInserts = append(r.queuedEventInserts, insert)
 	r.applyEvent(insert)
 }
@@ -1874,14 +1631,7 @@ func (r *Relay) commitSyncTransaction() {
 	r.syncTx = nil
 }
 
-var dbEntryInsertColumns = []string{
-	"eventType", "eventId", "createdByKeyCardId", "createdByStoreId", "storeSeq", "createdAt", "createdByNetworkSchemaVersion", "serverSeq", "signature",
-	"storeTokenId", "domain", "publishedTagId", "manifestUpdateField", "string", "addr", "referencedEventId",
-	"itemId", "price", "metadata", "itemUpdateField",
-	"name", "tagId",
-	"cartId", "quantity", "itemIds", "changes", "txHash",
-	"purchaseAddr", "erc20Addr", "subTotal", "salesTax", "total", "totalInCrypto",
-	"userWallet", "cardPublicKey"}
+var dbEntryInsertColumns = []string{"eventType", "eventId", "createdByKeyCardId", "createdByStoreId", "storeSeq", "createdAt", "createdByNetworkSchemaVersion", "serverSeq", "encoded"}
 
 func (r *Relay) flushEvents() {
 	if len(r.queuedEventInserts) == 0 {
@@ -1893,7 +1643,7 @@ func (r *Relay) flushEvents() {
 
 	eventTuples := make([][]any, len(r.queuedEventInserts))
 	for i, ei := range r.queuedEventInserts {
-		eventTuples[i] = formInsert(ei.evt, ei.CachedMetadata)
+		eventTuples[i] = formInsert(ei)
 	}
 	assert(r.lastWrittenServerSeq < r.lastUsedServerSeq)
 	insertedEntryRows, conflictedEntryRows := r.bulkInsert("events", dbEntryInsertColumns, eventTuples)
@@ -2281,17 +2031,15 @@ func (op *EventWriteOp) process(r *Relay) {
 	r.lastSeenAtTouch(sessionState)
 
 	// check signature
-	if err := r.ethClient.eventVerify(op.im.Event, sessionState.keyCardPublicKey); err != nil {
+	if err := r.ethClient.eventVerify(op.decodedStoreEvt, sessionState.keyCardPublicKey); err != nil {
 		logSR("relay.eventWriteOp.verifyEventFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: invalidErrorCode, Message: "invalid signature"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
-	// check and validate write
-	e := op.im.Event
 	meta := newMetadata(sessionState.keyCardID, sessionState.storeID, uint16(sessionState.version))
-	if err := r.checkWrite(e, meta, sessionState); err != nil {
+	if err := r.validateWrite(op.decodedStoreEvt, meta, sessionState); err != nil {
 		logSR("relay.eventWriteOp.checkEventFailed code=%s msg=%s", sessionID, requestID, err.Code, err.Message)
 		op.err = err
 		r.sendSessionOp(sessionState, op)
@@ -2300,7 +2048,7 @@ func (op *EventWriteOp) process(r *Relay) {
 
 	// update store
 	r.beginSyncTransaction()
-	r.writeEvent(e, meta)
+	r.writeEvent(op.decodedStoreEvt, meta, op.im.Event)
 	r.commitSyncTransaction()
 
 	// compute resulting hash
@@ -2314,42 +2062,42 @@ func (op *EventWriteOp) process(r *Relay) {
 	r.sendSessionOp(sessionState, op)
 }
 
-func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *Error {
+func (r *Relay) validateWrite(union *Event, m CachedMetadata, sess *SessionState) *Error {
 	switch tv := union.Union.(type) {
 	case *Event_StoreManifest:
 		_, exists := r.storeManifestsByStoreID.get(m.createdByStoreID)
 		if exists {
 			return &Error{Code: invalidErrorCode, Message: "store already exists"}
 		}
-	case *Event_UpdateManifest:
+	case *Event_UpdateStoreManifest:
 		_, exists := r.storeManifestsByStoreID.get(m.createdByStoreID)
 		if !exists {
 			return notFoundError
 		}
 
 		// this feels like a validation step but we dont have access to the relay there
-		if tv.UpdateManifest.Field == UpdateManifest_MANIFEST_FIELD_ADD_ERC20 {
+		if tv.UpdateStoreManifest.Field == UpdateStoreManifest_MANIFEST_FIELD_ADD_ERC20 {
 			callOpts := &bind.CallOpts{
 				Pending: false,
 				From:    r.ethClient.wallet,
 				Context: context.Background(),
 			}
 
-			erc20TokenAddr := tv.UpdateManifest.GetErc20Addr()
+			erc20TokenAddr := tv.UpdateStoreManifest.GetErc20Addr()
 
 			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 			defer cancel()
 
 			gethClient, err := r.ethClient.getClient(ctx)
 			if err != nil {
-				log("relay.checkWrite.failedToGetClient err=%s", err)
+				log("relay.validateWrite.failedToGetClient err=%s", err)
 				return &Error{Code: invalidErrorCode, Message: "internal server error"}
 			}
 			defer gethClient.Close()
 
 			tokenCaller, err := NewERC20Caller(common.Address(erc20TokenAddr), gethClient)
 			if err != nil {
-				log("relay.checkWrite.newERC20Caller err=%s", err)
+				log("relay.validateWrite.newERC20Caller err=%s", err)
 				return &Error{Code: invalidErrorCode, Message: "failed to create token caller"}
 			}
 			decimalCount, err := tokenCaller.Decimals(callOpts)
@@ -2397,8 +2145,8 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 		if tagExists {
 			return &Error{Code: invalidErrorCode, Message: "tag already exists"}
 		}
-	case *Event_AddToTag:
-		evt := union.GetAddToTag()
+	case *Event_UpdateTag:
+		evt := union.GetUpdateTag()
 		tag, tagExists := r.tagsByTagID.get(evt.TagId)
 		if !tagExists {
 			return notFoundError
@@ -2406,46 +2154,25 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 		if !tag.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
 			return notFoundError
 		}
-		item, itemExists := r.itemsByItemID.get(evt.ItemId)
-		if !itemExists {
-			return notFoundError
-		}
-		if !item.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
-			return notFoundError
-		}
-	case *Event_RemoveFromTag:
-		evt := union.GetRemoveFromTag()
-		tag, tagExists := r.tagsByTagID.get(evt.TagId)
-		if !tagExists {
-			return notFoundError
-		}
-		if !tag.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
-			return notFoundError
-		}
-		item, itemExists := r.itemsByItemID.get(evt.ItemId)
-		if !itemExists {
-			return notFoundError
-		}
-		if !item.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
-			return notFoundError
-		}
-	case *Event_RenameTag:
-		evt := union.GetRenameTag()
-		tag, tagExists := r.tagsByTagID.get(evt.TagId)
-		if !tagExists {
-			return notFoundError
-		}
-		if !tag.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
-			return notFoundError
-		}
-	case *Event_DeleteTag:
-		evt := union.GetDeleteTag()
-		tag, tagExists := r.tagsByTagID.get(evt.TagId)
-		if !tagExists {
-			return notFoundError
-		}
-		if !tag.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
-			return notFoundError
+
+		switch evt.Action {
+		case UpdateTag_TAG_ACTION_ADD_ITEM:
+			fallthrough
+		case UpdateTag_TAG_ACTION_REMOVE_ITEM:
+			itemID := evt.GetItemId()
+			item, itemExists := r.itemsByItemID.get(itemID)
+			if !itemExists {
+				return notFoundError
+			}
+			if !item.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
+				return notFoundError
+			}
+		case UpdateTag_TAG_ACTION_RENAME:
+			// nothing to do
+		case UpdateTag_TAG_ACTION_DELETE_TAG:
+			// nothing to do
+		default:
+			panic(fmt.Errorf("eventWritesOp.validateWrite.unrecognizeType eventType=%T", union.Union))
 		}
 	case *Event_ChangeStock:
 		evt := union.GetChangeStock()
@@ -2515,7 +2242,7 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			return &Error{Code: invalidErrorCode, Message: "cart is not finalized"}
 		}
 	default:
-		panic(fmt.Errorf("eventWritesOp.checkWrite.unrecognizeType eventType=%T", union.Union))
+		panic(fmt.Errorf("eventWritesOp.validateWrite.unrecognizeType eventType=%T", union.Union))
 	}
 	return nil
 }
@@ -2808,6 +2535,14 @@ func (op *CommitCartOp) process(r *Relay) {
 
 	cfMetadata := newMetadata(relayKeyCardID, sessionState.storeID, 1)
 	cfEvent := &Event{Union: &Event_CartFinalized{&cf}}
+	cfAny, err := anypb.New(cfEvent)
+	if err != nil {
+		logSR("relay.commitCartOp.anypb err=%s", sessionID, requestID, err)
+		op.err = &Error{Code: invalidErrorCode, Message: "interal server error"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
 	err = r.ethClient.eventSign(cfEvent)
 	if err != nil {
 		logSR("relay.commitCartOp.eventSignFailed err=%s", sessionID, requestID, err)
@@ -2816,7 +2551,7 @@ func (op *CommitCartOp) process(r *Relay) {
 		return
 	}
 	r.beginSyncTransaction()
-	r.writeEvent(cfEvent, cfMetadata)
+	r.writeEvent(cfEvent, cfMetadata, cfAny)
 
 	seqPair := r.storeIdsToStoreSeqs.MustGet(sessionState.storeID)
 	// TODO: we could join against events instead for some of these fields but let's not disrupt this now
@@ -2906,12 +2641,15 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 		}},
 	}
 
-	err := r.ethClient.eventSign(evt)
+	anyEvt, err := anypb.New(evt)
+	check(err)
+
+	err = r.ethClient.eventSign(evt)
 	check(err)
 
 	r.beginSyncTransaction()
 	meta := newMetadata(relayKeyCardID, op.storeID, 1)
-	r.writeEvent(evt, meta)
+	r.writeEvent(evt, meta, anyEvt)
 	r.commitSyncTransaction()
 	log("db.KeyCardEnrolledOp.finish storeId=%s took=%d", op.storeID, took(start))
 }
@@ -2956,9 +2694,14 @@ func (op *PaymentFoundInternalOp) process(r *Relay) {
 	})
 
 	evt := &Event{Union: &Event_ChangeStock{ChangeStock: cs}}
+
+	evtAny, err := anypb.New(evt)
+	check(err) // fatal code error
+
 	err = r.ethClient.eventSign(evt)
 	check(err) // fatal code error
-	r.writeEvent(evt, meta)
+
+	r.writeEvent(evt, meta, evtAny)
 	r.commitSyncTransaction()
 	log("db.paymentFoundInternalOp.finish cartID=%s took=%d", op.cartID, took(start))
 	close(op.done)
@@ -2966,680 +2709,61 @@ func (op *PaymentFoundInternalOp) process(r *Relay) {
 
 // Database processing
 
-func formInsert(e *Event, meta CachedMetadata) []interface{} {
-	switch e.Union.(type) {
+func formInsert(ins *EventInsert) []interface{} {
+	type eventIDgetter interface {
+		GetEventId() eventID
+	}
+	var (
+		evtType eventType
+		evtID   eventID
+	)
+	switch ins.evt.Union.(type) {
 	case *Event_StoreManifest:
-		sm := e.GetStoreManifest()
-		return []interface{}{
-			eventTypeStoreManifest,       // eventType
-			sm.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			sm.StoreTokenId,              // storeTokenId
-			sm.Domain,                    // domain
-			sm.PublishedTagId,            // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-		}
-
-	case *Event_UpdateManifest:
-		um := e.GetUpdateManifest()
-		var stringVal *string
-		var tagIDVal, addrVal *[]byte
-		if v, ok := um.Value.(*UpdateManifest_String_); ok {
-			stringVal = &v.String_
-		}
-		if v, ok := um.Value.(*UpdateManifest_TagId); ok {
-			tagIDVal = &v.TagId
-		}
-		if v, ok := um.Value.(*UpdateManifest_Erc20Addr); ok {
-			addrVal = &v.Erc20Addr
-		}
-		return []interface{}{
-			eventTypeUpdateManifest,      // eventType
-			um.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			um.Field,                     // manifestUpdateField
-			stringVal,                    // string
-			addrVal,                      // addr
-			tagIDVal,                     // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-		}
-
+		evtType = eventTypeStoreManifest
+		evtID = ins.evt.GetStoreManifest().EventId
+	case *Event_UpdateStoreManifest:
+		evtType = eventTypeUpdateStoreManifest
+		evtID = ins.evt.GetUpdateStoreManifest().EventId
 	case *Event_CreateItem:
-		ci := e.GetCreateItem()
-		return []interface{}{
-			eventTypeCreateItem,          // eventType
-			ci.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			ci.EventId,                   // itemId
-			ci.Price,                     // price
-			ci.Metadata,                  // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-		}
-
+		evtType = eventTypeCreateItem
+		evtID = ins.evt.GetCreateItem().EventId
 	case *Event_UpdateItem:
-		ui := e.GetUpdateItem()
-		var price *string
-		var metadata *[]byte
-		if v, ok := ui.Value.(*UpdateItem_Metadata); ok {
-			metadata = &v.Metadata
-		}
-		if v, ok := ui.Value.(*UpdateItem_Price); ok {
-			price = &v.Price
-		}
-		return []interface{}{
-			eventTypeUpdateItem,          // eventType
-			ui.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			ui.ItemId,                    // itemId
-			price,                        // price
-			metadata,                     // metadata
-			ui.Field,                     // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-		}
-
+		evtType = eventTypeUpdateItem
+		evtID = ins.evt.GetUpdateItem().EventId
 	case *Event_CreateTag:
-		ct := e.GetCreateTag()
-		return []interface{}{
-			eventTypeCreateTag,           // eventType
-			ct.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			ct.Name,                      // name
-			ct.EventId,                   // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-		}
-
-	case *Event_AddToTag:
-		att := e.GetAddToTag()
-		return []interface{}{
-			eventTypeAddToTag,            // eventType
-			att.EventId,                  // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			att.ItemId,                   // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			att.TagId,                    // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-		}
-
-	case *Event_RemoveFromTag:
-		rft := e.GetRemoveFromTag()
-		return []interface{}{
-			eventTypeRemoveFromTag,       // eventType
-			rft.EventId,                  // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			rft.ItemId,                   // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			rft.TagId,                    // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-		}
-
-	case *Event_RenameTag:
-		rnt := e.GetRenameTag()
-		return []interface{}{
-			eventTypeRenameTag,           // eventType
-			rnt.EventId,                  // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			rnt.Name,                     // name
-			rnt.TagId,                    // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-		}
-
-	case *Event_DeleteTag:
-		dt := e.GetDeleteTag()
-		return []interface{}{
-			eventTypeDeleteTag,           // eventType
-			dt.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			dt.TagId,                     // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-		}
-
-	case *Event_CreateCart:
-		cc := e.GetCreateCart()
-		return []interface{}{
-			eventTypeCreateCart,          // eventType
-			cc.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			cc.EventId,                   // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-		}
-
-	case *Event_ChangeCart:
-		atc := e.GetChangeCart()
-		return []interface{}{
-			eventTypeChangeCart,          // eventType
-			atc.EventId,                  // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			atc.ItemId,                   // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			atc.CartId,                   // cartId
-			atc.Quantity,                 // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-		}
-
+		evtType = eventTypeCreateTag
+		evtID = ins.evt.GetCreateTag().EventId
+	case *Event_UpdateTag:
+		evtType = eventTypeUpdateTag
+		evtID = ins.evt.GetUpdateTag().EventId
 	case *Event_ChangeStock:
-		cs := e.GetChangeStock()
-		itemIds := cs.ItemIds
-		changes := cs.Diffs
-		var optCartID *[]byte
-		if checkEventID(cs.CartId) {
-			optCartID = &cs.CartId
-		}
-		return []interface{}{
-			eventTypeChangeStock,         // eventType
-			cs.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			optCartID,                    // cartId
-			nil,                          // quantity
-			itemIds,                      // itemIds
-			changes,                      // changes
-			cs.TxHash,                    // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-		}
+		evtType = eventTypeChangeStock
+		evtID = ins.evt.GetChangeStock().EventId
+	case *Event_CreateCart:
+		evtType = eventTypeCreateCart
+		evtID = ins.evt.GetCreateCart().EventId
+	case *Event_ChangeCart:
+		evtType = eventTypeChangeCart
+		evtID = ins.evt.GetChangeCart().EventId
 	case *Event_CartFinalized:
-		cf := e.GetCartFinalized()
-		var erc20Addr *[]byte
-		if len(cf.Erc20Addr) == 20 {
-			erc20Addr = &cf.Erc20Addr
-		}
-		return []interface{}{
-			eventTypeCartFinalized,       // eventType
-			cf.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			cf.CartId,                    // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			cf.PurchaseAddr,              // purchaseAddr
-			erc20Addr,                    // erc20Addr
-			cf.SubTotal,                  // subTotal
-			cf.SalesTax,                  // salesTax
-			cf.Total,                     // total
-			cf.TotalInCrypto,             // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-		}
-
+		evtType = eventTypeCartFinalized
+		evtID = ins.evt.GetCartFinalized().EventId
 	case *Event_CartAbandoned:
-		ca := e.GetCartAbandoned()
-		return []interface{}{
-			eventTypeCartAbandoned,       // eventType
-			ca.EventId,                   // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			ca.CartId,                    // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nil,                          // userWallet
-			nil,                          // cardPublicKey
-		}
-
-	case *Event_NewKeyCard:
-		nkc := e.GetNewKeyCard()
-		return []interface{}{
-			eventTypeNewKeyCard,          // eventType
-			nkc.EventId,                  // eventId
-			meta.createdByKeyCardID,      // createdByKeyCardId
-			meta.createdByStoreID,        // createdByStoreId
-			meta.storeSeq,                // storeSeq
-			now(),                        // createdAt
-			meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			meta.serverSeq,               // serverSeq
-			e.Signature,                  // signature
-			nil,                          // storeTokenId
-			nil,                          // domain
-			nil,                          // publishedTagId
-			nil,                          // manifestUpdateField
-			nil,                          // string
-			nil,                          // addr
-			nil,                          // referencedEventId
-			nil,                          // itemId
-			nil,                          // price
-			nil,                          // metadata
-			nil,                          // itemUpdateField
-			nil,                          // name
-			nil,                          // tagId
-			nil,                          // cartId
-			nil,                          // quantity
-			nil,                          // itemIds
-			nil,                          // changes
-			nil,                          // txHash
-			nil,                          // purchaseAddr
-			nil,                          // erc20Addr
-			nil,                          // subTotal
-			nil,                          // salesTax
-			nil,                          // total
-			nil,                          // totalInCrypto
-			nkc.UserWalletAddr,           // userWallet
-			nkc.CardPublicKey,            // cardPublicKey
-		}
-
-		/*
-			case Foo:
-				ce := e.Get()
-				return []interface{}{
-					eventTypeUpdateManifest,      // eventType
-					ce.EventId,                   // eventId
-					meta.createdByKeyCardID,      // createdByKeyCardId
-					meta.createdByStoreID,        // createdByStoreId
-					meta.storeSeq,                // storeSeq
-					now(),                        // createdAt
-					meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-					meta.serverSeq,               // serverSeq
-					e.Signature,                  // signature
-					nil,                          // storeTokenId
-					nil,                          // domain
-					nil,                          // publishedTagId
-					nil,                          // manifestUpdateField
-					nil,                          // string
-					nil,                          // addr
-					nil,                          // referencedEventId
-					nil,                          // itemId
-					nil,                          // price
-					nil,                          // metadata
-					nil,                          // itemUpdateField
-					nil,                          // name
-					nil,                          // tagId
-					nil,                          // cartId
-					nil,                          // quantity
-					nil,                          // itemIds
-					nil,                          // changes
-					nil,                          // txHash
-					nil,                          // purchaseAddr
-					nil,                          // erc20Addr
-					nil,                          // subTotal
-					nil,                          // salesTax
-					nil,                          // total
-					nil,                          // totalInCrypto
-					nil,                          // userWallet
-					nil,                          // cardPublicKey
-				}
-		*/
-
+		evtType = eventTypeCartAbandoned
+		evtID = ins.evt.GetCartAbandoned().EventId
 	default:
-		panic(fmt.Errorf("formInsert.unrecognizeType eventType=%T", e.Union))
+		panic(fmt.Errorf("formInsert.unrecognizeType eventType=%T", ins.evt.Union))
+	}
+	return []interface{}{
+		evtType,                     // eventType
+		evtID,                       // eventId
+		ins.createdByKeyCardID,      // createdByKeyCardId
+		ins.createdByStoreID,        // createdByStoreId
+		ins.storeSeq,                // storeSeq
+		now(),                       // createdAt
+		ins.createdByNetworkVersion, // createdByNetworkSchemaVersion
+		ins.serverSeq,               // serverSeq
+		ins.pbany.Value,             // encoded
 	}
 }
 
@@ -3735,10 +2859,7 @@ func (r *Relay) debounceSessions() {
 			readStart := now()
 			reads := 0
 			// Index: events(storeId, storeSeq)
-			query := `select serverSeq, storeSeq, eventId, eventType, createdByKeyCardId, createdByStoreId, createdAt, signature,
-			storeTokenId, domain, publishedTagId, manifestUpdateField, string, addr, referencedEventId, itemId, price,
-			metadata, itemUpdateField, name, tagId, cartId, quantity, itemIds, changes, txHash, userWallet, cardPublicKey,
-            purchaseAddr, erc20Addr, subTotal, salesTax, total, totalInCrypto
+			query := `select serverSeq, storeSeq, eventId, eventType, createdByKeyCardId, createdByStoreId, createdAt, encoded
 from events
 where createdByStoreId = $1
 	and storeSeq > $2
@@ -3750,200 +2871,13 @@ order by storeSeq asc limit $4`
 			defer rows.Close()
 			for rows.Next() {
 				var (
-					eventState          = &EventState{}
-					storeTokenID        *[]byte
-					domain              *string
-					publishedTagID      *[]byte
-					manifestUpdateField *UpdateManifest_ManifestField
-					stringVal           *string
-					addrVal             *[]byte
-					referencedEventID   *[]byte
-					itemID              *[]byte
-					price               *string
-					metadata            *[]byte
-					itemUpdateField     *UpdateItem_ItemField
-					name                *string
-					tagID               *[]byte
-					cartID              *[]byte
-					quantity            *int32
-					itemIds             *[][]byte
-					changes             *[]int32
-					txHash              *[]byte
-					userWallet          *[]byte
-					cardPublicKey       *[]byte
-					purchaseAddr        *[]byte
-					erc20Addr           *[]byte
-					subTotal            *string
-					salesTax            *string
-					total               *string
-					totalInCrypto       *string
+					eventState = &EventState{}
+					encoded    []byte
 				)
-				err := rows.Scan(&eventState.serverSeq, &eventState.storeSeq, &eventState.eventID, &eventState.eventType, &eventState.created.byDeviceID, &eventState.created.byStoreID, &eventState.created.at, &eventState.signature,
-					&storeTokenID, &domain, &publishedTagID, &manifestUpdateField, &stringVal, &addrVal, &referencedEventID, &itemID, &price, &metadata, &itemUpdateField, &name, &tagID, &cartID, &quantity, &itemIds, &changes, &txHash, &userWallet, &cardPublicKey,
-					&purchaseAddr, &erc20Addr, &subTotal, &salesTax, &total, &totalInCrypto,
-				)
+				err := rows.Scan(&eventState.serverSeq, &eventState.storeSeq, &eventState.eventID, &eventState.eventType, &eventState.created.byDeviceID, &eventState.created.byStoreID, &eventState.created.at, &encoded)
 				check(err)
 				reads++
 				// log("relay.debounceSessions.debug event=%x", eventState.eventID)
-				switch eventState.eventType {
-				case eventTypeStoreManifest:
-					assert(storeTokenID != nil)
-					assert(publishedTagID != nil)
-					eventState.storeManifest = &StoreManifest{
-						EventId:        eventState.eventID,
-						StoreTokenId:   *storeTokenID,
-						Domain:         *domain,
-						PublishedTagId: *publishedTagID,
-					}
-				case eventTypeUpdateManifest:
-					assert(manifestUpdateField != nil)
-					um := &UpdateManifest{
-						EventId: eventState.eventID,
-						Field:   *manifestUpdateField,
-					}
-					switch *manifestUpdateField {
-					case UpdateManifest_MANIFEST_FIELD_DOMAIN:
-						assert(stringVal != nil)
-						um.Value = &UpdateManifest_String_{String_: *stringVal}
-					case UpdateManifest_MANIFEST_FIELD_PUBLISHED_TAG:
-						assert(referencedEventID != nil)
-						um.Value = &UpdateManifest_TagId{TagId: *referencedEventID}
-					case UpdateManifest_MANIFEST_FIELD_ADD_ERC20:
-						fallthrough
-					case UpdateManifest_MANIFEST_FIELD_REMOVE_ERC20:
-						assert(addrVal != nil)
-						um.Value = &UpdateManifest_Erc20Addr{*addrVal}
-					}
-					eventState.updateManifest = um
-				case eventTypeCreateItem:
-					assert(itemID != nil)
-					assert(price != nil)
-					assert(metadata != nil)
-					eventState.createItem = &CreateItem{
-						EventId:  eventState.eventID,
-						Price:    *price,
-						Metadata: *metadata,
-					}
-				case eventTypeUpdateItem:
-					assert(itemID != nil)
-					assert(itemUpdateField != nil)
-					assert(price != nil || metadata != nil)
-					ui := &UpdateItem{
-						EventId: eventState.eventID,
-						ItemId:  *itemID,
-						Field:   *itemUpdateField,
-					}
-					if price != nil {
-						ui.Value = &UpdateItem_Price{*price}
-					}
-					if metadata != nil {
-						ui.Value = &UpdateItem_Metadata{*metadata}
-					}
-					eventState.updateItem = ui
-				case eventTypeCreateTag:
-					assert(name != nil)
-					eventState.createTag = &CreateTag{
-						EventId: eventState.eventID,
-						Name:    *name,
-					}
-				case eventTypeAddToTag:
-					assert(itemID != nil)
-					assert(tagID != nil)
-					eventState.addToTag = &AddToTag{
-						EventId: eventState.eventID,
-						ItemId:  *itemID,
-						TagId:   *tagID,
-					}
-				case eventTypeRemoveFromTag:
-					assert(itemID != nil)
-					assert(tagID != nil)
-					eventState.removeFromTag = &RemoveFromTag{
-						EventId: eventState.eventID,
-						ItemId:  *itemID,
-						TagId:   *tagID,
-					}
-				case eventTypeRenameTag:
-					assert(name != nil)
-					assert(tagID != nil)
-					eventState.renameTag = &RenameTag{
-						EventId: eventState.eventID,
-						Name:    *name,
-						TagId:   *tagID,
-					}
-				case eventTypeDeleteTag:
-					assert(tagID != nil)
-					eventState.deleteTag = &DeleteTag{
-						EventId: eventState.eventID,
-						TagId:   *tagID,
-					}
-				case eventTypeChangeStock:
-					assert(itemIds != nil)
-					assert(changes != nil)
-					assert(len(*itemIds) == len(*changes))
-					cs := &ChangeStock{
-						EventId: eventState.eventID,
-					}
-					if cartID != nil {
-						cs.CartId = *cartID
-						assert(txHash != nil)
-						cs.TxHash = *txHash
-					}
-					cs.ItemIds = *itemIds
-					cs.Diffs = *changes
-					eventState.changeStock = cs
-				case eventTypeCreateCart:
-					assert(cartID != nil)
-					eventState.createCart = &CreateCart{
-						EventId: eventState.eventID,
-					}
-				case eventTypeChangeCart:
-					assert(itemID != nil)
-					assert(cartID != nil)
-					assert(quantity != nil)
-					eventState.changeCart = &ChangeCart{
-						EventId:  eventState.eventID,
-						ItemId:   *itemID,
-						CartId:   *cartID,
-						Quantity: *quantity,
-					}
-				case eventTypeCartFinalized:
-					assert(cartID != nil)
-					assert(purchaseAddr != nil)
-					assert(subTotal != nil)
-					assert(salesTax != nil)
-					assert(total != nil)
-					assert(totalInCrypto != nil)
-					cf := &CartFinalized{
-						EventId:       eventState.eventID,
-						CartId:        *cartID,
-						PurchaseAddr:  *purchaseAddr,
-						SubTotal:      *subTotal,
-						SalesTax:      *salesTax,
-						Total:         *total,
-						TotalInCrypto: *totalInCrypto,
-					}
-					if erc20Addr != nil {
-						cf.Erc20Addr = *erc20Addr
-					}
-					eventState.cartFinalized = cf
-				case eventTypeCartAbandoned:
-					assert(cartID != nil)
-					ca := &CartAbandoned{
-						EventId: eventState.eventID,
-						CartId:  *cartID,
-					}
-					eventState.cartAbandoned = ca
-				case eventTypeNewKeyCard:
-					assert(userWallet != nil)
-					assert(cardPublicKey != nil)
-					eventState.newKeyCard = &NewKeyCard{
-						EventId:        eventState.eventID,
-						UserWalletAddr: *userWallet,
-						CardPublicKey:  *cardPublicKey,
-					}
-				default:
-					panic(fmt.Errorf("unhandled eventType: %s", eventState.eventType))
-				}
 
 				eventState.acked = false
 				sessionState.buffer = append(sessionState.buffer, eventState)

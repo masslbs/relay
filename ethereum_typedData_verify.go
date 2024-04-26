@@ -163,20 +163,20 @@ func (c ethClient) eventHash(evt *Event) ([]byte, error) {
 	// these two types follow the 'field=x oneof value' pattern
 	// for these we ned to remove the fields from the spec that are not set
 	// since we already omit the values from the message in TypeAndTypedDataMap()
-	if um := evt.GetUpdateManifest(); um != nil {
+	if um := evt.GetUpdateStoreManifest(); um != nil {
 		usedTypeSpec = make([]apitypes.Type, 3)
 		copy(usedTypeSpec, tdTypeSpec[:2])
 		switch um.Field {
-		case UpdateManifest_MANIFEST_FIELD_DOMAIN:
+		case UpdateStoreManifest_MANIFEST_FIELD_DOMAIN:
 			// keep type: string
 			usedTypeSpec[2] = tdTypeSpec[2]
-		case UpdateManifest_MANIFEST_FIELD_PUBLISHED_TAG:
+		case UpdateStoreManifest_MANIFEST_FIELD_PUBLISHED_TAG:
 			// keep type: id
 			usedTypeSpec[2] = tdTypeSpec[3]
-		case UpdateManifest_MANIFEST_FIELD_ADD_ERC20:
+		case UpdateStoreManifest_MANIFEST_FIELD_ADD_ERC20:
 			// keep type: erc20_addr
 			usedTypeSpec[2] = tdTypeSpec[4]
-		case UpdateManifest_MANIFEST_FIELD_REMOVE_ERC20:
+		case UpdateStoreManifest_MANIFEST_FIELD_REMOVE_ERC20:
 			// keep type: erc20_addr
 			usedTypeSpec[2] = tdTypeSpec[4]
 		default:

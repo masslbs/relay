@@ -140,56 +140,6 @@ func assertLTE(v int, max int) {
 	assertWithMessage(v <= max, fmt.Sprintf("value was greater than max: %d > %d", v, max))
 }
 
-func assertOneOfEvent(es *EventState) {
-	has := 0
-	if es.storeManifest != nil {
-		has++
-	}
-	if es.updateManifest != nil {
-		has++
-	}
-	if es.createItem != nil {
-		has++
-	}
-	if es.updateItem != nil {
-		has++
-	}
-	if es.createTag != nil {
-		has++
-	}
-	if es.addToTag != nil {
-		has++
-	}
-	if es.removeFromTag != nil {
-		has++
-	}
-	if es.renameTag != nil {
-		has++
-	}
-	if es.deleteTag != nil {
-		has++
-	}
-	if es.createCart != nil {
-		has++
-	}
-	if es.changeCart != nil {
-		has++
-	}
-	if es.cartFinalized != nil {
-		has++
-	}
-	if es.changeStock != nil {
-		has++
-	}
-	if es.cartAbandoned != nil {
-		has++
-	}
-	if es.newKeyCard != nil {
-		has++
-	}
-	assertWithMessage(has == 1, fmt.Sprintf("eventState has %d entries", has))
-}
-
 func check(e error) {
 	if e != nil {
 		panic(e)

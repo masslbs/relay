@@ -14,9 +14,6 @@ func (evt *Event) typeAndTypedDataMap() (string, map[string]any) {
 	var name string
 	switch union := evt.Union.(type) {
 
-	case *Event_AddToTag:
-		name = "AddToTag"
-		unwrapped = union.AddToTag
 	case *Event_CartAbandoned:
 		name = "CartAbandoned"
 		unwrapped = union.CartAbandoned
@@ -38,27 +35,21 @@ func (evt *Event) typeAndTypedDataMap() (string, map[string]any) {
 	case *Event_CreateTag:
 		name = "CreateTag"
 		unwrapped = union.CreateTag
-	case *Event_DeleteTag:
-		name = "DeleteTag"
-		unwrapped = union.DeleteTag
 	case *Event_NewKeyCard:
 		name = "NewKeyCard"
 		unwrapped = union.NewKeyCard
-	case *Event_RemoveFromTag:
-		name = "RemoveFromTag"
-		unwrapped = union.RemoveFromTag
-	case *Event_RenameTag:
-		name = "RenameTag"
-		unwrapped = union.RenameTag
 	case *Event_StoreManifest:
 		name = "StoreManifest"
 		unwrapped = union.StoreManifest
 	case *Event_UpdateItem:
 		name = "UpdateItem"
 		unwrapped = union.UpdateItem
-	case *Event_UpdateManifest:
-		name = "UpdateManifest"
-		unwrapped = union.UpdateManifest
+	case *Event_UpdateStoreManifest:
+		name = "UpdateStoreManifest"
+		unwrapped = union.UpdateStoreManifest
+	case *Event_UpdateTag:
+		name = "UpdateTag"
+		unwrapped = union.UpdateTag
 	default:
 		panic(fmt.Sprintf("unknown event type: %T", evt.Union))
 	}

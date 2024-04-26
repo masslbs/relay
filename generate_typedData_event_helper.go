@@ -69,7 +69,7 @@ func (evt *Event) typeAndTypedDataMap() (string, map[string]any) {
 func GetAllStructs() map[string]string {
 	fset := token.NewFileSet()
 
-	f, err := parser.ParseFile(fset, "gen_network_schema.pb.go", nil, parser.SkipObjectResolution)
+	f, err := parser.ParseFile(fset, "gen_network_store_events.pb.go", nil, parser.SkipObjectResolution)
 	check(err)
 
 	var sf eventTypeFinder

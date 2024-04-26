@@ -4,8 +4,6 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-set -x
-
 set -euo pipefail
 
 # Get version and commit

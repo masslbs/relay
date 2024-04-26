@@ -72,18 +72,18 @@ const (
 )
 
 // Value implements the driver.Valuer interface.
-func (mv UpdateManifest_ManifestField) Value() (driver.Value, error) {
+func (mv UpdateStoreManifest_ManifestField) Value() (driver.Value, error) {
 	switch mv {
 		// TODO: use UpdateManifest_MANIFEST_FIELD_* instead of numbers
 	{{range .ManifestEnum}}
 	case {{.Number}}:
 		return "{{.Value}}", nil{{end}}
 	}
-	return nil, fmt.Errorf("unknown UpdateManifest_ManifestField %q", mv)
+	return nil, fmt.Errorf("unknown UpdateStoreManifest_ManifestField %q", mv)
 }
 
 // Scan implements the sql.Scanner interface
-func (mv *UpdateManifest_ManifestField) Scan(src interface{}) error {
+func (mv *UpdateStoreManifest_ManifestField) Scan(src interface{}) error {
 	tv, ok := src.(string)
 	if !ok {
 		return fmt.Errorf("cannot convert %T to string", src)
