@@ -39,11 +39,27 @@ create table events (
     createdAt timestamptz not null,
     createdByNetworkSchemaVersion bigint not null,
     serverSeq bigint not null,
-    signature bytea not null,
-    encoded bytea not null
+    encoded bytea not null,
+    referenceId bytea
 );
 alter table events add constraint eventsId check (octet_length(eventId) = 32);
-alter table events add constraint eventsSignature check (octet_length(signature) = 65);
+-- TODO: cap size of encoded column
+alter table events add constraint eventsCheckReferenceIdForUpdateItem check (    
+    eventType != 'createItem' OR (referenceId is not null AND octet_length(referenceId) = 32));
+alter table events add constraint eventsCheckReferenceIdForUpdateItem check (    
+    eventType != 'updateItem' OR (referenceId is not null AND octet_length(referenceId) = 32));
+alter table events add constraint eventsCheckReferenceIdForUpdateTag check (    
+    eventType != 'createTag' OR (referenceId is not null AND octet_length(referenceId) = 32));
+alter table events add constraint eventsCheckReferenceIdForUpdateTag check (    
+    eventType != 'updateTag' OR (referenceId is not null AND octet_length(referenceId) = 32));
+alter table events add constraint eventsCheckReferenceIdForChangeCart check (    
+    eventType != 'createCart' OR (referenceId is not null AND octet_length(referenceId) = 32));
+alter table events add constraint eventsCheckReferenceIdForChangeCart check (    
+    eventType != 'changeCart' OR (referenceId is not null AND octet_length(referenceId) = 32));
+alter table events add constraint eventsCheckReferenceIdForCartFinalized check (    
+    eventType != 'cartFinalized' OR (referenceId is not null AND octet_length(referenceId) = 32));
+alter table events add constraint eventsCheckReferenceIdForCartAbandoned check (    
+    eventType != 'cartAbandoned' OR (referenceId is not null AND octet_length(referenceId) = 32));
 
 
 -- Indicies that apply to all events.

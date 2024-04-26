@@ -239,6 +239,7 @@ func (c ethClient) eventHash(evt *Event) ([]byte, error) {
 }
 
 func (c ethClient) eventVerify(evt *Event, publicKey []byte) error {
+	assert(evt != nil)
 	sighash, err := c.eventHash(evt)
 	if err != nil {
 		return err

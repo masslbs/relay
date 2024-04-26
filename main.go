@@ -617,8 +617,8 @@ func (op *EventPushOp) handle(sess *Session) {
 	var err error
 	for i, eventState := range op.eventStates {
 		eventState.eventID.assert()
-		assert(eventState.eventType != "")
 		events[i] = eventState.encodedEvent
+		assert(eventState.encodedEvent != nil)
 		if err != nil {
 			panic(fmt.Errorf("failed to create anypb for event: %w", err))
 		}
@@ -845,7 +845,12 @@ func (im *EventWriteRequest) validate(version uint) *Error {
 }
 
 func (im *EventWriteRequest) handle(sess *Session) {
-	op := &EventWriteOp{sessionID: sess.id, im: im}
+	var decodedEvt Event
+	if pberr := im.Event.UnmarshalTo(&decodedEvt); pberr != nil {
+		// TODO: somehow fix double decode
+		check(pberr)
+	}
+	op := &EventWriteOp{sessionID: sess.id, im: im, decodedStoreEvt: &decodedEvt}
 	sess.sendDatabaseOp(op)
 }
 
@@ -969,8 +974,7 @@ func getIpfsClient(ctx context.Context, errCount int, lastErr error) (*ipfsRpc.H
 
 // EventState represents the state of an event in the database.
 type EventState struct {
-	eventID   eventID
-	eventType eventType
+	eventID eventID
 
 	created struct {
 		at                     time.Time
@@ -1302,7 +1306,7 @@ func newRelay(metric *Metric) *Relay {
 		}
 		return nil
 	}
-	r.itemsByItemID = newReductionLoader[*CachedItem](r, itemsFieldFn, []eventType{eventTypeCreateItem, eventTypeUpdateItem}, "itemId")
+	r.itemsByItemID = newReductionLoader[*CachedItem](r, itemsFieldFn, []eventType{eventTypeCreateItem, eventTypeUpdateItem}, "referenceId")
 	tagsFieldFn := func(evt *Event, meta CachedMetadata) eventID {
 		switch evt.Union.(type) {
 		case *Event_CreateTag:
@@ -1315,7 +1319,7 @@ func newRelay(metric *Metric) *Relay {
 	r.tagsByTagID = newReductionLoader[*CachedTag](r, tagsFieldFn, []eventType{
 		eventTypeCreateTag,
 		eventTypeUpdateTag,
-	}, "tagId")
+	}, "referenceId")
 
 	cartsFieldFn := func(evt *Event, meta CachedMetadata) eventID {
 		switch evt.Union.(type) {
@@ -1341,7 +1345,7 @@ func newRelay(metric *Metric) *Relay {
 		eventTypeCartFinalized,
 		eventTypeChangeStock,
 		eventTypeCartAbandoned,
-	}, "cartId")
+	}, "referenceId")
 
 	r.stockByStoreID = newReductionLoader[*CachedStock](r, storeFieldFn, []eventType{eventTypeChangeStock}, "createdByStoreId")
 
@@ -1631,8 +1635,87 @@ func (r *Relay) commitSyncTransaction() {
 	r.syncTx = nil
 }
 
-var dbEntryInsertColumns = []string{"eventType", "eventId", "createdByKeyCardId", "createdByStoreId", "storeSeq", "createdAt", "createdByNetworkSchemaVersion", "serverSeq", "encoded"}
+var dbEntryInsertColumns = []string{"eventType", "eventId", "createdByKeyCardId", "createdByStoreId", "storeSeq", "createdAt", "createdByNetworkSchemaVersion", "serverSeq", "encoded", "referenceID"}
 
+func formInsert(ins *EventInsert) []interface{} {
+	type eventIDgetter interface {
+		GetEventId() eventID
+	}
+	var (
+		evtType eventType
+		evtID   eventID
+		refID   *eventID // used to stich together related events
+	)
+	switch ins.evt.Union.(type) {
+	case *Event_StoreManifest:
+		evtType = eventTypeStoreManifest
+		evtID = ins.evt.GetStoreManifest().EventId
+	case *Event_UpdateStoreManifest:
+		evtType = eventTypeUpdateStoreManifest
+		evtID = ins.evt.GetUpdateStoreManifest().EventId
+	case *Event_CreateItem:
+		evtType = eventTypeCreateItem
+		evtID = ins.evt.GetCreateItem().EventId
+		refID = &evtID
+	case *Event_UpdateItem:
+		evtType = eventTypeUpdateItem
+		ui := ins.evt.GetUpdateItem()
+		evtID = ui.EventId
+		refID = (*eventID)(&ui.ItemId)
+	case *Event_CreateTag:
+		evtType = eventTypeCreateTag
+		evtID = ins.evt.GetCreateTag().EventId
+	case *Event_UpdateTag:
+		evtType = eventTypeUpdateTag
+		ut := ins.evt.GetUpdateTag()
+		evtID = ut.EventId
+		refID = (*eventID)(&ut.TagId)
+	case *Event_ChangeStock:
+		evtType = eventTypeChangeStock
+		cs := ins.evt.GetChangeStock()
+		evtID = cs.EventId
+		if len(cs.CartId) > 0 {
+			refID = (*eventID)(&cs.CartId)
+		}
+	case *Event_CreateCart:
+		evtType = eventTypeCreateCart
+		cc := ins.evt.GetCreateCart()
+		evtID = cc.EventId
+		refID = &evtID
+	case *Event_ChangeCart:
+		evtType = eventTypeChangeCart
+		cc := ins.evt.GetChangeCart()
+		evtID = cc.EventId
+		refID = (*eventID)(&cc.CartId)
+	case *Event_CartFinalized:
+		evtType = eventTypeCartFinalized
+		cf := ins.evt.GetCartFinalized()
+		evtID = cf.EventId
+		refID = (*eventID)(&cf.CartId)
+	case *Event_CartAbandoned:
+		evtType = eventTypeCartAbandoned
+		ca := ins.evt.GetCartAbandoned()
+		evtID = ca.EventId
+		refID = (*eventID)(&ca.CartId)
+	case *Event_NewKeyCard:
+		evtType = eventTypeNewKeyCard
+		evtID = ins.evt.GetNewKeyCard().EventId
+	default:
+		panic(fmt.Errorf("formInsert.unrecognizeType eventType=%T", ins.evt.Union))
+	}
+	return []interface{}{
+		evtType,                     // eventType
+		evtID,                       // eventId
+		ins.createdByKeyCardID,      // createdByKeyCardId
+		ins.createdByStoreID,        // createdByStoreId
+		ins.storeSeq,                // storeSeq
+		now(),                       // createdAt
+		ins.createdByNetworkVersion, // createdByNetworkSchemaVersion
+		ins.serverSeq,               // serverSeq
+		ins.pbany.Value,             // encoded
+		refID,                       // referenceID
+	}
+}
 func (r *Relay) flushEvents() {
 	if len(r.queuedEventInserts) == 0 {
 		return
@@ -2641,10 +2724,10 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 		}},
 	}
 
-	anyEvt, err := anypb.New(evt)
+	err := r.ethClient.eventSign(evt)
 	check(err)
 
-	err = r.ethClient.eventSign(evt)
+	anyEvt, err := anypb.New(evt)
 	check(err)
 
 	r.beginSyncTransaction()
@@ -2695,10 +2778,10 @@ func (op *PaymentFoundInternalOp) process(r *Relay) {
 
 	evt := &Event{Union: &Event_ChangeStock{ChangeStock: cs}}
 
-	evtAny, err := anypb.New(evt)
+	err = r.ethClient.eventSign(evt)
 	check(err) // fatal code error
 
-	err = r.ethClient.eventSign(evt)
+	evtAny, err := anypb.New(evt)
 	check(err) // fatal code error
 
 	r.writeEvent(evt, meta, evtAny)
@@ -2708,64 +2791,6 @@ func (op *PaymentFoundInternalOp) process(r *Relay) {
 }
 
 // Database processing
-
-func formInsert(ins *EventInsert) []interface{} {
-	type eventIDgetter interface {
-		GetEventId() eventID
-	}
-	var (
-		evtType eventType
-		evtID   eventID
-	)
-	switch ins.evt.Union.(type) {
-	case *Event_StoreManifest:
-		evtType = eventTypeStoreManifest
-		evtID = ins.evt.GetStoreManifest().EventId
-	case *Event_UpdateStoreManifest:
-		evtType = eventTypeUpdateStoreManifest
-		evtID = ins.evt.GetUpdateStoreManifest().EventId
-	case *Event_CreateItem:
-		evtType = eventTypeCreateItem
-		evtID = ins.evt.GetCreateItem().EventId
-	case *Event_UpdateItem:
-		evtType = eventTypeUpdateItem
-		evtID = ins.evt.GetUpdateItem().EventId
-	case *Event_CreateTag:
-		evtType = eventTypeCreateTag
-		evtID = ins.evt.GetCreateTag().EventId
-	case *Event_UpdateTag:
-		evtType = eventTypeUpdateTag
-		evtID = ins.evt.GetUpdateTag().EventId
-	case *Event_ChangeStock:
-		evtType = eventTypeChangeStock
-		evtID = ins.evt.GetChangeStock().EventId
-	case *Event_CreateCart:
-		evtType = eventTypeCreateCart
-		evtID = ins.evt.GetCreateCart().EventId
-	case *Event_ChangeCart:
-		evtType = eventTypeChangeCart
-		evtID = ins.evt.GetChangeCart().EventId
-	case *Event_CartFinalized:
-		evtType = eventTypeCartFinalized
-		evtID = ins.evt.GetCartFinalized().EventId
-	case *Event_CartAbandoned:
-		evtType = eventTypeCartAbandoned
-		evtID = ins.evt.GetCartAbandoned().EventId
-	default:
-		panic(fmt.Errorf("formInsert.unrecognizeType eventType=%T", ins.evt.Union))
-	}
-	return []interface{}{
-		evtType,                     // eventType
-		evtID,                       // eventId
-		ins.createdByKeyCardID,      // createdByKeyCardId
-		ins.createdByStoreID,        // createdByStoreId
-		ins.storeSeq,                // storeSeq
-		now(),                       // createdAt
-		ins.createdByNetworkVersion, // createdByNetworkSchemaVersion
-		ins.serverSeq,               // serverSeq
-		ins.pbany.Value,             // encoded
-	}
-}
 
 func (r *Relay) debounceSessions() {
 	// Process each session.
@@ -2859,7 +2884,7 @@ func (r *Relay) debounceSessions() {
 			readStart := now()
 			reads := 0
 			// Index: events(storeId, storeSeq)
-			query := `select serverSeq, storeSeq, eventId, eventType, createdByKeyCardId, createdByStoreId, createdAt, encoded
+			query := `select serverSeq, storeSeq, eventId, createdByKeyCardId, createdByStoreId, createdAt, encoded
 from events
 where createdByStoreId = $1
 	and storeSeq > $2
@@ -2874,7 +2899,7 @@ order by storeSeq asc limit $4`
 					eventState = &EventState{}
 					encoded    []byte
 				)
-				err := rows.Scan(&eventState.serverSeq, &eventState.storeSeq, &eventState.eventID, &eventState.eventType, &eventState.created.byDeviceID, &eventState.created.byStoreID, &eventState.created.at, &encoded)
+				err := rows.Scan(&eventState.serverSeq, &eventState.storeSeq, &eventState.eventID, &eventState.created.byDeviceID, &eventState.created.byStoreID, &eventState.created.at, &encoded)
 				check(err)
 				reads++
 				// log("relay.debounceSessions.debug event=%x", eventState.eventID)
@@ -2883,6 +2908,15 @@ order by storeSeq asc limit $4`
 				sessionState.buffer = append(sessionState.buffer, eventState)
 				assert(eventState.storeSeq > sessionState.lastBufferedStoreSeq)
 				sessionState.lastBufferedStoreSeq = eventState.storeSeq
+
+				// var evt Event
+				// err = proto.Unmarshal(encoded, &evt)
+				// check(err)
+				// log("DEBUG: %x %d", evt.Signature, len(evt.Signature))
+				eventState.encodedEvent = &anypb.Any{
+					TypeUrl: "type.googleapis.com/market.mass.Event",
+					Value:   encoded,
+				}
 			}
 			check(rows.Err())
 
