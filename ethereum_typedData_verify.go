@@ -195,6 +195,24 @@ func (c ethClient) eventHash(evt *Event) ([]byte, error) {
 		default:
 			panic(fmt.Sprintf("eventHash: unknown updateItem field: %v", ui.Field))
 		}
+	} else if ut := evt.GetUpdateTag(); ut != nil {
+		usedTypeSpec = make([]apitypes.Type, 4)
+		copy(usedTypeSpec, tdTypeSpec[:3])
+		switch ut.Action {
+		case UpdateTag_TAG_ACTION_ADD_ITEM:
+			fallthrough
+		case UpdateTag_TAG_ACTION_REMOVE_ITEM:
+			// keep type: item_id
+			usedTypeSpec[3] = tdTypeSpec[3]
+		case UpdateTag_TAG_ACTION_RENAME:
+			// keep type: new_name
+			usedTypeSpec[3] = tdTypeSpec[4]
+		case UpdateTag_TAG_ACTION_DELETE_TAG:
+			// keep type: delete
+			usedTypeSpec[3] = tdTypeSpec[5]
+		default:
+			panic(fmt.Sprintf("eventHash: unknown updateTag action: %v", ut.Action))
+		}
 	} else if cs := evt.GetChangeStock(); cs != nil && len(cs.CartId) == 0 {
 		// for ChangeStock we need to remove the cart_id field if it's not set
 		usedTypeSpec = tdTypeSpec[:3]
@@ -242,7 +260,7 @@ func (c ethClient) eventVerify(evt *Event, publicKey []byte) error {
 	assert(evt != nil)
 	sighash, err := c.eventHash(evt)
 	if err != nil {
-		return err
+		return fmt.Errorf("verifyEvent: failed to hash %T: %w", evt.Union, err)
 	}
 
 	signature := evt.Signature
