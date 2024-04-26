@@ -6,17 +6,14 @@
   description = "Mass Market Relay";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-23.11";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-24.05";
     flake-utils.url = "github:numtide/flake-utils";
-    gomod2nix.url = "github:nix-community/gomod2nix";
-    gomod2nix.inputs.nixpkgs.follows = "nixpkgs";
-    gomod2nix.inputs.flake-utils.follows = "flake-utils";
     pre-commit-hooks.url = "github:cachix/pre-commit-hooks.nix";
 
     contracts.url = "github:masslbs/contracts";
     contracts.inputs.nixpkgs.follows = "nixpkgs";
     schema = {
-      url = "github:masslbs/network-schema/payments-v2-intergration";
+      url = "github:masslbs/network-schema";
       flake = false;
     };
   };
@@ -25,7 +22,6 @@
     self,
     nixpkgs,
     flake-utils,
-    gomod2nix,
     pre-commit-hooks,
     contracts,
     schema,
@@ -39,9 +35,7 @@
       callPackage = pkgs.darwin.apple_sdk_11_0.callPackage or pkgs.callPackage;
     in {
       packages = rec {
-        relay = callPackage ./. {
-          inherit (gomod2nix.legacyPackages.${system}) buildGoApplication;
-        };
+        relay = callPackage ./default.nix { };
         default = relay;
       };
       apps = rec {
@@ -49,7 +43,6 @@
         default = relay;
       };
       devShells.default = callPackage ./shell.nix {
-        inherit (gomod2nix.legacyPackages.${system}) mkGoEnv gomod2nix;
         inherit pre-commit-hooks;
         inherit contracts schema;
       };

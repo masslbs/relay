@@ -70,7 +70,7 @@ jobs:
       - name: Extract branches
         shell: bash
         run: |
-          echo "contracts=$(jq -r '.nodes.contracts.original.ref' relay/flake.lock)" >> $GITHUB_OUTPUT
+          echo "contracts=$(jq -r '.nodes.contracts.locked.rev' relay/flake.lock)" >> $GITHUB_OUTPUT
           echo "relay_pr=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
         id: branches
 
@@ -91,6 +91,7 @@ jobs:
         with:
           repository: masslbs/pystoretest
           ssh-key: ${{ secrets.SSH_CHECKOUT_PYSTORETEST }}
+          fallback-branch: network-v2
           path: pystoretest
           ref: ${{ steps.branches.outputs.relay_pr }}
 
@@ -100,6 +101,9 @@ jobs:
           ../contracts/update_env.sh ../contracts/broadcast/deploy.s.sol/31337/run-latest.json | tee -a .env
           sed -i 's|PORT=4444|PORT=3434|' .env
           sed -i 's|localhost:4444|localhost:3434|' .env
+          echo "KICK_TIMEOUT=5s" >> .env
+          echo "PING_INTERVAL=2s" >> .env
+          echo "ETH_BLOCK_INTERVAL=1s" >> .env
           cat .env
         working-directory: relay
 
@@ -126,7 +130,7 @@ jobs:
           curl http://localhost:8545/ -X POST -H 'content-type: application/json' --data-raw '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":0}'
 
       - name: Run tests
-        run: nix develop -c pytest -x -k "not carts_happy"
+        run: nix develop -c pytest -x -vv
         working-directory: pystoretest
 
       - name: Upload relay log on failure

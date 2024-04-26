@@ -1,11 +1,11 @@
 {
-  "StoreManifest": [
+  "ShopManifest": [
     {
       "name": "event_id",
       "type": "bytes32"
     },
     {
-      "name": "store_token_id",
+      "name": "shop_token_id",
       "type": "bytes32"
     },
     {
@@ -15,28 +15,52 @@
     {
       "name": "published_tag_id",
       "type": "bytes32"
+    },
+    {
+      "name": "name",
+      "type": "string"
+    },
+    {
+      "name": "description",
+      "type": "string"
+    },
+    {
+      "name": "profile_picture_url",
+      "type": "string"
     }
   ],
-  "UpdateManifest": [
+  "UpdateShopManifest": [
     {
       "name": "event_id",
       "type": "bytes32"
     },
     {
-      "name": "field",
-      "type": "int256"
-    },
-    {
-      "name": "string",
+      "name": "domain",
       "type": "string"
     },
     {
-      "name": "tag_id",
+      "name": "published_tag_id",
       "type": "bytes32"
     },
     {
-      "name": "erc20_addr",
+      "name": "add_erc20_addr",
       "type": "address"
+    },
+    {
+      "name": "remove_erc20_addr",
+      "type": "address"
+    },
+    {
+      "name": "name",
+      "type": "string"
+    },
+    {
+      "name": "description",
+      "type": "string"
+    },
+    {
+      "name": "profile_picture_url",
+      "type": "string"
     }
   ],
   "CreateItem": [
@@ -63,10 +87,6 @@
       "type": "bytes32"
     },
     {
-      "name": "field",
-      "type": "int256"
-    },
-    {
       "name": "price",
       "type": "string"
     },
@@ -85,7 +105,7 @@
       "type": "string"
     }
   ],
-  "AddToTag": [
+  "UpdateTag": [
     {
       "name": "event_id",
       "type": "bytes32"
@@ -95,122 +115,107 @@
       "type": "bytes32"
     },
     {
-      "name": "item_id",
-      "type": "bytes32"
-    }
-  ],
-  "RemoveFromTag": [
-    {
-      "name": "event_id",
+      "name": "add_item_id",
       "type": "bytes32"
     },
     {
-      "name": "tag_id",
+      "name": "remove_item_id",
       "type": "bytes32"
     },
     {
-      "name": "item_id",
-      "type": "bytes32"
-    }
-  ],
-  "RenameTag": [
-    {
-      "name": "event_id",
-      "type": "bytes32"
+      "name": "delete",
+      "type": "bool"
     },
     {
-      "name": "tag_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "name",
+      "name": "rename",
       "type": "string"
     }
   ],
-  "DeleteTag": [
-    {
-      "name": "event_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "tag_id",
-      "type": "bytes32"
-    }
-  ],
-  "CreateCart": [
+  "CreateOrder": [
     {
       "name": "event_id",
       "type": "bytes32"
     }
   ],
-  "ChangeCart": [
+  "UpdateOrder": [
     {
       "name": "event_id",
       "type": "bytes32"
     },
     {
-      "name": "cart_id",
+      "name": "order_id",
       "type": "bytes32"
     },
     {
-      "name": "item_id",
-      "type": "bytes32"
+      "name": "change_items",
+      "message": [
+        {
+          "name": "item_id",
+          "type": "bytes32"
+        },
+        {
+          "name": "quantity",
+          "type": "int32"
+        }
+      ]
     },
     {
-      "name": "quantity",
-      "type": "int32"
-    }
-  ],
-  "CartFinalized": [
-    {
-      "name": "event_id",
-      "type": "bytes32"
+      "name": "items_finalized",
+      "message": [
+        {
+          "name": "payment_id",
+          "type": "bytes32"
+        },
+        {
+          "name": "sub_total",
+          "type": "string"
+        },
+        {
+          "name": "sales_tax",
+          "type": "string"
+        },
+        {
+          "name": "total",
+          "type": "string"
+        },
+        {
+          "name": "ttl",
+          "type": "string"
+        },
+        {
+          "name": "order_hash",
+          "type": "bytes32"
+        },
+        {
+          "name": "currency_addr",
+          "type": "address"
+        },
+        {
+          "name": "total_in_crypto",
+          "type": "string"
+        },
+        {
+          "name": "payee_addr",
+          "type": "address"
+        },
+        {
+          "name": "is_payment_endpoint",
+          "type": "bool"
+        },
+        {
+          "name": "shop_signature",
+          "type": "bytes"
+        }
+      ]
     },
     {
-      "name": "cart_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "purchase_addr",
-      "type": "address"
-    },
-    {
-      "name": "erc20_addr",
-      "type": "address"
-    },
-    {
-      "name": "sub_total",
-      "type": "string"
-    },
-    {
-      "name": "sales_tax",
-      "type": "string"
-    },
-    {
-      "name": "total",
-      "type": "string"
-    },
-    {
-      "name": "total_in_crypto",
-      "type": "string"
-    },
-    {
-      "name": "payment_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "payment_ttl",
-      "type": "string"
-    }
-  ],
-  "CartAbandoned": [
-    {
-      "name": "event_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "cart_id",
-      "type": "bytes32"
+      "name": "order_canceled",
+      "message": [
+        {
+          "name": "timestamp",
+          "type": "uint64"
+        }
+      ]
     }
   ],
   "ChangeStock": [
@@ -227,7 +232,7 @@
       "type": "int32[]"
     },
     {
-      "name": "cart_id",
+      "name": "order_id",
       "type": "bytes32"
     },
     {
@@ -247,6 +252,10 @@
     {
       "name": "card_public_key",
       "type": "bytes"
+    },
+    {
+      "name": "is_guest",
+      "type": "bool"
     }
   ]
 }
