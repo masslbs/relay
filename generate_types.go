@@ -120,6 +120,9 @@ func processEncodingFile(filePath string) []TypeMapping {
 
 	for scanner.Scan() {
 		line := scanner.Text()
+		if line[0] == '#' {
+			continue
+		}
 		tokens := strings.Fields(line)
 		typeName := upperCaseFirstLetter(tokens[0])
 		typeNum, err := strconv.Atoi(tokens[1])

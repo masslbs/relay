@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from network-schema. Files: constants.txt at version v1 (1ccb579bd1e651605256d144b1fb3575cea81284)
+// Generated from network-schema. Files: constants.txt at version v2 (edd1dde077de3346e9876d917781ed9e94563fd3)
 //lint:file-ignore U1000 Ignore all unused code, it's generated
 
 package main
@@ -17,8 +17,6 @@ const limitMaxInRequests = 1024
 const limitMaxInBatchSize = 64
 const limitMaxOutRequests = 1024
 const limitMaxOutBatchSize = 64
-const limitMaxDescriptionLength = 128
-const limitMaxBlobSize = 1048576
 
 // file: db/schema.sql
 type eventType string

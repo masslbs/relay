@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from massmarket-network-schema:network/encoding.txt at network v1 (1ccb579bd1e651605256d144b1fb3575cea81284)
+// Generated from massmarket-network-schema:network/encoding.txt at network v2 (edd1dde077de3346e9876d917781ed9e94563fd3)
 //lint:file-ignore U1000 Ignore all unused code, it's generated
 
 package main
@@ -11,7 +11,7 @@ import (
 	"reflect"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 var typesNumToType = make(map[uint8]reflect.Type)
 var typesTypePointerToNum = make(map[reflect.Type]uint8)
@@ -49,88 +49,10 @@ func (r *PingResponse) getError() *Error {
 	return r.Error
 }
 
-const typeAuthenticateRequest = 3
+const typeEventWriteRequest = 3
 
 func init() {
-	networkMessage(3, AuthenticateRequest{})
-}
-func (r *AuthenticateRequest) getRequestID() requestID {
-	return r.RequestId
-}
-
-func (r *AuthenticateRequest) response(err *Error) Message {
-	return &AuthenticateResponse{RequestId: r.RequestId, Error: err}
-}
-
-const typeAuthenticateResponse = 4
-
-func init() {
-	networkMessage(4, AuthenticateResponse{})
-}
-func (r *AuthenticateResponse) getRequestID() requestID {
-	return r.RequestId
-}
-
-func (r *AuthenticateResponse) getError() *Error {
-	return r.Error
-}
-
-const typeChallengeSolvedRequest = 5
-
-func init() {
-	networkMessage(5, ChallengeSolvedRequest{})
-}
-func (r *ChallengeSolvedRequest) getRequestID() requestID {
-	return r.RequestId
-}
-
-func (r *ChallengeSolvedRequest) response(err *Error) Message {
-	return &ChallengeSolvedResponse{RequestId: r.RequestId, Error: err}
-}
-
-const typeChallengeSolvedResponse = 6
-
-func init() {
-	networkMessage(6, ChallengeSolvedResponse{})
-}
-func (r *ChallengeSolvedResponse) getRequestID() requestID {
-	return r.RequestId
-}
-
-func (r *ChallengeSolvedResponse) getError() *Error {
-	return r.Error
-}
-
-const typeGetBlobUploadURLRequest = 9
-
-func init() {
-	networkMessage(9, GetBlobUploadURLRequest{})
-}
-func (r *GetBlobUploadURLRequest) getRequestID() requestID {
-	return r.RequestId
-}
-
-func (r *GetBlobUploadURLRequest) response(err *Error) Message {
-	return &GetBlobUploadURLResponse{RequestId: r.RequestId, Error: err}
-}
-
-const typeGetBlobUploadURLResponse = 10
-
-func init() {
-	networkMessage(10, GetBlobUploadURLResponse{})
-}
-func (r *GetBlobUploadURLResponse) getRequestID() requestID {
-	return r.RequestId
-}
-
-func (r *GetBlobUploadURLResponse) getError() *Error {
-	return r.Error
-}
-
-const typeEventWriteRequest = 13
-
-func init() {
-	networkMessage(13, EventWriteRequest{})
+	networkMessage(3, EventWriteRequest{})
 }
 func (r *EventWriteRequest) getRequestID() requestID {
 	return r.RequestId
@@ -140,10 +62,10 @@ func (r *EventWriteRequest) response(err *Error) Message {
 	return &EventWriteResponse{RequestId: r.RequestId, Error: err}
 }
 
-const typeEventWriteResponse = 14
+const typeEventWriteResponse = 4
 
 func init() {
-	networkMessage(14, EventWriteResponse{})
+	networkMessage(4, EventWriteResponse{})
 }
 func (r *EventWriteResponse) getRequestID() requestID {
 	return r.RequestId
@@ -153,10 +75,10 @@ func (r *EventWriteResponse) getError() *Error {
 	return r.Error
 }
 
-const typeSyncStatusRequest = 15
+const typeSyncStatusRequest = 5
 
 func init() {
-	networkMessage(15, SyncStatusRequest{})
+	networkMessage(5, SyncStatusRequest{})
 }
 func (r *SyncStatusRequest) getRequestID() requestID {
 	return r.RequestId
@@ -166,10 +88,10 @@ func (r *SyncStatusRequest) response(err *Error) Message {
 	return &SyncStatusResponse{RequestId: r.RequestId, Error: err}
 }
 
-const typeSyncStatusResponse = 16
+const typeSyncStatusResponse = 6
 
 func init() {
-	networkMessage(16, SyncStatusResponse{})
+	networkMessage(6, SyncStatusResponse{})
 }
 func (r *SyncStatusResponse) getRequestID() requestID {
 	return r.RequestId
@@ -179,10 +101,10 @@ func (r *SyncStatusResponse) getError() *Error {
 	return r.Error
 }
 
-const typeEventPushRequest = 17
+const typeEventPushRequest = 7
 
 func init() {
-	networkMessage(17, EventPushRequest{})
+	networkMessage(7, EventPushRequest{})
 }
 func (r *EventPushRequest) getRequestID() requestID {
 	return r.RequestId
@@ -192,10 +114,10 @@ func (r *EventPushRequest) response(err *Error) Message {
 	return &EventPushResponse{RequestId: r.RequestId, Error: err}
 }
 
-const typeEventPushResponse = 18
+const typeEventPushResponse = 8
 
 func init() {
-	networkMessage(18, EventPushResponse{})
+	networkMessage(8, EventPushResponse{})
 }
 func (r *EventPushResponse) getRequestID() requestID {
 	return r.RequestId
@@ -205,10 +127,88 @@ func (r *EventPushResponse) getError() *Error {
 	return r.Error
 }
 
-const typeCommitCartRequest = 19
+const typeAuthenticateRequest = 20
 
 func init() {
-	networkMessage(19, CommitCartRequest{})
+	networkMessage(20, AuthenticateRequest{})
+}
+func (r *AuthenticateRequest) getRequestID() requestID {
+	return r.RequestId
+}
+
+func (r *AuthenticateRequest) response(err *Error) Message {
+	return &AuthenticateResponse{RequestId: r.RequestId, Error: err}
+}
+
+const typeAuthenticateResponse = 21
+
+func init() {
+	networkMessage(21, AuthenticateResponse{})
+}
+func (r *AuthenticateResponse) getRequestID() requestID {
+	return r.RequestId
+}
+
+func (r *AuthenticateResponse) getError() *Error {
+	return r.Error
+}
+
+const typeChallengeSolvedRequest = 22
+
+func init() {
+	networkMessage(22, ChallengeSolvedRequest{})
+}
+func (r *ChallengeSolvedRequest) getRequestID() requestID {
+	return r.RequestId
+}
+
+func (r *ChallengeSolvedRequest) response(err *Error) Message {
+	return &ChallengeSolvedResponse{RequestId: r.RequestId, Error: err}
+}
+
+const typeChallengeSolvedResponse = 23
+
+func init() {
+	networkMessage(23, ChallengeSolvedResponse{})
+}
+func (r *ChallengeSolvedResponse) getRequestID() requestID {
+	return r.RequestId
+}
+
+func (r *ChallengeSolvedResponse) getError() *Error {
+	return r.Error
+}
+
+const typeGetBlobUploadURLRequest = 30
+
+func init() {
+	networkMessage(30, GetBlobUploadURLRequest{})
+}
+func (r *GetBlobUploadURLRequest) getRequestID() requestID {
+	return r.RequestId
+}
+
+func (r *GetBlobUploadURLRequest) response(err *Error) Message {
+	return &GetBlobUploadURLResponse{RequestId: r.RequestId, Error: err}
+}
+
+const typeGetBlobUploadURLResponse = 31
+
+func init() {
+	networkMessage(31, GetBlobUploadURLResponse{})
+}
+func (r *GetBlobUploadURLResponse) getRequestID() requestID {
+	return r.RequestId
+}
+
+func (r *GetBlobUploadURLResponse) getError() *Error {
+	return r.Error
+}
+
+const typeCommitCartRequest = 32
+
+func init() {
+	networkMessage(32, CommitCartRequest{})
 }
 func (r *CommitCartRequest) getRequestID() requestID {
 	return r.RequestId
@@ -218,10 +218,10 @@ func (r *CommitCartRequest) response(err *Error) Message {
 	return &CommitCartResponse{RequestId: r.RequestId, Error: err}
 }
 
-const typeCommitCartResponse = 20
+const typeCommitCartResponse = 33
 
 func init() {
-	networkMessage(20, CommitCartResponse{})
+	networkMessage(33, CommitCartResponse{})
 }
 func (r *CommitCartResponse) getRequestID() requestID {
 	return r.RequestId

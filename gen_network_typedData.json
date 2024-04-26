@@ -17,7 +17,7 @@
       "type": "bytes32"
     }
   ],
-  "UpdateManifest": [
+  "UpdateStoreManifest": [
     {
       "name": "event_id",
       "type": "bytes32"
@@ -85,7 +85,7 @@
       "type": "string"
     }
   ],
-  "AddToTag": [
+  "UpdateTag": [
     {
       "name": "event_id",
       "type": "bytes32"
@@ -93,48 +93,22 @@
     {
       "name": "tag_id",
       "type": "bytes32"
+    },
+    {
+      "name": "action",
+      "type": "int256"
     },
     {
       "name": "item_id",
       "type": "bytes32"
-    }
-  ],
-  "RemoveFromTag": [
-    {
-      "name": "event_id",
-      "type": "bytes32"
     },
     {
-      "name": "tag_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "item_id",
-      "type": "bytes32"
-    }
-  ],
-  "RenameTag": [
-    {
-      "name": "event_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "tag_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "name",
+      "name": "new_name",
       "type": "string"
-    }
-  ],
-  "DeleteTag": [
-    {
-      "name": "event_id",
-      "type": "bytes32"
     },
     {
-      "name": "tag_id",
-      "type": "bytes32"
+      "name": "delete",
+      "type": "bool"
     }
   ],
   "CreateCart": [

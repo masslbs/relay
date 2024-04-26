@@ -4,6 +4,8 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+set -x
+
 set -euo pipefail
 
 # Get version and commit
@@ -12,13 +14,23 @@ SCHEMA_COMMIT_HASH=$(jq -r '.nodes["schema"].locked.rev' flake.lock)
 CONTRACTS_COMMIT_HASH=$(jq -r '.nodes["contracts"].locked.rev' flake.lock)
 
 # protobuf file and encoding helpers from network schema
-cp $MASS_SCHEMA/schema.proto network-schema.proto
-chmod u+w network-schema.proto
-protoc --go_out=paths=source_relative:. --go_opt="Mnetwork-schema.proto=github.com/masslbs/network-schema;main" network-schema.proto
-# Prepend comment with versioning info
-sed -i "1i // Generated from $MASS_SCHEMA/schema.proto at version v$SCHEMA_VERSION ($SCHEMA_COMMIT_HASH)\n" network-schema.pb.go
-mv network-schema.pb.go gen_network_schema.pb.go
-rm network-schema.proto
+mkdir network-schema/
+cp $MASS_SCHEMA/*.proto network-schema/
+chmod u+w network-schema/*.proto
+for input in network-schema/*.proto; do
+  goFname="$(basename $input | sed 's/.proto/.pb.go/')"
+  echo "Generating $goFname from $input"
+  protoc \
+    -I=network-schema \
+    --go_out=paths=source_relative:. \
+    --go_opt="Merror.proto=github.com/masslbs/network-schema;main" \
+    --go_opt="M$(basename $input)=github.com/masslbs/network-schema;main" \
+    $input
+  # Prepend comment with versioning info
+  sed -i "1i // Generated from $MASS_SCHEMA/$input at version v$SCHEMA_VERSION ($SCHEMA_COMMIT_HASH)\n" $goFname
+  mv $goFname gen_network_$goFname
+done
+rm -r network-schema/
 
 cp $MASS_SCHEMA/typedData.json gen_network_typedData.json
 go run generate_typedData_event_helper.go $SCHEMA_VERSION $SCHEMA_COMMIT_HASH > gen_typedData_event_helper.go

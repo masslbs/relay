@@ -15,7 +15,7 @@
 
     contracts.url = "github:masslbs/contracts";
     schema = {
-      url = "git+ssh://git@github.com/masslbs/network-schema.git?ref=main";
+      url = "github:masslbs/network-schema/wip/v2";
       flake = false;
     };
   };
