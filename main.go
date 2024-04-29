@@ -2121,7 +2121,7 @@ func (op *EventWriteOp) process(r *Relay) {
 	}
 
 	meta := newMetadata(sessionState.keyCardID, sessionState.storeID, uint16(sessionState.version))
-	if err := r.validateWrite(op.decodedStoreEvt, meta, sessionState); err != nil {
+	if err := r.validateStoreEventWrite(op.decodedStoreEvt, meta, sessionState); err != nil {
 		logSR("relay.eventWriteOp.checkEventFailed code=%s msg=%s", sessionID, requestID, err.Code, err.Message)
 		op.err = err
 		r.sendSessionOp(sessionState, op)
@@ -2144,7 +2144,7 @@ func (op *EventWriteOp) process(r *Relay) {
 	r.sendSessionOp(sessionState, op)
 }
 
-func (r *Relay) validateWrite(union *StoreEvent, m CachedMetadata, sess *SessionState) *Error {
+func (r *Relay) validateStoreEventWrite(union *StoreEvent, m CachedMetadata, sess *SessionState) *Error {
 	switch tv := union.Union.(type) {
 	case *StoreEvent_StoreManifest:
 		_, exists := r.storeManifestsByStoreID.get(m.createdByStoreID)
@@ -2157,7 +2157,7 @@ func (r *Relay) validateWrite(union *StoreEvent, m CachedMetadata, sess *Session
 			return notFoundError
 		}
 
-		// this feels like a validation step but we dont have access to the relay there
+		// this feels like a pre-op validation step but we dont have access to the relay there
 		if tv.UpdateStoreManifest.Field == UpdateStoreManifest_MANIFEST_FIELD_ADD_ERC20 {
 			callOpts := &bind.CallOpts{
 				Pending: false,
