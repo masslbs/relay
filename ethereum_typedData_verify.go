@@ -149,7 +149,7 @@ func parseEventToTypedData() {
 	check(err)
 }
 
-func (c ethClient) eventHash(evt *Event) ([]byte, error) {
+func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
 	parseEventToTypedDataOnce.Do(parseEventToTypedData)
 
 	typeName, message := evt.typeAndTypedDataMap()
@@ -256,7 +256,7 @@ func (c ethClient) eventHash(evt *Event) ([]byte, error) {
 	return sighash, nil
 }
 
-func (c ethClient) eventVerify(evt *Event, publicKey []byte) error {
+func (c ethClient) eventVerify(evt *StoreEvent, publicKey []byte) error {
 	assert(evt != nil)
 	sighash, err := c.eventHash(evt)
 	if err != nil {
@@ -287,7 +287,7 @@ func (c ethClient) eventVerify(evt *Event, publicKey []byte) error {
 	return nil
 }
 
-func (c ethClient) eventSign(evt *Event) error {
+func (c ethClient) eventSign(evt *StoreEvent) error {
 	sighash, err := c.eventHash(evt)
 	if err != nil {
 		return err

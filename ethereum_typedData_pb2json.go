@@ -89,6 +89,8 @@ func (evt *UpdateTag) typedDataMap() map[string]any {
 		m["item_id"] = itemID
 	case UpdateTag_TAG_ACTION_RENAME:
 		m["new_name"] = evt.Value.(*UpdateTag_NewName).NewName
+	case UpdateTag_TAG_ACTION_DELETE_TAG:
+		m["delete"] = true
 	default:
 		panic(fmt.Sprintf("unknown action: %v", evt.Action))
 	}

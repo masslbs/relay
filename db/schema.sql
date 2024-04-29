@@ -44,21 +44,21 @@ create table events (
 );
 alter table events add constraint eventsId check (octet_length(eventId) = 32);
 -- TODO: cap size of encoded column
-alter table events add constraint eventsCheckReferenceIdForUpdateItem check (    
+alter table events add constraint eventsCheckReferenceIdForCreateItem check (
     eventType != 'createItem' OR (referenceId is not null AND octet_length(referenceId) = 32));
-alter table events add constraint eventsCheckReferenceIdForUpdateItem check (    
+alter table events add constraint eventsCheckReferenceIdForUpdateItem check (
     eventType != 'updateItem' OR (referenceId is not null AND octet_length(referenceId) = 32));
-alter table events add constraint eventsCheckReferenceIdForUpdateTag check (    
+alter table events add constraint eventsCheckReferenceIdForCreateTag check (
     eventType != 'createTag' OR (referenceId is not null AND octet_length(referenceId) = 32));
-alter table events add constraint eventsCheckReferenceIdForUpdateTag check (    
+alter table events add constraint eventsCheckReferenceIdForUpdateTag check (
     eventType != 'updateTag' OR (referenceId is not null AND octet_length(referenceId) = 32));
-alter table events add constraint eventsCheckReferenceIdForChangeCart check (    
+alter table events add constraint eventsCheckReferenceIdForCreateCart check (
     eventType != 'createCart' OR (referenceId is not null AND octet_length(referenceId) = 32));
-alter table events add constraint eventsCheckReferenceIdForChangeCart check (    
+alter table events add constraint eventsCheckReferenceIdForChangeCart check (
     eventType != 'changeCart' OR (referenceId is not null AND octet_length(referenceId) = 32));
-alter table events add constraint eventsCheckReferenceIdForCartFinalized check (    
+alter table events add constraint eventsCheckReferenceIdForCartFinalized check (
     eventType != 'cartFinalized' OR (referenceId is not null AND octet_length(referenceId) = 32));
-alter table events add constraint eventsCheckReferenceIdForCartAbandoned check (    
+alter table events add constraint eventsCheckReferenceIdForCartAbandoned check (
     eventType != 'cartAbandoned' OR (referenceId is not null AND octet_length(referenceId) = 32));
 
 

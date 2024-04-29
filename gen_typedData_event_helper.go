@@ -2,52 +2,52 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from network-schema:typedData.json at version v2 (edd1dde077de3346e9876d917781ed9e94563fd3).
+// Generated from network-schema:typedData.json at version v2 (2e3d27ecfc5a19681af710e2ec288709139e19bc).
 //lint:file-ignore U1000 Ignore all unused code, it's generated
 
 package main
 
 import "fmt"
 
-func (evt *Event) typeAndTypedDataMap() (string, map[string]any) {
+func (evt *StoreEvent) typeAndTypedDataMap() (string, map[string]any) {
 	var unwrapped typedDataMaper
 	var name string
 	switch union := evt.Union.(type) {
 
-	case *Event_CartAbandoned:
+	case *StoreEvent_CartAbandoned:
 		name = "CartAbandoned"
 		unwrapped = union.CartAbandoned
-	case *Event_CartFinalized:
+	case *StoreEvent_CartFinalized:
 		name = "CartFinalized"
 		unwrapped = union.CartFinalized
-	case *Event_ChangeCart:
+	case *StoreEvent_ChangeCart:
 		name = "ChangeCart"
 		unwrapped = union.ChangeCart
-	case *Event_ChangeStock:
+	case *StoreEvent_ChangeStock:
 		name = "ChangeStock"
 		unwrapped = union.ChangeStock
-	case *Event_CreateCart:
+	case *StoreEvent_CreateCart:
 		name = "CreateCart"
 		unwrapped = union.CreateCart
-	case *Event_CreateItem:
+	case *StoreEvent_CreateItem:
 		name = "CreateItem"
 		unwrapped = union.CreateItem
-	case *Event_CreateTag:
+	case *StoreEvent_CreateTag:
 		name = "CreateTag"
 		unwrapped = union.CreateTag
-	case *Event_NewKeyCard:
+	case *StoreEvent_NewKeyCard:
 		name = "NewKeyCard"
 		unwrapped = union.NewKeyCard
-	case *Event_StoreManifest:
+	case *StoreEvent_StoreManifest:
 		name = "StoreManifest"
 		unwrapped = union.StoreManifest
-	case *Event_UpdateItem:
+	case *StoreEvent_UpdateItem:
 		name = "UpdateItem"
 		unwrapped = union.UpdateItem
-	case *Event_UpdateStoreManifest:
+	case *StoreEvent_UpdateStoreManifest:
 		name = "UpdateStoreManifest"
 		unwrapped = union.UpdateStoreManifest
-	case *Event_UpdateTag:
+	case *StoreEvent_UpdateTag:
 		name = "UpdateTag"
 		unwrapped = union.UpdateTag
 	default:

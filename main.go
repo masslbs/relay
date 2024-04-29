@@ -257,7 +257,7 @@ type SyncStatusOp struct {
 type EventWriteOp struct {
 	sessionID       requestID
 	im              *EventWriteRequest
-	decodedStoreEvt *Event
+	decodedStoreEvt *StoreEvent
 	newStoreHash    []byte
 	eventSeq        uint64
 	err             *Error
@@ -754,12 +754,10 @@ func validateUpdateTag(_ uint, event *UpdateTag) *Error {
 			errs = append(errs, validateString(newName.NewName, "new_name", 32))
 		}
 	case UpdateTag_TAG_ACTION_DELETE_TAG:
-		// TODO: implement deletion
-		errs = append(errs, &Error{Code: invalidErrorCode, Message: "delete not yet supported"})
-		// _, ok := event.Value.(*UpdateTag_Delete)
-		// if !ok {
-		// 	errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid value type for delete"})
-		// }
+		_, ok := event.Value.(*UpdateTag_Delete)
+		if !ok {
+			errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid value type for delete"})
+		}
 	default:
 		errs = append(errs, &Error{Code: invalidErrorCode, Message: "Invalid action"})
 	}
@@ -800,7 +798,7 @@ func validateCartAbandoned(_ uint, event *CartAbandoned) *Error {
 }
 
 func (im *EventWriteRequest) validate(version uint) *Error {
-	var decodedEvt Event
+	var decodedEvt StoreEvent
 	if pberr := im.Event.UnmarshalTo(&decodedEvt); pberr != nil {
 		log("eventWriteRequest.validate: anypb unmarshal failed: %s", pberr.Error())
 		return &Error{Code: invalidErrorCode, Message: "invalid protobuf encoding"}
@@ -810,29 +808,29 @@ func (im *EventWriteRequest) validate(version uint) *Error {
 	}
 	var err *Error
 	switch union := decodedEvt.Union.(type) {
-	case *Event_StoreManifest:
+	case *StoreEvent_StoreManifest:
 		err = validateStoreManifest(version, union.StoreManifest)
-	case *Event_UpdateStoreManifest:
+	case *StoreEvent_UpdateStoreManifest:
 		err = validateUpdateStoreManifest(version, union.UpdateStoreManifest)
-	case *Event_CreateItem:
+	case *StoreEvent_CreateItem:
 		err = validateCreateItem(version, union.CreateItem)
-	case *Event_UpdateItem:
+	case *StoreEvent_UpdateItem:
 		err = validateUpdateItem(version, union.UpdateItem)
-	case *Event_CreateTag:
+	case *StoreEvent_CreateTag:
 		err = validateCreateTag(version, union.CreateTag)
-	case *Event_UpdateTag:
+	case *StoreEvent_UpdateTag:
 		err = validateUpdateTag(version, union.UpdateTag)
-	case *Event_ChangeStock:
+	case *StoreEvent_ChangeStock:
 		err = validateChangeStock(version, union.ChangeStock)
-	case *Event_CreateCart:
+	case *StoreEvent_CreateCart:
 		err = validateCreateCart(version, union.CreateCart)
-	case *Event_ChangeCart:
+	case *StoreEvent_ChangeCart:
 		err = validateChangeCart(version, union.ChangeCart)
-	case *Event_CartFinalized:
+	case *StoreEvent_CartFinalized:
 		err = &Error{Code: invalidErrorCode, Message: "CartFinalized is not allowed in EventWriteRequest"}
-	case *Event_CartAbandoned:
+	case *StoreEvent_CartAbandoned:
 		err = validateCartAbandoned(version, union.CartAbandoned)
-	case *Event_NewKeyCard:
+	case *StoreEvent_NewKeyCard:
 		err = &Error{Code: invalidErrorCode, Message: "NewKeyCard is not allowed in EventWriteRequest"}
 	default:
 		log("eventWriteRequest.validate: unrecognized event type: %T", decodedEvt.Union)
@@ -845,7 +843,7 @@ func (im *EventWriteRequest) validate(version uint) *Error {
 }
 
 func (im *EventWriteRequest) handle(sess *Session) {
-	var decodedEvt Event
+	var decodedEvt StoreEvent
 	if pberr := im.Event.UnmarshalTo(&decodedEvt); pberr != nil {
 		// TODO: somehow fix double decode
 		check(pberr)
@@ -1043,9 +1041,9 @@ type CachedStoreManifest struct {
 	acceptedErc20s map[common.Address]struct{}
 }
 
-func (current *CachedStoreManifest) update(union *Event, meta CachedMetadata) {
+func (current *CachedStoreManifest) update(union *StoreEvent, meta CachedMetadata) {
 	switch union.Union.(type) {
-	case *Event_StoreManifest:
+	case *StoreEvent_StoreManifest:
 		assert(!current.inited)
 		sm := union.GetStoreManifest()
 		current.CachedMetadata = meta
@@ -1054,7 +1052,7 @@ func (current *CachedStoreManifest) update(union *Event, meta CachedMetadata) {
 		current.publishedTagID = sm.PublishedTagId
 		current.acceptedErc20s = make(map[common.Address]struct{})
 		current.inited = true
-	case *Event_UpdateStoreManifest:
+	case *StoreEvent_UpdateStoreManifest:
 		um := union.GetUpdateStoreManifest()
 		if um.Field == UpdateStoreManifest_MANIFEST_FIELD_DOMAIN {
 			current.domain = um.Value.(*UpdateStoreManifest_String_).String_
@@ -1083,10 +1081,10 @@ type CachedItem struct {
 	metadata []byte
 }
 
-func (current *CachedItem) update(union *Event, meta CachedMetadata) {
+func (current *CachedItem) update(union *StoreEvent, meta CachedMetadata) {
 	var err error
 	switch union.Union.(type) {
-	case *Event_CreateItem:
+	case *StoreEvent_CreateItem:
 		assert(!current.inited)
 		ci := union.GetCreateItem()
 		current.CachedMetadata = meta
@@ -1095,7 +1093,7 @@ func (current *CachedItem) update(union *Event, meta CachedMetadata) {
 		check(err)
 		current.metadata = ci.Metadata
 		current.inited = true
-	case *Event_UpdateItem:
+	case *StoreEvent_UpdateItem:
 		ui := union.GetUpdateItem()
 		if ui.Field == UpdateItem_ITEM_FIELD_PRICE {
 			current.price, _, err = apd.NewFromString(ui.GetPrice())
@@ -1121,12 +1119,12 @@ type CachedTag struct {
 	items   *SetEventIds
 }
 
-func (current *CachedTag) update(evt *Event, meta CachedMetadata) {
+func (current *CachedTag) update(evt *StoreEvent, meta CachedMetadata) {
 	if current.items == nil && !current.inited {
 		current.items = NewSetEventIds()
 	}
 	switch evt.Union.(type) {
-	case *Event_CreateTag:
+	case *StoreEvent_CreateTag:
 		assert(!current.inited)
 		current.CachedMetadata = meta
 		ct := evt.GetCreateTag()
@@ -1134,7 +1132,7 @@ func (current *CachedTag) update(evt *Event, meta CachedMetadata) {
 		current.tagID = ct.EventId
 		current.inited = true
 
-	case *Event_UpdateTag:
+	case *StoreEvent_UpdateTag:
 		ut := evt.GetUpdateTag()
 		switch ut.Action {
 		case UpdateTag_TAG_ACTION_REMOVE_ITEM:
@@ -1170,32 +1168,32 @@ type CachedCart struct {
 	items  *MapEventIds[int32]
 }
 
-func (current *CachedCart) update(evt *Event, meta CachedMetadata) {
+func (current *CachedCart) update(evt *StoreEvent, meta CachedMetadata) {
 	if current.items == nil && !current.inited {
 		current.items = NewMapEventIds[int32]()
 	}
 	switch evt.Union.(type) {
-	case *Event_CreateCart:
+	case *StoreEvent_CreateCart:
 		assert(!current.inited)
 		ct := evt.GetCreateCart()
 		current.CachedMetadata = meta
 		current.cartID = ct.EventId
 		current.inited = true
-	case *Event_ChangeCart:
+	case *StoreEvent_ChangeCart:
 		atc := evt.GetChangeCart()
 		count := current.items.Get(atc.ItemId)
 		count += atc.Quantity
 		current.items.Set(atc.ItemId, count)
-	case *Event_CartFinalized:
+	case *StoreEvent_CartFinalized:
 		cf := evt.GetCartFinalized()
 		current.purchaseAddr = common.Address(cf.PurchaseAddr)
 		// TODO: other fields?
 		current.finalized = true
-	case *Event_ChangeStock:
+	case *StoreEvent_ChangeStock:
 		current.payed = true
 		cs := evt.GetChangeStock()
 		current.txHash = common.Hash(cs.TxHash)
-	case *Event_CartAbandoned:
+	case *StoreEvent_CartAbandoned:
 		current.abandoned = true
 	default:
 		panic(fmt.Sprintf("unhandled event type: %T", evt.Union))
@@ -1211,7 +1209,7 @@ type CachedStock struct {
 	inventory *MapEventIds[int32]
 }
 
-func (current *CachedStock) update(evt *Event, _ CachedMetadata) {
+func (current *CachedStock) update(evt *StoreEvent, _ CachedMetadata) {
 	cs := evt.GetChangeStock()
 	if cs == nil {
 		return
@@ -1231,7 +1229,7 @@ func (current *CachedStock) update(evt *Event, _ CachedMetadata) {
 // CachedEvent is the interface for all cached events
 type CachedEvent interface {
 	comparable
-	update(*Event, CachedMetadata)
+	update(*StoreEvent, CachedMetadata)
 }
 
 // SeqPair helps with writing events to the database
@@ -1293,25 +1291,25 @@ func newRelay(metric *Metric) *Relay {
 	r.ops = make(chan RelayOp, databaseOpsChanSize)
 	r.storeIdsToStoreSeqs = NewMapEventIds[*SeqPair]()
 
-	storeFieldFn := func(evt *Event, meta CachedMetadata) eventID {
+	storeFieldFn := func(evt *StoreEvent, meta CachedMetadata) eventID {
 		return meta.createdByStoreID
 	}
 	r.storeManifestsByStoreID = newReductionLoader[*CachedStoreManifest](r, storeFieldFn, []eventType{eventTypeStoreManifest, eventTypeUpdateStoreManifest}, "createdByStoreId")
-	itemsFieldFn := func(evt *Event, meta CachedMetadata) eventID {
+	itemsFieldFn := func(evt *StoreEvent, meta CachedMetadata) eventID {
 		switch evt.Union.(type) {
-		case *Event_CreateItem:
+		case *StoreEvent_CreateItem:
 			return evt.GetCreateItem().EventId
-		case *Event_UpdateItem:
+		case *StoreEvent_UpdateItem:
 			return evt.GetUpdateItem().ItemId
 		}
 		return nil
 	}
 	r.itemsByItemID = newReductionLoader[*CachedItem](r, itemsFieldFn, []eventType{eventTypeCreateItem, eventTypeUpdateItem}, "referenceId")
-	tagsFieldFn := func(evt *Event, meta CachedMetadata) eventID {
+	tagsFieldFn := func(evt *StoreEvent, meta CachedMetadata) eventID {
 		switch evt.Union.(type) {
-		case *Event_CreateTag:
+		case *StoreEvent_CreateTag:
 			return evt.GetCreateTag().EventId
-		case *Event_UpdateTag:
+		case *StoreEvent_UpdateTag:
 			return evt.GetUpdateTag().TagId
 		}
 		return nil
@@ -1321,20 +1319,20 @@ func newRelay(metric *Metric) *Relay {
 		eventTypeUpdateTag,
 	}, "referenceId")
 
-	cartsFieldFn := func(evt *Event, meta CachedMetadata) eventID {
+	cartsFieldFn := func(evt *StoreEvent, meta CachedMetadata) eventID {
 		switch evt.Union.(type) {
-		case *Event_CreateCart:
+		case *StoreEvent_CreateCart:
 			return evt.GetCreateCart().EventId
-		case *Event_ChangeCart:
+		case *StoreEvent_ChangeCart:
 			return evt.GetChangeCart().CartId
-		case *Event_CartFinalized:
+		case *StoreEvent_CartFinalized:
 			return evt.GetCartFinalized().CartId
-		case *Event_ChangeStock:
+		case *StoreEvent_ChangeStock:
 			cs := evt.GetChangeStock()
 			if len(cs.CartId) != 0 {
 				return cs.CartId
 			}
-		case *Event_CartAbandoned:
+		case *StoreEvent_CartAbandoned:
 			return evt.GetCartAbandoned().CartId
 		}
 		return nil
@@ -1574,7 +1572,7 @@ func (r *Relay) readEvents(whereFragment string, indexedIds []eventID) []EventIn
 			createdAt:               uint64(createdAt.Unix()),
 			serverSeq:               serverSeq,
 		}
-		var e Event
+		var e StoreEvent
 		err = proto.Unmarshal(encoded, &e)
 		check(err)
 		events = append(events, EventInsert{CachedMetadata: m, evt: &e})
@@ -1586,11 +1584,11 @@ func (r *Relay) readEvents(whereFragment string, indexedIds []eventID) []EventIn
 // EventInsert is a struct that represents an event to be inserted into the database
 type EventInsert struct {
 	CachedMetadata
-	evt   *Event
+	evt   *StoreEvent
 	pbany *anypb.Any
 }
 
-func newEventInsert(evt *Event, meta CachedMetadata, abstract *anypb.Any) *EventInsert {
+func newEventInsert(evt *StoreEvent, meta CachedMetadata, abstract *anypb.Any) *EventInsert {
 	meta.createdAt = uint64(now().Unix())
 	return &EventInsert{
 		CachedMetadata: meta,
@@ -1599,7 +1597,7 @@ func newEventInsert(evt *Event, meta CachedMetadata, abstract *anypb.Any) *Event
 	}
 }
 
-func (r *Relay) writeEvent(evt *Event, cm CachedMetadata, abstract *anypb.Any) {
+func (r *Relay) writeEvent(evt *StoreEvent, cm CachedMetadata, abstract *anypb.Any) {
 	assert(r.writesEnabled)
 
 	nextServerSeq := r.lastUsedServerSeq + 1
@@ -1647,57 +1645,58 @@ func formInsert(ins *EventInsert) []interface{} {
 		refID   *eventID // used to stich together related events
 	)
 	switch ins.evt.Union.(type) {
-	case *Event_StoreManifest:
+	case *StoreEvent_StoreManifest:
 		evtType = eventTypeStoreManifest
 		evtID = ins.evt.GetStoreManifest().EventId
-	case *Event_UpdateStoreManifest:
+	case *StoreEvent_UpdateStoreManifest:
 		evtType = eventTypeUpdateStoreManifest
 		evtID = ins.evt.GetUpdateStoreManifest().EventId
-	case *Event_CreateItem:
+	case *StoreEvent_CreateItem:
 		evtType = eventTypeCreateItem
 		evtID = ins.evt.GetCreateItem().EventId
 		refID = &evtID
-	case *Event_UpdateItem:
+	case *StoreEvent_UpdateItem:
 		evtType = eventTypeUpdateItem
 		ui := ins.evt.GetUpdateItem()
 		evtID = ui.EventId
 		refID = (*eventID)(&ui.ItemId)
-	case *Event_CreateTag:
+	case *StoreEvent_CreateTag:
 		evtType = eventTypeCreateTag
 		evtID = ins.evt.GetCreateTag().EventId
-	case *Event_UpdateTag:
+		refID = &evtID
+	case *StoreEvent_UpdateTag:
 		evtType = eventTypeUpdateTag
 		ut := ins.evt.GetUpdateTag()
 		evtID = ut.EventId
 		refID = (*eventID)(&ut.TagId)
-	case *Event_ChangeStock:
+	case *StoreEvent_ChangeStock:
 		evtType = eventTypeChangeStock
 		cs := ins.evt.GetChangeStock()
 		evtID = cs.EventId
 		if len(cs.CartId) > 0 {
 			refID = (*eventID)(&cs.CartId)
 		}
-	case *Event_CreateCart:
+	case *StoreEvent_CreateCart:
 		evtType = eventTypeCreateCart
 		cc := ins.evt.GetCreateCart()
 		evtID = cc.EventId
 		refID = &evtID
-	case *Event_ChangeCart:
+	case *StoreEvent_ChangeCart:
 		evtType = eventTypeChangeCart
 		cc := ins.evt.GetChangeCart()
 		evtID = cc.EventId
 		refID = (*eventID)(&cc.CartId)
-	case *Event_CartFinalized:
+	case *StoreEvent_CartFinalized:
 		evtType = eventTypeCartFinalized
 		cf := ins.evt.GetCartFinalized()
 		evtID = cf.EventId
 		refID = (*eventID)(&cf.CartId)
-	case *Event_CartAbandoned:
+	case *StoreEvent_CartAbandoned:
 		evtType = eventTypeCartAbandoned
 		ca := ins.evt.GetCartAbandoned()
 		evtID = ca.EventId
 		refID = (*eventID)(&ca.CartId)
-	case *Event_NewKeyCard:
+	case *StoreEvent_NewKeyCard:
 		evtType = eventTypeNewKeyCard
 		evtID = ins.evt.GetNewKeyCard().EventId
 	default:
@@ -1754,7 +1753,7 @@ type Loader interface {
 	applyEvent(*EventInsert)
 }
 
-type fieldFn func(*Event, CachedMetadata) eventID
+type fieldFn func(*StoreEvent, CachedMetadata) eventID
 
 // ReductionLoader is a struct that represents a loader for a specific event type
 type ReductionLoader[T CachedEvent] struct {
@@ -2145,14 +2144,14 @@ func (op *EventWriteOp) process(r *Relay) {
 	r.sendSessionOp(sessionState, op)
 }
 
-func (r *Relay) validateWrite(union *Event, m CachedMetadata, sess *SessionState) *Error {
+func (r *Relay) validateWrite(union *StoreEvent, m CachedMetadata, sess *SessionState) *Error {
 	switch tv := union.Union.(type) {
-	case *Event_StoreManifest:
+	case *StoreEvent_StoreManifest:
 		_, exists := r.storeManifestsByStoreID.get(m.createdByStoreID)
 		if exists {
 			return &Error{Code: invalidErrorCode, Message: "store already exists"}
 		}
-	case *Event_UpdateStoreManifest:
+	case *StoreEvent_UpdateStoreManifest:
 		_, exists := r.storeManifestsByStoreID.get(m.createdByStoreID)
 		if !exists {
 			return notFoundError
@@ -2207,13 +2206,13 @@ func (r *Relay) validateWrite(union *Event, m CachedMetadata, sess *SessionState
 			}
 
 		}
-	case *Event_CreateItem:
+	case *StoreEvent_CreateItem:
 		evt := union.GetCreateItem()
 		_, itemExists := r.itemsByItemID.get(evt.EventId)
 		if itemExists {
 			return &Error{Code: invalidErrorCode, Message: "item already exists"}
 		}
-	case *Event_UpdateItem:
+	case *StoreEvent_UpdateItem:
 		evt := union.GetUpdateItem()
 		item, itemExists := r.itemsByItemID.get(evt.ItemId)
 		if !itemExists {
@@ -2222,13 +2221,13 @@ func (r *Relay) validateWrite(union *Event, m CachedMetadata, sess *SessionState
 		if !item.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
 			return notFoundError
 		}
-	case *Event_CreateTag:
+	case *StoreEvent_CreateTag:
 		evt := union.GetCreateTag()
 		_, tagExists := r.tagsByTagID.get(evt.EventId)
 		if tagExists {
 			return &Error{Code: invalidErrorCode, Message: "tag already exists"}
 		}
-	case *Event_UpdateTag:
+	case *StoreEvent_UpdateTag:
 		evt := union.GetUpdateTag()
 		tag, tagExists := r.tagsByTagID.get(evt.TagId)
 		if !tagExists {
@@ -2257,7 +2256,7 @@ func (r *Relay) validateWrite(union *Event, m CachedMetadata, sess *SessionState
 		default:
 			panic(fmt.Errorf("eventWritesOp.validateWrite.unrecognizeType eventType=%T", union.Union))
 		}
-	case *Event_ChangeStock:
+	case *StoreEvent_ChangeStock:
 		evt := union.GetChangeStock()
 		for i := 0; i < len(evt.ItemIds); i++ {
 			itemID := evt.ItemIds[i]
@@ -2277,13 +2276,13 @@ func (r *Relay) validateWrite(union *Event, m CachedMetadata, sess *SessionState
 				}
 			}
 		}
-	case *Event_CreateCart:
+	case *StoreEvent_CreateCart:
 		evt := union.GetCreateCart()
 		_, cartExists := r.cartsByCartID.get(evt.EventId)
 		if cartExists {
 			return &Error{Code: invalidErrorCode, Message: "cart already exists"}
 		}
-	case *Event_ChangeCart:
+	case *StoreEvent_ChangeCart:
 		evt := union.GetChangeCart()
 		cart, cartExists := r.cartsByCartID.get(evt.CartId)
 		if !cartExists {
@@ -2315,7 +2314,7 @@ func (r *Relay) validateWrite(union *Event, m CachedMetadata, sess *SessionState
 		if evt.Quantity < 0 && inCart+evt.Quantity < 0 {
 			return &Error{Code: invalidErrorCode, Message: "not enough items in cart"}
 		}
-	case *Event_CartAbandoned:
+	case *StoreEvent_CartAbandoned:
 		evt := union.GetCartAbandoned()
 		cart, cartExists := r.cartsByCartID.get(evt.CartId)
 		if !cartExists {
@@ -2617,14 +2616,7 @@ func (op *CommitCartOp) process(r *Relay) {
 	}
 
 	cfMetadata := newMetadata(relayKeyCardID, sessionState.storeID, 1)
-	cfEvent := &Event{Union: &Event_CartFinalized{&cf}}
-	cfAny, err := anypb.New(cfEvent)
-	if err != nil {
-		logSR("relay.commitCartOp.anypb err=%s", sessionID, requestID, err)
-		op.err = &Error{Code: invalidErrorCode, Message: "interal server error"}
-		r.sendSessionOp(sessionState, op)
-		return
-	}
+	cfEvent := &StoreEvent{Union: &StoreEvent_CartFinalized{&cf}}
 
 	err = r.ethClient.eventSign(cfEvent)
 	if err != nil {
@@ -2633,11 +2625,19 @@ func (op *CommitCartOp) process(r *Relay) {
 		r.sendSessionOp(sessionState, op)
 		return
 	}
+
+	cfAny, err := anypb.New(cfEvent)
+	if err != nil {
+		logSR("relay.commitCartOp.anypb err=%s", sessionID, requestID, err)
+		op.err = &Error{Code: invalidErrorCode, Message: "interal server error"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
 	r.beginSyncTransaction()
 	r.writeEvent(cfEvent, cfMetadata, cfAny)
 
 	seqPair := r.storeIdsToStoreSeqs.MustGet(sessionState.storeID)
-	// TODO: we could join against events instead for some of these fields but let's not disrupt this now
 	const insertPaymentWaiterQuery = `insert into payments (waiterId, storeSeqNo, createdByStoreId, cartId, cartFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr)
 	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 	_, err = r.syncTx.Exec(ctx, insertPaymentWaiterQuery,
@@ -2716,8 +2716,8 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 
 	r.hydrateStores(NewSetEventIds(op.storeID))
 
-	evt := &Event{
-		Union: &Event_NewKeyCard{NewKeyCard: &NewKeyCard{
+	evt := &StoreEvent{
+		Union: &StoreEvent_NewKeyCard{NewKeyCard: &NewKeyCard{
 			EventId:        newEventID(),
 			CardPublicKey:  op.keyCardPublicKey,
 			UserWalletAddr: op.userWallet[:],
@@ -2776,7 +2776,7 @@ func (op *PaymentFoundInternalOp) process(r *Relay) {
 		i++
 	})
 
-	evt := &Event{Union: &Event_ChangeStock{ChangeStock: cs}}
+	evt := &StoreEvent{Union: &StoreEvent_ChangeStock{ChangeStock: cs}}
 
 	err = r.ethClient.eventSign(evt)
 	check(err) // fatal code error
@@ -2909,12 +2909,9 @@ order by storeSeq asc limit $4`
 				assert(eventState.storeSeq > sessionState.lastBufferedStoreSeq)
 				sessionState.lastBufferedStoreSeq = eventState.storeSeq
 
-				// var evt Event
-				// err = proto.Unmarshal(encoded, &evt)
-				// check(err)
-				// log("DEBUG: %x %d", evt.Signature, len(evt.Signature))
+				// TODO: would prever to not craft this manually
 				eventState.encodedEvent = &anypb.Any{
-					TypeUrl: "type.googleapis.com/market.mass.Event",
+					TypeUrl: "type.googleapis.com/market.mass.StoreEvent",
 					Value:   encoded,
 				}
 			}
