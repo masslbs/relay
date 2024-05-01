@@ -125,7 +125,7 @@ func (evt *UpdateOrder) typedDataMap() map[string]any {
 			"total_in_crypto": fin.TotalInCrypto,
 		}
 		if len(fin.Erc20Addr) == 20 {
-			m["erc20_addr"] = fin.Erc20Addr
+			finMap["erc20_addr"] = fin.Erc20Addr
 		}
 		m["items_finalized"] = finMap
 	case *UpdateOrder_OrderCanceled_:

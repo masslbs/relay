@@ -104,7 +104,6 @@ func newEthClient() *ethClient {
 	c.wallet = crypto.PubkeyToAddress(*publicKeyECDSA)
 	log("ethClient.newEthClient wallet=%s", c.wallet.Hex())
 	has := c.hasBalance(ctx, c.wallet)
-	// assert(has)
 	_ = has
 
 	addrData, err := genContractAddresses.ReadFile("gen_contract_addresses.json")
@@ -112,16 +111,8 @@ func newEthClient() *ethClient {
 	err = json.Unmarshal(addrData, &c.contractAddresses)
 	check(err)
 
-	// c.stores, err = NewRegStore(c.contractAddresses.StoreRegistry, c.Client)
-	// check(err)
 	log("ethClient.newEthClient storeRegAddr=%s", c.contractAddresses.StoreRegistry.Hex())
-
-	// c.relays, err = NewRegRelay(c.contractAddresses.RelayRegistry, c.Client)
-	// check(err)
 	log("ethClient.newEthClient relayRegAddr=%s", c.contractAddresses.RelayRegistry.Hex())
-
-	// c.paymentFactory, err = NewPaymentFactory(c.contractAddresses.PaymentFactory, c.Client)
-	// check(err)
 	log("ethClient.newEthClient paymentFactoryAddr=%s", c.contractAddresses.PaymentFactory.Hex())
 
 	c.erc20ContractABI, err = abi.JSON(strings.NewReader(ERC20MetaData.ABI))
@@ -132,11 +123,6 @@ func newEthClient() *ethClient {
 		From:    c.wallet,
 		Context: ctx,
 	}
-
-	// var h [32]byte
-	// addr, err := c.paymentFactory.GetPaymentAddress(callOpts, c.wallet, c.wallet, big.NewInt(123), common.Address{}, h)
-	// check(err)
-	// log("ethClient.testing PaymentAddress=%s", addr.Hex())
 
 	// register a new nft for the relay
 	relaysReg, gethc, err := c.newRelayReg(ctx)

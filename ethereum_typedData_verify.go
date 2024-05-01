@@ -10,6 +10,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"strings"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -120,21 +122,19 @@ func (c ethClient) verifyKeyCardEnroll(keyCardPublicKey, signature []byte) (comm
 	return recoveredAddress, nil
 }
 
-func findEventType(t apitypes.Types) (string, bool) {
-	for _, k := range t["MassEvent"] {
-		if k.Name == "event" {
-			return k.Type, true
-		}
-	}
-	return "", false
-}
-
 type typedDataMaper interface {
 	typedDataMap() map[string]any
 }
 
 //go:embed gen_network_typedData.json
 var genNetworkTypedData embed.FS
+
+type typedDataFieldDefinition struct {
+	apitypes.Type
+	Message []apitypes.Type
+}
+
+var eventNestedTypes = make(apitypes.Types)
 
 var eventToTypedData = make(apitypes.Types)
 
@@ -144,8 +144,29 @@ func parseEventToTypedData() {
 	// check if we can parse the network-schema data into the apitypes struct
 	data, err := genNetworkTypedData.ReadFile("gen_network_typedData.json")
 	check(err)
-	err = json.Unmarshal(data, &eventToTypedData)
+
+	var allTheData map[string][]typedDataFieldDefinition
+	err = json.Unmarshal(data, &allTheData)
 	check(err)
+
+	var cleanedUp = make(apitypes.Types)
+
+	for typeName, fields := range allTheData {
+		var prunedFields []apitypes.Type
+
+		for _, field := range fields {
+
+			if len(field.Message) > 0 {
+				eventNestedTypes[field.Name] = field.Message
+			} else {
+				prunedFields = append(prunedFields, field.Type)
+			}
+		}
+
+		cleanedUp[typeName] = prunedFields
+	}
+
+	eventToTypedData = cleanedUp
 }
 
 func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
@@ -156,6 +177,10 @@ func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
 	tdTypeSpec, ok := eventToTypedData[typeName]
 	if !ok {
 		return nil, fmt.Errorf("Event.hash: no typed data specification for %s", typeName)
+	}
+
+	var types = map[string][]apitypes.Type{
+		"EIP712Domain": eip712spec,
 	}
 
 	var usedTypeSpec []apitypes.Type
@@ -218,24 +243,29 @@ func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
 		delete(message, "order_id")
 		delete(message, "tx_hash")
 	} else if uo := evt.GetUpdateOrder(); uo != nil {
-		// TODO: add other types
+		usedTypeSpec = tdTypeSpec
+
+		actionFieldName := uo.schemaFieldName()
+		actionFieldSpec := eventNestedTypes[actionFieldName]
+
 		fin, ok := uo.Action.(*UpdateOrder_ItemsFinalized_)
 		if ok && len(fin.ItemsFinalized.Erc20Addr) == 0 {
 			// splice out erc20_addr
-			usedTypeSpec = make([]apitypes.Type, len(tdTypeSpec)-1)
-			copy(usedTypeSpec[:3], tdTypeSpec[:3])
-			copy(usedTypeSpec[3:], tdTypeSpec[4:])
-			delete(message, "erc20_addr")
+			copiedSpec := make([]apitypes.Type, len(actionFieldSpec)-1)
+			copiedSpec[0] = actionFieldSpec[0]
+			copy(copiedSpec[1:], actionFieldSpec[2:])
+			actionFieldSpec = copiedSpec
 		}
+		types[actionFieldName] = actionFieldSpec
+		usedTypeSpec = append(usedTypeSpec, apitypes.Type{Name: actionFieldName, Type: actionFieldName})
 	} else {
 		usedTypeSpec = tdTypeSpec
 	}
 
+	types[typeName] = usedTypeSpec
+
 	typedData := apitypes.TypedData{
-		Types: map[string][]apitypes.Type{
-			"EIP712Domain": eip712spec,
-			typeName:       usedTypeSpec,
-		},
+		Types:       types,
 		PrimaryType: typeName,
 		Domain: apitypes.TypedDataDomain{
 			Name:              "MassMarket",
@@ -249,14 +279,30 @@ func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
 	// EIP-712 typed data marshalling
 	sighash, _, err := apitypes.TypedDataAndHash(typedData)
 	if err != nil {
-		fmt.Printf("M:  %+v\n", message)
-		fmt.Printf("used: %+v\n", usedTypeSpec)
-		fmt.Printf("total: %+v\n", tdTypeSpec)
+		/*
+			fmt.Printf("M:  %+v\n", message)
+			spew.Dump(message)
+			fmt.Printf("types: %+v\n", types)
+		*/
 		return nil, fmt.Errorf("Event.hash: TypedDataAndHash error: %w", err)
 	}
 
-	log("Event.hash eventId=%x hash=%x", message["event_id"], sighash)
+	//log("Event.hash eventId=%x hash=%x", message["event_id"], sighash)
 	return sighash, nil
+}
+
+// TODO: codegen this mapping. parsing the struct tag every time is hideous
+func (uo UpdateOrder) schemaFieldName() string {
+	rt := reflect.TypeOf(uo.Action).Elem()
+	tag := rt.Field(0).Tag
+	pbtag := tag.Get("protobuf")
+	for _, val := range strings.Split(pbtag, ",") {
+		if strings.HasPrefix(val, "name=") {
+			fn := val[5:]
+			return fn
+		}
+	}
+	panic("unreachable")
 }
 
 func (c ethClient) eventVerify(evt *StoreEvent, publicKey []byte) error {
