@@ -2,7 +2,7 @@
 --
 -- SPDX-License-Identifier: GPL-3.0-or-later
 
-create type eventTypeEnum as enum ('storeManifest', 'updateStoreManifest', 'createItem', 'updateItem', 'createTag', 'updateTag', 'createCart', 'changeCart', 'cartFinalized', 'cartAbandoned', 'changeStock', 'newKeyCard');
+create type eventTypeEnum as enum ('storeManifest', 'updateStoreManifest', 'createItem', 'updateItem', 'createTag', 'updateTag', 'createOrder', 'updateOrder', 'changeStock', 'newKeyCard');
 
 create table stores (
     id bytea primary key not null,
@@ -53,13 +53,9 @@ alter table events add constraint eventsCheckReferenceIdForCreateTag check (
 alter table events add constraint eventsCheckReferenceIdForUpdateTag check (
     eventType != 'updateTag' OR (referenceId is not null AND octet_length(referenceId) = 32));
 alter table events add constraint eventsCheckReferenceIdForCreateCart check (
-    eventType != 'createCart' OR (referenceId is not null AND octet_length(referenceId) = 32));
+    eventType != 'createOrder' OR (referenceId is not null AND octet_length(referenceId) = 32));
 alter table events add constraint eventsCheckReferenceIdForChangeCart check (
-    eventType != 'changeCart' OR (referenceId is not null AND octet_length(referenceId) = 32));
-alter table events add constraint eventsCheckReferenceIdForCartFinalized check (
-    eventType != 'cartFinalized' OR (referenceId is not null AND octet_length(referenceId) = 32));
-alter table events add constraint eventsCheckReferenceIdForCartAbandoned check (
-    eventType != 'cartAbandoned' OR (referenceId is not null AND octet_length(referenceId) = 32));
+    eventType != 'updateOrder' OR (referenceId is not null AND octet_length(referenceId) = 32));
 
 
 -- Indicies that apply to all events.
@@ -69,23 +65,23 @@ create unique index eventsOnStoreSeq on events(createdByStoreId, storeSeq);
 
 CREATE TABLE payments (
     waiterId         bytea PRIMARY KEY NOT NULL,
-    cartId           bytea NOT NULL,
+    orderId          bytea NOT NULL,
     createdByStoreId bytea NOT NULL,
-    storeSeqNo       bigint not null, -- the seqNo of store when the cart was finalized
-    cartFinalizedAt  TIMESTAMP NOT NULL,
+    storeSeqNo       bigint not null, -- the seqNo of store when the order was finalized
+    orderFinalizedAt  TIMESTAMP NOT NULL,
     purchaseAddr     bytea NOT NULL,
     lastBlockNo      NUMERIC(80,0) NOT NULL,
     coinsPayed       NUMERIC(80,0) NOT NULL,
     coinsTotal       NUMERIC(80,0) NOT NULL,
-    -- (optional) set if the cart is payed with an erc20 token
+    -- (optional) set if the order is payed with an erc20 token
     erc20TokenAddr   bytea,
     -- set once payed
-    cartPayedAt     TIMESTAMP,
-    cartPayedTx     bytea
+    orderPayedAt     TIMESTAMP,
+    orderPayedTx     bytea
 );
 
 alter table payments add constraint erc20TokenAddrCheck check (erc20TokenAddr is null or octet_length(erc20TokenAddr) = 20);
 
-CREATE UNIQUE INDEX paymentsCartId ON payments (cartId);
-CREATE INDEX paymentsCartFinalizedAt ON payments (cartFinalizedAt);
-CREATE INDEX paymentsCartPayedAt ON payments (cartPayedAt);
+CREATE UNIQUE INDEX paymentsOrderId ON payments (orderId);
+CREATE INDEX paymentsOrderFinalizedAt ON payments (orderFinalizedAt);
+CREATE INDEX paymentsOrderPayedAt ON payments (orderPayedAt);

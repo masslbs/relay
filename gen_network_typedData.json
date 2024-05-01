@@ -111,72 +111,71 @@
       "type": "bool"
     }
   ],
-  "CreateCart": [
+  "CreateOrder": [
     {
       "name": "event_id",
       "type": "bytes32"
     }
   ],
-  "ChangeCart": [
+  "UpdateOrder": [
     {
       "name": "event_id",
       "type": "bytes32"
     },
     {
-      "name": "cart_id",
+      "name": "order_id",
       "type": "bytes32"
     },
     {
-      "name": "item_id",
-      "type": "bytes32"
+      "name": "change_items",
+      "message": [
+        {
+          "name": "item_id",
+          "type": "bytes32"
+        },
+        {
+          "name": "quantity",
+          "type": "int32"
+        }
+      ]
     },
     {
-      "name": "quantity",
-      "type": "int32"
-    }
-  ],
-  "CartFinalized": [
-    {
-      "name": "event_id",
-      "type": "bytes32"
+      "name": "items_finalized",
+      "message": [
+        {
+          "name": "purchase_addr",
+          "type": "address"
+        },
+        {
+          "name": "erc20_addr",
+          "type": "address"
+        },
+        {
+          "name": "sub_total",
+          "type": "string"
+        },
+        {
+          "name": "sales_tax",
+          "type": "string"
+        },
+        {
+          "name": "total",
+          "type": "string"
+        },
+        {
+          "name": "total_in_crypto",
+          "type": "string"
+        }
+      ]
     },
     {
-      "name": "cart_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "purchase_addr",
-      "type": "address"
-    },
-    {
-      "name": "erc20_addr",
-      "type": "address"
-    },
-    {
-      "name": "sub_total",
-      "type": "string"
-    },
-    {
-      "name": "sales_tax",
-      "type": "string"
-    },
-    {
-      "name": "total",
-      "type": "string"
-    },
-    {
-      "name": "total_in_crypto",
-      "type": "string"
-    }
-  ],
-  "CartAbandoned": [
-    {
-      "name": "event_id",
-      "type": "bytes32"
-    },
-    {
-      "name": "cart_id",
-      "type": "bytes32"
+      "name": "order_canceled",
+      "message": [
+        {
+          "name": "timestamp",
+          "type": "uint64"
+        }
+      ]
     }
   ],
   "ChangeStock": [
@@ -193,7 +192,7 @@
       "type": "int32[]"
     },
     {
-      "name": "cart_id",
+      "name": "order_id",
       "type": "bytes32"
     },
     {

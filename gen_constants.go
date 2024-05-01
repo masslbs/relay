@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from network-schema. Files: constants.txt at version v2 (2e3d27ecfc5a19681af710e2ec288709139e19bc)
+// Generated from network-schema. Files: constants.txt at version v2 (b16798f77d65153596d1932a06753cccae4bbc1e)
 //lint:file-ignore U1000 Ignore all unused code, it's generated
 
 package main
@@ -29,10 +29,8 @@ const (
 	eventTypeUpdateItem          eventType = "updateItem"
 	eventTypeCreateTag           eventType = "createTag"
 	eventTypeUpdateTag           eventType = "updateTag"
-	eventTypeCreateCart          eventType = "createCart"
-	eventTypeChangeCart          eventType = "changeCart"
-	eventTypeCartFinalized       eventType = "cartFinalized"
-	eventTypeCartAbandoned       eventType = "cartAbandoned"
+	eventTypeCreateOrder         eventType = "createOrder"
+	eventTypeUpdateOrder         eventType = "updateOrder"
 	eventTypeChangeStock         eventType = "changeStock"
 	eventTypeNewKeyCard          eventType = "newKeyCard"
 )

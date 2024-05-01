@@ -97,42 +97,46 @@ func (evt *UpdateTag) typedDataMap() map[string]any {
 	return m
 }
 
-func (evt *CreateCart) typedDataMap() map[string]any {
+func (evt *CreateOrder) typedDataMap() map[string]any {
 	return map[string]any{
 		"event_id": evt.EventId,
 	}
 }
 
-func (evt *ChangeCart) typedDataMap() map[string]any {
-	return map[string]any{
-		"event_id": evt.EventId,
-		"cart_id":  evt.CartId,
-		"item_id":  evt.ItemId,
-		"quantity": big.NewInt(int64(evt.Quantity)),
-	}
-}
-
-func (evt *CartFinalized) typedDataMap() map[string]any {
+func (evt *UpdateOrder) typedDataMap() map[string]any {
 	m := map[string]any{
-		"event_id":        evt.EventId,
-		"cart_id":         evt.CartId,
-		"purchase_addr":   evt.PurchaseAddr,
-		"sub_total":       evt.SubTotal,
-		"sales_tax":       evt.SalesTax,
-		"total":           evt.Total,
-		"total_in_crypto": evt.TotalInCrypto,
+		"event_id": evt.EventId,
+		"order_id": evt.OrderId,
 	}
-	if len(evt.Erc20Addr) == 20 {
-		m["erc20_addr"] = evt.Erc20Addr
+	switch tv := evt.Action.(type) {
+	case *UpdateOrder_ChangeItems_:
+		ci := tv.ChangeItems
+		m["change_items"] = map[string]any{
+			"item_id":  ci.ItemId,
+			"quantity": big.NewInt(int64(ci.Quantity)),
+		}
+	case *UpdateOrder_ItemsFinalized_:
+		fin := tv.ItemsFinalized
+		finMap := map[string]any{
+			"purchase_addr":   fin.PurchaseAddr,
+			"sub_total":       fin.SubTotal,
+			"sales_tax":       fin.SalesTax,
+			"total":           fin.Total,
+			"total_in_crypto": fin.TotalInCrypto,
+		}
+		if len(fin.Erc20Addr) == 20 {
+			m["erc20_addr"] = fin.Erc20Addr
+		}
+		m["items_finalized"] = finMap
+	case *UpdateOrder_OrderCanceled_:
+		oc := tv.OrderCanceled
+		m["order_canceled"] = map[string]any{
+			"timestamp": big.NewInt(int64(oc.Timestamp)),
+		}
+	default:
+		panic(fmt.Sprintf("unknown action: %v", evt.Action))
 	}
 	return m
-}
-
-func (evt *CartAbandoned) typedDataMap() map[string]any {
-	return map[string]any{
-		"event_id": evt.EventId,
-		"cart_id":  evt.CartId,
-	}
 }
 
 func (evt *ChangeStock) typedDataMap() map[string]any {
@@ -142,7 +146,7 @@ func (evt *ChangeStock) typedDataMap() map[string]any {
 	}
 	return map[string]any{
 		"event_id": evt.EventId,
-		"cart_id":  evt.CartId,
+		"order_id": evt.OrderId,
 		"tx_hash":  evt.TxHash,
 		"item_ids": evt.ItemIds,
 		"diffs":    bigDiffs,

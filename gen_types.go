@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from massmarket-network-schema:network/encoding.txt at network v2 (2e3d27ecfc5a19681af710e2ec288709139e19bc)
+// Generated from massmarket-network-schema:network/encoding.txt at network v2 (b16798f77d65153596d1932a06753cccae4bbc1e)
 //lint:file-ignore U1000 Ignore all unused code, it's generated
 
 package main
@@ -205,29 +205,29 @@ func (r *GetBlobUploadURLResponse) getError() *Error {
 	return r.Error
 }
 
-const typeCommitCartRequest = 32
+const typeCommitItemsToOrderRequest = 32
 
 func init() {
-	networkMessage(32, CommitCartRequest{})
+	networkMessage(32, CommitItemsToOrderRequest{})
 }
-func (r *CommitCartRequest) getRequestID() requestID {
+func (r *CommitItemsToOrderRequest) getRequestID() requestID {
 	return r.RequestId
 }
 
-func (r *CommitCartRequest) response(err *Error) Message {
-	return &CommitCartResponse{RequestId: r.RequestId, Error: err}
+func (r *CommitItemsToOrderRequest) response(err *Error) Message {
+	return &CommitItemsToOrderResponse{RequestId: r.RequestId, Error: err}
 }
 
-const typeCommitCartResponse = 33
+const typeCommitItemsToOrderResponse = 33
 
 func init() {
-	networkMessage(33, CommitCartResponse{})
+	networkMessage(33, CommitItemsToOrderResponse{})
 }
-func (r *CommitCartResponse) getRequestID() requestID {
+func (r *CommitItemsToOrderResponse) getRequestID() requestID {
 	return r.RequestId
 }
 
-func (r *CommitCartResponse) getError() *Error {
+func (r *CommitItemsToOrderResponse) getError() *Error {
 	return r.Error
 }
 
@@ -287,10 +287,10 @@ func (op *EventPushOp) setErr(err *Error) {
 	op.err = err
 }
 
-func (op *CommitCartOp) getSessionID() requestID {
+func (op *CommitItemsToOrderOp) getSessionID() requestID {
 	return op.sessionID
 }
-func (op *CommitCartOp) setErr(err *Error) {
+func (op *CommitItemsToOrderOp) setErr(err *Error) {
 	op.err = err
 }
 

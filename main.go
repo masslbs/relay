@@ -270,13 +270,13 @@ type EventPushOp struct {
 	err         *Error
 }
 
-// CommitCartOp finalizes an open cart by processing a CommitCartRequest.
+// CommitOrderOp finalizes an open order by processing a CommitOrderRequest.
 // As a result, the relay will wait for the incoming transaction before creating a ChangeStock event.
-type CommitCartOp struct {
-	sessionID       requestID
-	im              *CommitCartRequest
-	cartFinalizedID eventID
-	err             *Error
+type CommitItemsToOrderOp struct {
+	sessionID        requestID
+	im               *CommitItemsToOrderRequest
+	orderFinalizedID eventID
+	err              *Error
 }
 
 // GetBlobUploadURLOp processes a GetBlobUploadURLRequest from the client
@@ -298,10 +298,10 @@ type KeyCardEnrolledInternalOp struct {
 }
 
 type PaymentFoundInternalOp struct {
-	cartID eventID
-	txHash common.Hash
+	orderID eventID
+	txHash  common.Hash
 
-	// transaction, cartID, etc.
+	// transaction, orderID, etc.
 
 	done chan struct{}
 }
@@ -765,8 +765,8 @@ func validateUpdateTag(_ uint, event *UpdateTag) *Error {
 }
 
 func validateChangeStock(_ uint, event *ChangeStock) *Error {
-	if len(event.CartId) != 0 {
-		return &Error{Code: invalidErrorCode, Message: "CartId must be empty"}
+	if len(event.OrderId) != 0 {
+		return &Error{Code: invalidErrorCode, Message: "OrderId must be empty"}
 	}
 	if len(event.ItemIds) != len(event.Diffs) {
 		return &Error{Code: invalidErrorCode, Message: "ItemId and Diff must have the same length"}
@@ -779,22 +779,41 @@ func validateChangeStock(_ uint, event *ChangeStock) *Error {
 	return nil
 }
 
-func validateCreateCart(_ uint, event *CreateCart) *Error {
+func validateCreateOrder(_ uint, event *CreateOrder) *Error {
 	return coalesce(
 		validateEventID(event.EventId, "event_id"),
 	)
 }
 
-func validateChangeCart(_ uint, event *ChangeCart) *Error {
-	return coalesce(
+func validateUpdateOrder(_ uint, event *UpdateOrder) *Error {
+	errs := []*Error{
 		validateEventID(event.EventId, "event_id"),
-		validateEventID(event.CartId, "cart_id"),
+		validateEventID(event.OrderId, "order_id"),
+	}
+	switch tv := event.Action.(type) {
+	case *UpdateOrder_ChangeItems_:
+		errs = append(errs, validateChangeItems(2, tv.ChangeItems))
+	case *UpdateOrder_ItemsFinalized_:
+		errs = append(errs, &Error{Code: invalidErrorCode, Message: "OrderFinalized is not allowed in EventWriteRequest"})
+	case *UpdateOrder_OrderCanceled_:
+		errs = append(errs, validateOrderCanceled(2, tv.OrderCanceled))
+	default:
+		panic(fmt.Sprintf("Unhandled action type: %T", tv))
+	}
+	return coalesce(errs...)
+}
+
+func validateChangeItems(_ uint, event *UpdateOrder_ChangeItems) *Error {
+	return coalesce(
 		validateEventID(event.ItemId, "item_id"),
 	)
 }
 
-func validateCartAbandoned(_ uint, event *CartAbandoned) *Error {
-	return validateEventID(event.CartId, "cart_id")
+func validateOrderCanceled(_ uint, event *UpdateOrder_OrderCanceled) *Error {
+	if event.Timestamp == 0 {
+		return &Error{Code: invalidErrorCode, Message: "timestamp can't be 0"}
+	}
+	return nil
 }
 
 func (im *EventWriteRequest) validate(version uint) *Error {
@@ -822,14 +841,10 @@ func (im *EventWriteRequest) validate(version uint) *Error {
 		err = validateUpdateTag(version, union.UpdateTag)
 	case *StoreEvent_ChangeStock:
 		err = validateChangeStock(version, union.ChangeStock)
-	case *StoreEvent_CreateCart:
-		err = validateCreateCart(version, union.CreateCart)
-	case *StoreEvent_ChangeCart:
-		err = validateChangeCart(version, union.ChangeCart)
-	case *StoreEvent_CartFinalized:
-		err = &Error{Code: invalidErrorCode, Message: "CartFinalized is not allowed in EventWriteRequest"}
-	case *StoreEvent_CartAbandoned:
-		err = validateCartAbandoned(version, union.CartAbandoned)
+	case *StoreEvent_CreateOrder:
+		err = validateCreateOrder(version, union.CreateOrder)
+	case *StoreEvent_UpdateOrder:
+		err = validateUpdateOrder(version, union.UpdateOrder)
 	case *StoreEvent_NewKeyCard:
 		err = &Error{Code: invalidErrorCode, Message: "NewKeyCard is not allowed in EventWriteRequest"}
 	default:
@@ -861,19 +876,19 @@ func (op *EventWriteOp) handle(sess *Session) {
 	sess.writeMessage(om)
 }
 
-func (im *CommitCartRequest) validate(_ uint) *Error {
-	return validateEventID(im.CartId, "cart_id")
+func (im *CommitItemsToOrderRequest) validate(_ uint) *Error {
+	return validateEventID(im.OrderId, "order_id")
 }
 
-func (im *CommitCartRequest) handle(sess *Session) {
-	op := &CommitCartOp{sessionID: sess.id, im: im}
+func (im *CommitItemsToOrderRequest) handle(sess *Session) {
+	op := &CommitItemsToOrderOp{sessionID: sess.id, im: im}
 	sess.sendDatabaseOp(op)
 }
 
-func (op *CommitCartOp) handle(sess *Session) {
-	om := op.im.response(op.err).(*CommitCartResponse)
+func (op *CommitItemsToOrderOp) handle(sess *Session) {
+	om := op.im.response(op.err).(*CommitItemsToOrderResponse)
 	if op.err == nil {
-		om.CartFinalizedId = op.cartFinalizedID
+		om.OrderFinalizedId = op.orderFinalizedID
 	}
 	sess.writeMessage(om)
 }
@@ -1151,9 +1166,9 @@ func (current *CachedTag) update(evt *StoreEvent, meta CachedMetadata) {
 	}
 }
 
-// CachedCart is the latest reduction of a Cart.
-// It combines the initial CreateCart and all ChangeCart events
-type CachedCart struct {
+// CachedOrder is the latest reduction of a Order.
+// It combines the initial CreateOrder and all ChangeOrder events
+type CachedOrder struct {
 	CachedMetadata
 	inited    bool
 	finalized bool
@@ -1164,37 +1179,43 @@ type CachedCart struct {
 
 	txHash common.Hash
 
-	cartID eventID
-	items  *MapEventIds[int32]
+	orderID eventID
+	items   *MapEventIds[int32]
 }
 
-func (current *CachedCart) update(evt *StoreEvent, meta CachedMetadata) {
+func (current *CachedOrder) update(evt *StoreEvent, meta CachedMetadata) {
 	if current.items == nil && !current.inited {
 		current.items = NewMapEventIds[int32]()
 	}
 	switch evt.Union.(type) {
-	case *StoreEvent_CreateCart:
+	case *StoreEvent_CreateOrder:
 		assert(!current.inited)
-		ct := evt.GetCreateCart()
+		ct := evt.GetCreateOrder()
 		current.CachedMetadata = meta
-		current.cartID = ct.EventId
+		current.orderID = ct.EventId
 		current.inited = true
-	case *StoreEvent_ChangeCart:
-		atc := evt.GetChangeCart()
-		count := current.items.Get(atc.ItemId)
-		count += atc.Quantity
-		current.items.Set(atc.ItemId, count)
-	case *StoreEvent_CartFinalized:
-		cf := evt.GetCartFinalized()
-		current.purchaseAddr = common.Address(cf.PurchaseAddr)
-		// TODO: other fields?
-		current.finalized = true
+	case *StoreEvent_UpdateOrder:
+		uo := evt.GetUpdateOrder()
+		switch tv := uo.Action.(type) {
+		case *UpdateOrder_ChangeItems_:
+			change := tv.ChangeItems
+			count := current.items.Get(change.ItemId)
+			count += change.Quantity
+			current.items.Set(change.ItemId, count)
+		case *UpdateOrder_ItemsFinalized_:
+			fin := tv.ItemsFinalized
+			current.purchaseAddr = common.Address(fin.PurchaseAddr)
+			current.finalized = true
+		case *UpdateOrder_OrderCanceled_:
+			current.abandoned = true
+
+		default:
+			panic(fmt.Sprintf("unhandled event type: %T", evt.Union))
+		}
 	case *StoreEvent_ChangeStock:
 		current.payed = true
 		cs := evt.GetChangeStock()
 		current.txHash = common.Hash(cs.TxHash)
-	case *StoreEvent_CartAbandoned:
-		current.abandoned = true
 	default:
 		panic(fmt.Sprintf("unhandled event type: %T", evt.Union))
 
@@ -1270,7 +1291,7 @@ type Relay struct {
 	storeManifestsByStoreID *ReductionLoader[*CachedStoreManifest]
 	itemsByItemID           *ReductionLoader[*CachedItem]
 	tagsByTagID             *ReductionLoader[*CachedTag]
-	cartsByCartID           *ReductionLoader[*CachedCart]
+	ordersByOrderID         *ReductionLoader[*CachedOrder]
 	stockByStoreID          *ReductionLoader[*CachedStock]
 	allLoaders              []Loader
 }
@@ -1319,30 +1340,24 @@ func newRelay(metric *Metric) *Relay {
 		eventTypeUpdateTag,
 	}, "referenceId")
 
-	cartsFieldFn := func(evt *StoreEvent, meta CachedMetadata) eventID {
+	ordersFieldFn := func(evt *StoreEvent, meta CachedMetadata) eventID {
 		switch evt.Union.(type) {
-		case *StoreEvent_CreateCart:
-			return evt.GetCreateCart().EventId
-		case *StoreEvent_ChangeCart:
-			return evt.GetChangeCart().CartId
-		case *StoreEvent_CartFinalized:
-			return evt.GetCartFinalized().CartId
+		case *StoreEvent_CreateOrder:
+			return evt.GetCreateOrder().EventId
+		case *StoreEvent_UpdateOrder:
+			return evt.GetUpdateOrder().OrderId
 		case *StoreEvent_ChangeStock:
 			cs := evt.GetChangeStock()
-			if len(cs.CartId) != 0 {
-				return cs.CartId
+			if len(cs.OrderId) != 0 {
+				return cs.OrderId
 			}
-		case *StoreEvent_CartAbandoned:
-			return evt.GetCartAbandoned().CartId
 		}
 		return nil
 	}
-	r.cartsByCartID = newReductionLoader[*CachedCart](r, cartsFieldFn, []eventType{
-		eventTypeCreateCart,
-		eventTypeChangeCart,
-		eventTypeCartFinalized,
+	r.ordersByOrderID = newReductionLoader[*CachedOrder](r, ordersFieldFn, []eventType{
+		eventTypeCreateOrder,
+		eventTypeUpdateOrder,
 		eventTypeChangeStock,
-		eventTypeCartAbandoned,
 	}, "referenceId")
 
 	r.stockByStoreID = newReductionLoader[*CachedStock](r, storeFieldFn, []eventType{eventTypeChangeStock}, "createdByStoreId")
@@ -1673,29 +1688,19 @@ func formInsert(ins *EventInsert) []interface{} {
 		evtType = eventTypeChangeStock
 		cs := ins.evt.GetChangeStock()
 		evtID = cs.EventId
-		if len(cs.CartId) > 0 {
-			refID = (*eventID)(&cs.CartId)
+		if len(cs.OrderId) > 0 {
+			refID = (*eventID)(&cs.OrderId)
 		}
-	case *StoreEvent_CreateCart:
-		evtType = eventTypeCreateCart
-		cc := ins.evt.GetCreateCart()
+	case *StoreEvent_CreateOrder:
+		evtType = eventTypeCreateOrder
+		cc := ins.evt.GetCreateOrder()
 		evtID = cc.EventId
 		refID = &evtID
-	case *StoreEvent_ChangeCart:
-		evtType = eventTypeChangeCart
-		cc := ins.evt.GetChangeCart()
-		evtID = cc.EventId
-		refID = (*eventID)(&cc.CartId)
-	case *StoreEvent_CartFinalized:
-		evtType = eventTypeCartFinalized
-		cf := ins.evt.GetCartFinalized()
-		evtID = cf.EventId
-		refID = (*eventID)(&cf.CartId)
-	case *StoreEvent_CartAbandoned:
-		evtType = eventTypeCartAbandoned
-		ca := ins.evt.GetCartAbandoned()
-		evtID = ca.EventId
-		refID = (*eventID)(&ca.CartId)
+	case *StoreEvent_UpdateOrder:
+		evtType = eventTypeUpdateOrder
+		uo := ins.evt.GetUpdateOrder()
+		evtID = uo.EventId
+		refID = (*eventID)(&uo.OrderId)
 	case *StoreEvent_NewKeyCard:
 		evtType = eventTypeNewKeyCard
 		evtID = ins.evt.GetNewKeyCard().EventId
@@ -2276,52 +2281,51 @@ func (r *Relay) validateStoreEventWrite(union *StoreEvent, m CachedMetadata, ses
 				}
 			}
 		}
-	case *StoreEvent_CreateCart:
-		evt := union.GetCreateCart()
-		_, cartExists := r.cartsByCartID.get(evt.EventId)
-		if cartExists {
-			return &Error{Code: invalidErrorCode, Message: "cart already exists"}
+	case *StoreEvent_CreateOrder:
+		evt := union.GetCreateOrder()
+		_, orderExists := r.ordersByOrderID.get(evt.EventId)
+		if orderExists {
+			return &Error{Code: invalidErrorCode, Message: "order already exists"}
 		}
-	case *StoreEvent_ChangeCart:
-		evt := union.GetChangeCart()
-		cart, cartExists := r.cartsByCartID.get(evt.CartId)
-		if !cartExists {
+	case *StoreEvent_UpdateOrder:
+		evt := union.GetUpdateOrder()
+		order, orderExists := r.ordersByOrderID.get(evt.OrderId)
+		if !orderExists {
 			return notFoundError
 		}
-		if cart.finalized {
-			return &Error{Code: invalidErrorCode, Message: "cart already finalized"}
+		if order.finalized {
+			return &Error{Code: invalidErrorCode, Message: "order already finalized"}
 		}
-		if !cart.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
+		if !order.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
 			return notFoundError
 		}
-		item, itemExists := r.itemsByItemID.get(evt.ItemId)
-		if !itemExists {
-			return notFoundError
-		}
-		if !item.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
-			return notFoundError
-		}
-		stock, has := r.stockByStoreID.get(m.createdByStoreID)
-		if !has {
-			return &Error{Code: invalidErrorCode, Message: "not enough stock"}
-		}
-		// TODO: improve locking / also respect inStock in other carts
-		inStock, has := stock.inventory.GetHas(evt.ItemId)
-		if !has || inStock < evt.Quantity {
-			return &Error{Code: invalidErrorCode, Message: "not enough stock"}
-		}
-		inCart := cart.items.Get(evt.ItemId)
-		if evt.Quantity < 0 && inCart+evt.Quantity < 0 {
-			return &Error{Code: invalidErrorCode, Message: "not enough items in cart"}
-		}
-	case *StoreEvent_CartAbandoned:
-		evt := union.GetCartAbandoned()
-		cart, cartExists := r.cartsByCartID.get(evt.CartId)
-		if !cartExists {
-			return notFoundError
-		}
-		if !cart.finalized {
-			return &Error{Code: invalidErrorCode, Message: "cart is not finalized"}
+
+		switch tv := evt.Action.(type) {
+		case *UpdateOrder_ChangeItems_:
+			change := tv.ChangeItems
+			item, itemExists := r.itemsByItemID.get(change.ItemId)
+			if !itemExists {
+				return notFoundError
+			}
+			if !item.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
+				return notFoundError
+			}
+			stock, has := r.stockByStoreID.get(m.createdByStoreID)
+			if !has {
+				return &Error{Code: invalidErrorCode, Message: "not enough stock"}
+			}
+			inStock, has := stock.inventory.GetHas(change.ItemId)
+			if !has || inStock < change.Quantity {
+				return &Error{Code: invalidErrorCode, Message: "not enough stock"}
+			}
+			inOrder := order.items.Get(change.ItemId)
+			if change.Quantity < 0 && inOrder+change.Quantity < 0 {
+				return &Error{Code: invalidErrorCode, Message: "not enough items in order"}
+			}
+		case *UpdateOrder_OrderCanceled_:
+			if !order.finalized {
+				return &Error{Code: invalidErrorCode, Message: "order is not finalized"}
+			}
 		}
 	default:
 		panic(fmt.Errorf("eventWritesOp.validateWrite.unrecognizeType eventType=%T", union.Union))
@@ -2341,40 +2345,40 @@ func (op *EventPushOp) process(r *Relay) {
 	}
 }
 
-func (op *CommitCartOp) process(r *Relay) {
+func (op *CommitItemsToOrderOp) process(r *Relay) {
 	ctx := context.Background()
 	sessionID := op.sessionID
 	requestID := op.im.RequestId
 	sessionState := r.sessionIdsToSessionStates.Get(sessionID)
 	if sessionState == nil {
-		logS(sessionID, "relay.commitCartOp.drain")
+		logS(sessionID, "relay.commitOrderOp.drain")
 		return
 	} else if sessionState.keyCardID == nil {
-		logSR("relay.commitCartOp.notAuthenticated", sessionID, requestID)
+		logSR("relay.commitOrderOp.notAuthenticated", sessionID, requestID)
 		op.err = notAuthenticatedError
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 	start := now()
-	logSR("relay.commitCartOp.process", sessionID, requestID)
+	logSR("relay.commitOrderOp.process", sessionID, requestID)
 	r.lastSeenAtTouch(sessionState)
 
-	// sum up cart content
+	// sum up order content
 	decimalCtx := apd.BaseContext.WithPrecision(20)
 	fiatSubtotal := new(apd.Decimal)
-	cart, has := r.cartsByCartID.get(op.im.CartId)
+	order, has := r.ordersByOrderID.get(op.im.OrderId)
 	if !has {
 		op.err = notFoundError
 		r.sendSessionOp(sessionState, op)
 		return
 	}
-	if cart.finalized {
-		op.err = &Error{Code: invalidErrorCode, Message: "cart is already finalized"}
+	if order.finalized {
+		op.err = &Error{Code: invalidErrorCode, Message: "order is already finalized"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
-	if cart.items.Size() == 0 {
-		op.err = &Error{Code: invalidErrorCode, Message: "cart is empty"}
+	if order.items.Size() == 0 {
+		op.err = &Error{Code: invalidErrorCode, Message: "order is empty"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2393,39 +2397,39 @@ func (op *CommitCartOp) process(r *Relay) {
 		return
 	}
 
-	// get all other carts that haven't been paid yet
-	otherCartRows, err := r.connPool.Query(ctx, `select cartId from payments where
+	// get all other orders that haven't been paid yet
+	otherOrderRows, err := r.connPool.Query(ctx, `select orderId from payments where
 	createdByStoreId = $1 and
-	cartId != $2 and
-	cartPayedAt is null`, sessionState.storeID, op.im.CartId)
+	orderId != $2 and
+	orderPayedAt is null`, sessionState.storeID, op.im.OrderId)
 	check(err)
-	otherCartIds := NewMapEventIds[*CachedCart]()
-	for otherCartRows.Next() {
-		var otherCartID eventID
-		check(otherCartRows.Scan(&otherCartID))
-		otherCart, has := r.cartsByCartID.get(otherCartID)
+	otherOrderIds := NewMapEventIds[*CachedOrder]()
+	for otherOrderRows.Next() {
+		var otherOrderID eventID
+		check(otherOrderRows.Scan(&otherOrderID))
+		otherOrder, has := r.ordersByOrderID.get(otherOrderID)
 		assert(has)
-		otherCartIds.Set(otherCartID, otherCart)
+		otherOrderIds.Set(otherOrderID, otherOrder)
 	}
-	check(otherCartRows.Err())
+	check(otherOrderRows.Err())
 
-	// for convenience, sum up all items in the  other carts
-	otherCartItemQuantities := NewMapEventIds[int32]()
-	otherCartIds.AllWithBreak(func(_ eventID, cart *CachedCart) bool {
-		if cart.abandoned {
+	// for convenience, sum up all items in the  other orders
+	otherOrderItemQuantities := NewMapEventIds[int32]()
+	otherOrderIds.AllWithBreak(func(_ eventID, order *CachedOrder) bool {
+		if order.abandoned {
 			return false
 		}
-		cart.items.AllWithBreak(func(itemId eventID, quantity int32) bool {
-			current := otherCartItemQuantities.Get(itemId)
+		order.items.AllWithBreak(func(itemId eventID, quantity int32) bool {
+			current := otherOrderItemQuantities.Get(itemId)
 			current += quantity
-			otherCartItemQuantities.Set(itemId, current)
+			otherOrderItemQuantities.Set(itemId, current)
 			return false
 		})
 		return false
 	})
 
-	// iterate over this cart
-	cart.items.AllWithBreak(func(itemId eventID, quantity int32) bool {
+	// iterate over this order
+	order.items.AllWithBreak(func(itemId eventID, quantity int32) bool {
 		item, has := r.itemsByItemID.get(itemId)
 		if !has {
 			op.err = notFoundError
@@ -2443,8 +2447,8 @@ func (op *CommitCartOp) process(r *Relay) {
 			return true
 		}
 
-		usedInOtherCarts := otherCartItemQuantities.Get(itemId)
-		if stockItems-usedInOtherCarts < quantity {
+		usedInOtherOrders := otherOrderItemQuantities.Get(itemId)
+		if stockItems-usedInOtherOrders < quantity {
 			op.err = &Error{Code: outOfStockErrorCode, Message: "not enough stock"}
 			return true
 		}
@@ -2475,7 +2479,7 @@ func (op *CommitCartOp) process(r *Relay) {
 	_, err = decimalCtx.Add(fiatTotal, fiatSubtotal, salesTax)
 	check(err)
 
-	// create payment address for cart content
+	// create payment address for order content
 	var (
 		bigTotal = new(big.Int)
 
@@ -2491,7 +2495,7 @@ func (op *CommitCartOp) process(r *Relay) {
 	defer cancel()
 	gethClient, err := r.ethClient.getClient(ctx)
 	if err != nil {
-		logSR("relay.commitCartOp.failedToGetGethClient err=%s", sessionID, requestID, err.Error())
+		logSR("relay.commitOrderOp.failedToGetGethClient err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: invalidErrorCode, Message: "internal server error"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2510,7 +2514,7 @@ func (op *CommitCartOp) process(r *Relay) {
 		var has bool
 		_, has = store.acceptedErc20s[erc20TokenAddr]
 		if !has {
-			logSR("relay.commitCartOp.noSuchAcceptedErc20s addr=%s", sessionID, requestID, erc20TokenAddr.Hex())
+			logSR("relay.commitOrderOp.noSuchAcceptedErc20s addr=%s", sessionID, requestID, erc20TokenAddr.Hex())
 			op.err = &Error{Code: invalidErrorCode, Message: "erc20 not accepted"}
 			r.sendSessionOp(sessionState, op)
 			return
@@ -2521,14 +2525,14 @@ func (op *CommitCartOp) process(r *Relay) {
 		// TODO: since this is a contract constant we could cache it when adding the token
 		tokenCaller, err := NewERC20Caller(erc20TokenAddr, gethClient)
 		if err != nil {
-			logSR("relay.commitCartOp.failedToCreateERC20Caller err=%s", sessionID, requestID, err.Error())
+			logSR("relay.commitOrderOp.failedToCreateERC20Caller err=%s", sessionID, requestID, err.Error())
 			op.err = &Error{Code: invalidErrorCode, Message: "failed to create erc20 caller"}
 			r.sendSessionOp(sessionState, op)
 			return
 		}
 		decimalCount, err := tokenCaller.Decimals(callOpts)
 		if err != nil {
-			logSR("relay.commitCartOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
+			logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
 			op.err = &Error{Code: invalidErrorCode, Message: "failed to establish contract decimals"}
 			r.sendSessionOp(sessionState, op)
 			return
@@ -2543,15 +2547,15 @@ func (op *CommitCartOp) process(r *Relay) {
 
 	bigTotal.SetString(inBaseTokens.Text('f'), 10)
 
-	// TODO: actual proof. for now we just use the hash of the internal cartId as a nonce
+	// TODO: actual proof. for now we just use the hash of the internal orderId as a nonce
 	hasher := sha512.New512_256()
-	copy(receiptHash[:], hasher.Sum(cart.cartID))
+	copy(receiptHash[:], hasher.Sum(order.orderID))
 
 	bigStoreTokenID := new(big.Int).SetBytes(store.storeTokenID)
 
 	storeReg, err := NewRegStoreCaller(r.ethClient.contractAddresses.StoreRegistry, gethClient)
 	if err != nil {
-		logSR("relay.commitCartOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
+		logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: invalidErrorCode, Message: "failed to create store registry caller"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2559,7 +2563,7 @@ func (op *CommitCartOp) process(r *Relay) {
 
 	ownerAddr, err := storeReg.OwnerOf(callOpts, bigStoreTokenID)
 	if err != nil {
-		logSR("relay.commitCartOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
+		logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: invalidErrorCode, Message: "failed to get store owner"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2567,7 +2571,7 @@ func (op *CommitCartOp) process(r *Relay) {
 
 	factory, err := NewPaymentFactoryCaller(r.ethClient.contractAddresses.PaymentFactory, gethClient)
 	if err != nil {
-		logSR("relay.commitCartOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
+		logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: invalidErrorCode, Message: "failed to get store owner"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2585,42 +2589,46 @@ func (op *CommitCartOp) process(r *Relay) {
 		r.sendSessionOp(sessionState, op)
 		return
 	}
-	log("relay.commitCartOp.paymentAddress addr=%x total=%s currentBlock=%d", purchaseAddr, bigTotal.String(), blockNo)
+	log("relay.commitOrderOp.paymentAddress addr=%x total=%s currentBlock=%d", purchaseAddr, bigTotal.String(), blockNo)
 
-	// mark cart as finalized by creating the event and updating payments table
+	// mark order as finalized by creating the event and updating payments table
 	var (
-		cf CartFinalized
-		w  PaymentWaiter
+		fin UpdateOrder_ItemsFinalized
+		w   PaymentWaiter
 	)
-	cf.EventId = newEventID()
-	cf.CartId = cart.cartID
-	cf.PurchaseAddr = purchaseAddr.Bytes()
-	cf.TotalInCrypto = bigTotal.String()
-	cf.SubTotal = roundPrice(fiatSubtotal).Text('f')
-	cf.SalesTax = roundPrice(salesTax).Text('f')
-	cf.Total = roundPrice(fiatTotal).Text('f')
+	fin.PurchaseAddr = purchaseAddr.Bytes()
+	fin.TotalInCrypto = bigTotal.String()
+	fin.SubTotal = roundPrice(fiatSubtotal).Text('f')
+	fin.SalesTax = roundPrice(salesTax).Text('f')
+	fin.Total = roundPrice(fiatTotal).Text('f')
 
-	op.cartFinalizedID = cf.EventId
+	update := &UpdateOrder{
+		EventId: newEventID(),
+		OrderId: order.orderID,
+		Action:  &UpdateOrder_ItemsFinalized_{&fin},
+	}
+
+	op.orderFinalizedID = update.EventId
 
 	w.waiterID = newRequestID()
-	w.cartID = op.im.CartId
-	w.cartFinalizedAt = now()
+	w.orderID = op.im.OrderId
+	w.orderFinalizedAt = now()
 	w.purchaseAddr = purchaseAddr
 	w.lastBlockNo.SetInt64(int64(blockNo))
 	w.coinsTotal.Set(bigTotal)
 	w.coinsPayed.SetInt64(0)
 
 	if usignErc20 {
-		cf.Erc20Addr = erc20TokenAddr[:]
+		fin.Erc20Addr = erc20TokenAddr[:]
 		w.erc20TokenAddr = &erc20TokenAddr
 	}
 
 	cfMetadata := newMetadata(relayKeyCardID, sessionState.storeID, 1)
-	cfEvent := &StoreEvent{Union: &StoreEvent_CartFinalized{&cf}}
+	cfEvent := &StoreEvent{Union: &StoreEvent_UpdateOrder{update}}
 
 	err = r.ethClient.eventSign(cfEvent)
 	if err != nil {
-		logSR("relay.commitCartOp.eventSignFailed err=%s", sessionID, requestID, err)
+		logSR("relay.commitOrderOp.eventSignFailed err=%s", sessionID, requestID, err)
 		op.err = &Error{Code: invalidErrorCode, Message: "interal server error"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2628,7 +2636,7 @@ func (op *CommitCartOp) process(r *Relay) {
 
 	cfAny, err := anypb.New(cfEvent)
 	if err != nil {
-		logSR("relay.commitCartOp.anypb err=%s", sessionID, requestID, err)
+		logSR("relay.commitOrderOp.anypb err=%s", sessionID, requestID, err)
 		op.err = &Error{Code: invalidErrorCode, Message: "interal server error"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2638,15 +2646,15 @@ func (op *CommitCartOp) process(r *Relay) {
 	r.writeEvent(cfEvent, cfMetadata, cfAny)
 
 	seqPair := r.storeIdsToStoreSeqs.MustGet(sessionState.storeID)
-	const insertPaymentWaiterQuery = `insert into payments (waiterId, storeSeqNo, createdByStoreId, cartId, cartFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr)
+	const insertPaymentWaiterQuery = `insert into payments (waiterId, storeSeqNo, createdByStoreId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr)
 	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 	_, err = r.syncTx.Exec(ctx, insertPaymentWaiterQuery,
-		w.waiterID, seqPair.lastWrittenStoreSeq, cart.createdByStoreID, w.cartID, w.cartFinalizedAt, w.purchaseAddr.Bytes(), w.lastBlockNo, w.coinsPayed, w.coinsTotal, w.erc20TokenAddr)
+		w.waiterID, seqPair.lastWrittenStoreSeq, order.createdByStoreID, w.orderID, w.orderFinalizedAt, w.purchaseAddr.Bytes(), w.lastBlockNo, w.coinsPayed, w.coinsTotal, w.erc20TokenAddr)
 	check(err)
 
 	r.commitSyncTransaction()
 
-	logSR("relay.commitCartOp.finish took=%d", sessionID, requestID, took(start))
+	logSR("relay.commitOrderOp.finish took=%d", sessionID, requestID, took(start))
 	r.sendSessionOp(sessionState, op)
 }
 
@@ -2741,36 +2749,36 @@ func (op *PaymentFoundInternalOp) getSessionID() requestID { panic("not implemen
 func (op *PaymentFoundInternalOp) setErr(_ *Error)         { panic("not implemented") }
 
 func (op *PaymentFoundInternalOp) process(r *Relay) {
-	cart, has := r.cartsByCartID.get(op.cartID)
-	assertWithMessage(has, fmt.Sprintf("cart not found for cartId=%s", op.cartID))
+	order, has := r.ordersByOrderID.get(op.orderID)
+	assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", op.orderID))
 
-	log("db.paymentFoundInternalOp.start cartID=%s", op.cartID)
+	log("db.paymentFoundInternalOp.start orderID=%s", op.orderID)
 	start := now()
 
 	r.beginSyncTransaction()
 
-	const markCartAsPayedQuery = `UPDATE payments SET cartPayedAt = NOW(), cartPayedTx = $1 WHERE cartId = $2;`
-	_, err := r.syncTx.Exec(context.Background(), markCartAsPayedQuery, op.txHash.Bytes(), op.cartID)
+	const markOrderAsPayedQuery = `UPDATE payments SET orderPayedAt = NOW(), orderPayedTx = $1 WHERE orderId = $2;`
+	_, err := r.syncTx.Exec(context.Background(), markOrderAsPayedQuery, op.txHash.Bytes(), op.orderID)
 	check(err)
 
 	meta := CachedMetadata{
 		createdByKeyCardID:      relayKeyCardID,
-		createdByStoreID:        cart.createdByStoreID,
+		createdByStoreID:        order.createdByStoreID,
 		createdByNetworkVersion: 1,
 	}
-	r.hydrateStores(NewSetEventIds(cart.createdByStoreID))
+	r.hydrateStores(NewSetEventIds(order.createdByStoreID))
 	// emit changeStock event
 	cs := &ChangeStock{
 		EventId: newEventID(),
-		CartId:  op.cartID,
+		OrderId: op.orderID,
 		TxHash:  op.txHash.Bytes(),
 	}
 
 	// fill diff
 	i := 0
-	cs.ItemIds = make([][]byte, cart.items.Size())
-	cs.Diffs = make([]int32, cart.items.Size())
-	cart.items.All(func(itemId eventID, quantity int32) {
+	cs.ItemIds = make([][]byte, order.items.Size())
+	cs.Diffs = make([]int32, order.items.Size())
+	order.items.All(func(itemId eventID, quantity int32) {
 		cs.ItemIds[i] = itemId
 		cs.Diffs[i] = -quantity
 		i++
@@ -2786,7 +2794,7 @@ func (op *PaymentFoundInternalOp) process(r *Relay) {
 
 	r.writeEvent(evt, meta, evtAny)
 	r.commitSyncTransaction()
-	log("db.paymentFoundInternalOp.finish cartID=%s took=%d", op.cartID, took(start))
+	log("db.paymentFoundInternalOp.finish orderID=%s took=%d", op.orderID, took(start))
 	close(op.done)
 }
 
@@ -2996,22 +3004,22 @@ func init() {
 	copy(relayKeyCardID[:], []byte("relay"))
 }
 
-// PaymentWaiter is a struct that holds the state of a cart that is waiting for payment.
+// PaymentWaiter is a struct that holds the state of a order that is waiting for payment.
 type PaymentWaiter struct {
-	waiterID        requestID
-	cartID          eventID
-	cartFinalizedAt time.Time
-	purchaseAddr    common.Address
-	lastBlockNo     SQLStringBigInt
-	coinsPayed      SQLStringBigInt
-	coinsTotal      SQLStringBigInt
+	waiterID         requestID
+	orderID          eventID
+	orderFinalizedAt time.Time
+	purchaseAddr     common.Address
+	lastBlockNo      SQLStringBigInt
+	coinsPayed       SQLStringBigInt
+	coinsTotal       SQLStringBigInt
 
 	// (optional) contract of the erc20 that we are looking for
 	erc20TokenAddr *common.Address
 
-	// set if cart was payed
-	cartPayedAt *time.Time
-	cartPayedTx *common.Hash
+	// set if order was payed
+	orderPayedAt *time.Time
+	orderPayedTx *common.Hash
 }
 
 var (
@@ -3034,17 +3042,17 @@ func (r *Relay) watchEthereumPayments() error {
 	ctx, cancel := context.WithDeadline(context.Background(), start.Add(watcherTimeout))
 	defer cancel()
 
-	openPaymentsQry := `SELECT waiterId, cartId, cartFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal
+	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal
 	FROM payments
-	WHERE cartPayedAt IS NULL
+	WHERE orderPayedAt IS NULL
 		AND erc20TokenAddr IS NULL -- see watchErc20Payments()
-		AND cartFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
+		AND orderFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
 	rows, err := r.connPool.Query(ctx, openPaymentsQry)
 	check(err)
 	defer rows.Close()
 	for rows.Next() {
 		var waiter PaymentWaiter
-		err := rows.Scan(&waiter.waiterID, &waiter.cartID, &waiter.cartFinalizedAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal)
+		err := rows.Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal)
 		check(err)
 
 		assert(waiter.lastBlockNo.Cmp(bigZero) != 0)
@@ -3102,9 +3110,9 @@ func (r *Relay) watchEthereumPayments() error {
 			waiter, has := waiters[*to]
 			if has {
 				log("relay.watchEthereumPayments.checkTx waiter.lastBlockNo=%s checkingBlock=%s tx=%s to=%s", waiter.lastBlockNo.String(), block.Number().String(), tx.Hash().String(), tx.To().String())
-				cartID := waiter.cartID
-				// cart, has := r.cartsByCartID.get(cartID)
-				assertWithMessage(has, fmt.Sprintf("cart not found for cartId=%s", cartID))
+				orderID := waiter.orderID
+				// order, has := r.ordersByOrderID.get(orderID)
+				assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
 
 				// found a transaction to the purchase address
 				// check if it's the right amount
@@ -3114,21 +3122,21 @@ func (r *Relay) watchEthereumPayments() error {
 					// it is larger or equal
 
 					op := PaymentFoundInternalOp{
-						cartID: cartID,
-						txHash: tx.Hash(),
-						done:   make(chan struct{}),
+						orderID: orderID,
+						txHash:  tx.Hash(),
+						done:    make(chan struct{}),
 					}
 					r.opsInternal <- &op
 					<-op.done // wait for write
 
 					delete(waiters, waiter.purchaseAddr)
-					log("relay.watchEthereumPayments.completed cartId=%s", cartID)
+					log("relay.watchEthereumPayments.completed orderId=%s", orderID)
 				} else {
 					// it is still smaller
-					log("relay.watchEthereumPayments.partial cartId=%s inTx=%s subTotal=%s", cartID, inTx.String(), waiter.coinsPayed.String())
+					log("relay.watchEthereumPayments.partial orderId=%s inTx=%s subTotal=%s", orderID, inTx.String(), waiter.coinsPayed.String())
 					// update subtotal
-					const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE cartId = $2;`
-					_, err := r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, cartID)
+					const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE orderId = $2;`
+					_, err := r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, orderID)
 					check(err) // cant recover sql errors
 				}
 			}
@@ -3140,11 +3148,11 @@ func (r *Relay) watchEthereumPayments() error {
 			}
 			// lastBlockNo += 1
 			waiter.lastBlockNo.Add(&waiter.lastBlockNo.Int, bigOne)
-			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = lastBlockNo + 1 WHERE cartId = $1;`
-			cartID := waiter.cartID
-			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, cartID)
+			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = lastBlockNo + 1 WHERE orderId = $1;`
+			orderID := waiter.orderID
+			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, orderID)
 			check(err)
-			log("relay.watchEthereumPayments.advance cartId=%x newLastBlock=%s", cartID, waiter.lastBlockNo.String())
+			log("relay.watchEthereumPayments.advance orderId=%x newLastBlock=%s", orderID, waiter.lastBlockNo.String())
 		}
 		// increment iterator
 		lowestLastBlock.Add(lowestLastBlock, bigOne)
@@ -3180,17 +3188,17 @@ func (r *Relay) watchErc20Payments() error {
 	}
 	defer gethClient.Close()
 
-	openPaymentsQry := `SELECT waiterId, cartId, cartFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr
+	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr
 		FROM payments
-		WHERE cartPayedAt IS NULL
+		WHERE orderPayedAt IS NULL
 			AND erc20TokenAddr IS NOT NULL -- see watchErc20Payments()
-			AND cartFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
+			AND orderFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
 	rows, err := r.connPool.Query(ctx, openPaymentsQry)
 	check(err)
 	defer rows.Close()
 	for rows.Next() {
 		var waiter PaymentWaiter
-		err := rows.Scan(&waiter.waiterID, &waiter.cartID, &waiter.cartFinalizedAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal, &waiter.erc20TokenAddr)
+		err := rows.Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal, &waiter.erc20TokenAddr)
 		check(err)
 		assert(waiter.lastBlockNo.Cmp(bigZero) != 0)
 
@@ -3263,10 +3271,10 @@ func (r *Relay) watchErc20Payments() error {
 		waiter, has := waiters[toHash]
 		if has && waiter.erc20TokenAddr.Cmp(vLog.Address) == 0 {
 			// We found a transfer to our address!
-			cartID := waiter.cartID
+			orderID := waiter.orderID
 
-			_, has := r.cartsByCartID.get(cartID)
-			assertWithMessage(has, fmt.Sprintf("cart not found for cartId=%s", cartID))
+			_, has := r.ordersByOrderID.get(orderID)
+			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
 
 			evts, err := r.ethClient.erc20ContractABI.Unpack("Transfer", vLog.Data)
 			if err != nil {
@@ -3276,29 +3284,29 @@ func (r *Relay) watchErc20Payments() error {
 
 			inTx, ok := evts[0].(*big.Int)
 			assertWithMessage(ok, fmt.Sprintf("unexpected unpack result for field 0 - type=%T", evts[0]))
-			log("relay.watchErc20Payments.foundTransfer cartId=%s from=%s to=%s amount=%s", cartID, fromHash.Hex(), toHash.Hex(), inTx.String())
+			log("relay.watchErc20Payments.foundTransfer orderId=%s from=%s to=%s amount=%s", orderID, fromHash.Hex(), toHash.Hex(), inTx.String())
 
 			waiter.coinsPayed.Add(&waiter.coinsPayed.Int, inTx)
 			if waiter.coinsPayed.Cmp(&waiter.coinsTotal.Int) != -1 {
 				// it is larger or equal
 
 				op := PaymentFoundInternalOp{
-					cartID: cartID,
-					txHash: vLog.TxHash,
-					done:   make(chan struct{}),
+					orderID: orderID,
+					txHash:  vLog.TxHash,
+					done:    make(chan struct{}),
 				}
 				r.opsInternal <- &op
 				<-op.done
 
 				delete(waiters, toHash)
-				log("relay.watchErc20Payments.completed cartId=%s", cartID)
+				log("relay.watchErc20Payments.completed orderId=%s", orderID)
 
 			} else {
 				// it is still smaller
-				log("relay.watchErc20Payments.partial cartId=%s inTx=%s subTotal=%s", cartID, inTx.String(), waiter.coinsPayed.String())
+				log("relay.watchErc20Payments.partial orderId=%s inTx=%s subTotal=%s", orderID, inTx.String(), waiter.coinsPayed.String())
 				// update subtotal
-				const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE cartId = $2;`
-				_, err = r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, cartID)
+				const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE orderId = $2;`
+				_, err = r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, orderID)
 				check(err)
 			}
 		}
@@ -3308,10 +3316,10 @@ func (r *Relay) watchErc20Payments() error {
 				continue
 			}
 			// move up block number
-			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = $2 WHERE cartId = $1;`
-			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, waiter.cartID, currentBlockNo.String())
+			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = $2 WHERE orderId = $1;`
+			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, waiter.orderID, currentBlockNo.String())
 			check(err)
-			log("relay.watchErc20Payments.advance cartId=%x newLastBlock=%s", waiter.cartID, waiter.lastBlockNo.String())
+			log("relay.watchErc20Payments.advance orderId=%x newLastBlock=%s", waiter.orderID, waiter.lastBlockNo.String())
 		}
 	}
 
@@ -3341,7 +3349,7 @@ func (r *Relay) memoryStats() {
 	r.metric.emit("relay.ops.queued", uint64(len(r.ops)))
 
 	r.metric.emit("relay.cached.items", uint64(r.itemsByItemID.loaded.Size()))
-	r.metric.emit("relay.cached.carts", uint64(r.cartsByCartID.loaded.Size()))
+	r.metric.emit("relay.cached.orders", uint64(r.ordersByOrderID.loaded.Size()))
 
 	// Go runtime memory information
 	var runtimeMemory runtime.MemStats

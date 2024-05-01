@@ -25,7 +25,6 @@ var eip712spec = []apitypes.Type{
 	{Name: "verifyingContract", Type: "address"},
 }
 
-// TODO: extract signed data like with SignedMassEvent
 func (c ethClient) verifyChallengeResponse(publicKey, challange, signature []byte) error {
 	typedData := apitypes.TypedData{
 		Types: map[string][]apitypes.Type{
@@ -213,17 +212,21 @@ func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
 		default:
 			panic(fmt.Sprintf("eventHash: unknown updateTag action: %v", ut.Action))
 		}
-	} else if cs := evt.GetChangeStock(); cs != nil && len(cs.CartId) == 0 {
+	} else if cs := evt.GetChangeStock(); cs != nil && len(cs.OrderId) == 0 {
 		// for ChangeStock we need to remove the cart_id field if it's not set
 		usedTypeSpec = tdTypeSpec[:3]
-		delete(message, "cart_id")
+		delete(message, "order_id")
 		delete(message, "tx_hash")
-	} else if cf := evt.GetCartFinalized(); cf != nil && len(cf.Erc20Addr) == 0 {
-		// splice out erc20_addr
-		usedTypeSpec = make([]apitypes.Type, len(tdTypeSpec)-1)
-		copy(usedTypeSpec[:3], tdTypeSpec[:3])
-		copy(usedTypeSpec[3:], tdTypeSpec[4:])
-		delete(message, "erc20_addr")
+	} else if uo := evt.GetUpdateOrder(); uo != nil {
+		// TODO: add other types
+		fin, ok := uo.Action.(*UpdateOrder_ItemsFinalized_)
+		if ok && len(fin.ItemsFinalized.Erc20Addr) == 0 {
+			// splice out erc20_addr
+			usedTypeSpec = make([]apitypes.Type, len(tdTypeSpec)-1)
+			copy(usedTypeSpec[:3], tdTypeSpec[:3])
+			copy(usedTypeSpec[3:], tdTypeSpec[4:])
+			delete(message, "erc20_addr")
+		}
 	} else {
 		usedTypeSpec = tdTypeSpec
 	}
