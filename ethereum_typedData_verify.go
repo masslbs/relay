@@ -126,19 +126,20 @@ type typedDataMaper interface {
 	typedDataMap() map[string]any
 }
 
-//go:embed gen_network_typedData.json
-var genNetworkTypedData embed.FS
-
 type typedDataFieldDefinition struct {
 	apitypes.Type
 	Message []apitypes.Type
 }
 
-var eventNestedTypes = make(apitypes.Types)
+var (
 
-var eventToTypedData = make(apitypes.Types)
+	//go:embed gen_network_typedData.json
+	genNetworkTypedData embed.FS
 
-var parseEventToTypedDataOnce sync.Once
+	eventNestedTypes          = make(apitypes.Types)
+	eventToTypedData          = make(apitypes.Types)
+	parseEventToTypedDataOnce sync.Once
+)
 
 func parseEventToTypedData() {
 	// check if we can parse the network-schema data into the apitypes struct
@@ -243,10 +244,10 @@ func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
 		delete(message, "order_id")
 		delete(message, "tx_hash")
 	} else if uo := evt.GetUpdateOrder(); uo != nil {
-		usedTypeSpec = tdTypeSpec
-
 		actionFieldName := uo.schemaFieldName()
 		actionFieldSpec := eventNestedTypes[actionFieldName]
+
+		usedTypeSpec = append(tdTypeSpec, apitypes.Type{Name: actionFieldName, Type: actionFieldName})
 
 		fin, ok := uo.Action.(*UpdateOrder_ItemsFinalized_)
 		if ok && len(fin.ItemsFinalized.Erc20Addr) == 0 {
@@ -257,7 +258,7 @@ func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
 			actionFieldSpec = copiedSpec
 		}
 		types[actionFieldName] = actionFieldSpec
-		usedTypeSpec = append(usedTypeSpec, apitypes.Type{Name: actionFieldName, Type: actionFieldName})
+
 	} else {
 		usedTypeSpec = tdTypeSpec
 	}
@@ -279,15 +280,9 @@ func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
 	// EIP-712 typed data marshalling
 	sighash, _, err := apitypes.TypedDataAndHash(typedData)
 	if err != nil {
-		/*
-			fmt.Printf("M:  %+v\n", message)
-			spew.Dump(message)
-			fmt.Printf("types: %+v\n", types)
-		*/
 		return nil, fmt.Errorf("Event.hash: TypedDataAndHash error: %w", err)
 	}
 
-	//log("Event.hash eventId=%x hash=%x", message["event_id"], sighash)
 	return sighash, nil
 }
 
