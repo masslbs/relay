@@ -26,8 +26,9 @@
   pre-commit-check = pre-commit-hooks.lib.${pkgs.system}.run {
     src = ./.;
     hooks = {
+      gotest.enable = true;
       gofmt.enable = true;
-      revive.enable = false;
+      #revive.enable = true;
       #gomod2nix.enable = true;
       goimports = {
         enable = true;
@@ -76,6 +77,8 @@ in
         go-tools
         delve
         revive
+        errcheck
+        unconvert
 
         # mass deps
         postgresql

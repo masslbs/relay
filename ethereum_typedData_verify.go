@@ -287,7 +287,7 @@ func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
 }
 
 // TODO: codegen this mapping. parsing the struct tag every time is hideous
-func (uo UpdateOrder) schemaFieldName() string {
+func (uo *UpdateOrder) schemaFieldName() string {
 	rt := reflect.TypeOf(uo.Action).Elem()
 	tag := rt.Field(0).Tag
 	pbtag := tag.Get("protobuf")

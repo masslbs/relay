@@ -63,10 +63,6 @@ func mustRequestID(id requestID) requestID {
 	return id
 }
 
-func assertReqIdsEqual(a, b requestID) {
-	assertWithMessage(a.Equal(b), fmt.Sprintf("Expected request ids to be equal: %x %x", a, b))
-}
-
 type eventID []byte
 
 func newEventID() eventID {
@@ -93,7 +89,7 @@ func checkEventID(id eventID) bool {
 	return len(id) == eventIDBytes
 }
 
-func assertEventIdsEqual(a, b eventID) {
+func assertEventIDsEqual(a, b eventID) {
 	assertWithMessage(a.Equal(b), fmt.Sprintf("Expected event ids to be equal: %x %x", a, b))
 }
 

@@ -270,7 +270,7 @@ type EventPushOp struct {
 	err         *Error
 }
 
-// CommitOrderOp finalizes an open order by processing a CommitOrderRequest.
+// CommitItemsToOrderOp finalizes an open order.
 // As a result, the relay will wait for the incoming transaction before creating a ChangeStock event.
 type CommitItemsToOrderOp struct {
 	sessionID        requestID
@@ -297,6 +297,7 @@ type KeyCardEnrolledInternalOp struct {
 	userWallet       common.Address
 }
 
+// PaymentFoundInternalOp is created by payment watchers
 type PaymentFoundInternalOp struct {
 	orderID eventID
 	txHash  common.Hash
@@ -314,9 +315,9 @@ type Session struct {
 	version           uint
 	conn              net.Conn
 	messages          chan InMessage
-	activeInRequests  *MapRequestIds[time.Time]
+	activeInRequests  *MapRequestIDs[time.Time]
 	activeOutRequests *SetRequestIDs
-	activePushes      *MapRequestIds[SessionOp]
+	activePushes      *MapRequestIDs[SessionOp]
 	ops               chan SessionOp
 	databaseOps       chan RelayOp
 	metric            *Metric
@@ -330,9 +331,9 @@ func newSession(version uint, conn net.Conn, databaseOps chan RelayOp, metric *M
 		version:           version,
 		conn:              conn,
 		messages:          make(chan InMessage, limitMaxInRequests*2),
-		activeInRequests:  NewMapRequestIds[time.Time](),
+		activeInRequests:  NewMapRequestIDs[time.Time](),
 		activeOutRequests: NewSetRequestIDs(),
-		activePushes:      NewMapRequestIds[SessionOp](),
+		activePushes:      NewMapRequestIDs[SessionOp](),
 		ops:               make(chan SessionOp, (limitMaxInRequests+limitMaxOutRequests)*2),
 		databaseOps:       databaseOps,
 		metric:            metric,
@@ -920,7 +921,7 @@ func (sess *Session) run() {
 		if sess.stopping {
 			sess.metric.counterAdd("sessions_stop", 1)
 			logS(sess.id, "session.run.stop")
-			sess.conn.Close()
+			_ = sess.conn.Close()
 			return
 		}
 
@@ -1131,12 +1132,12 @@ type CachedTag struct {
 	tagID   eventID
 	name    string
 	deleted bool
-	items   *SetEventIds
+	items   *SetEventIDs
 }
 
 func (current *CachedTag) update(evt *StoreEvent, meta CachedMetadata) {
 	if current.items == nil && !current.inited {
-		current.items = NewSetEventIds()
+		current.items = NewSetEventIDs()
 	}
 	switch evt.Union.(type) {
 	case *StoreEvent_CreateTag:
@@ -1180,12 +1181,12 @@ type CachedOrder struct {
 	txHash common.Hash
 
 	orderID eventID
-	items   *MapEventIds[int32]
+	items   *MapEventIDs[int32]
 }
 
 func (current *CachedOrder) update(evt *StoreEvent, meta CachedMetadata) {
 	if current.items == nil && !current.inited {
-		current.items = NewMapEventIds[int32]()
+		current.items = NewMapEventIDs[int32]()
 	}
 	switch evt.Union.(type) {
 	case *StoreEvent_CreateOrder:
@@ -1227,7 +1228,7 @@ func (current *CachedOrder) update(evt *StoreEvent, meta CachedMetadata) {
 type CachedStock struct {
 	CachedMetadata
 
-	inventory *MapEventIds[int32]
+	inventory *MapEventIDs[int32]
 }
 
 func (current *CachedStock) update(evt *StoreEvent, _ CachedMetadata) {
@@ -1236,7 +1237,7 @@ func (current *CachedStock) update(evt *StoreEvent, _ CachedMetadata) {
 		return
 	}
 	if current.inventory == nil {
-		current.inventory = NewMapEventIds[int32]()
+		current.inventory = NewMapEventIDs[int32]()
 	}
 	for i := 0; i < len(cs.ItemIds); i++ {
 		itemID := cs.ItemIds[i]
@@ -1273,7 +1274,7 @@ type Relay struct {
 	writesEnabled bool // ensures to only create new entries if set to true
 
 	IO
-	sessionIdsToSessionStates *MapRequestIds[*SessionState]
+	sessionIDsToSessionStates *MapRequestIDs[*SessionState]
 	opsInternal               chan RelayOp
 	ops                       chan RelayOp
 
@@ -1283,7 +1284,7 @@ type Relay struct {
 	// persistence
 	syncTx               pgx.Tx
 	queuedEventInserts   []*EventInsert
-	storeIdsToStoreSeqs  *MapEventIds[*SeqPair]
+	storeIdsToStoreSeqs  *MapEventIDs[*SeqPair]
 	lastUsedServerSeq    uint64
 	lastWrittenServerSeq uint64
 
@@ -1306,11 +1307,11 @@ func newRelay(metric *Metric) *Relay {
 		r.prices = testingConverter{}
 	}
 
-	r.sessionIdsToSessionStates = NewMapRequestIds[*SessionState]()
+	r.sessionIDsToSessionStates = NewMapRequestIDs[*SessionState]()
 	r.opsInternal = make(chan RelayOp)
 
 	r.ops = make(chan RelayOp, databaseOpsChanSize)
-	r.storeIdsToStoreSeqs = NewMapEventIds[*SeqPair]()
+	r.storeIdsToStoreSeqs = NewMapEventIDs[*SeqPair]()
 
 	storeFieldFn := func(evt *StoreEvent, meta CachedMetadata) eventID {
 		return meta.createdByStoreID
@@ -1420,7 +1421,9 @@ func (r *Relay) bulkInsert(table string, columns []string, rows [][]interface{})
 		tx = r.syncTx
 	} else {
 		tx, err = r.connPool.Begin(ctx)
-		defer tx.Rollback(ctx)
+		defer func() {
+			_ = tx.Rollback(ctx)
+		}()
 		check(err)
 	}
 
@@ -1491,10 +1494,10 @@ func (r *Relay) lastSeenAtTouch(sessionState *SessionState) time.Time {
 	return n
 }
 
-func (r *Relay) hydrateStores(storeIds *SetEventIds) {
+func (r *Relay) hydrateStores(storeIds *SetEventIDs) {
 	start := now()
 	ctx := context.Background()
-	novelStoreIds := NewSetEventIds()
+	novelStoreIds := NewSetEventIDs()
 	storeIds.All(func(storeId eventID) {
 		if !r.storeIdsToStoreSeqs.Has(storeId) {
 			novelStoreIds.Add(storeId)
@@ -1651,9 +1654,6 @@ func (r *Relay) commitSyncTransaction() {
 var dbEntryInsertColumns = []string{"eventType", "eventId", "createdByKeyCardId", "createdByStoreId", "storeSeq", "createdAt", "createdByNetworkSchemaVersion", "serverSeq", "encoded", "referenceID"}
 
 func formInsert(ins *EventInsert) []interface{} {
-	type eventIDgetter interface {
-		GetEventId() eventID
-	}
 	var (
 		evtType eventType
 		evtID   eventID
@@ -1764,7 +1764,7 @@ type fieldFn func(*StoreEvent, CachedMetadata) eventID
 type ReductionLoader[T CachedEvent] struct {
 	db            *Relay
 	fieldFn       fieldFn
-	loaded        *MapEventIds[T]
+	loaded        *MapEventIDs[T]
 	whereFragment string
 }
 
@@ -1772,7 +1772,7 @@ func newReductionLoader[T CachedEvent](r *Relay, fn fieldFn, pgTypes []eventType
 	sl := &ReductionLoader[T]{}
 	sl.db = r
 	sl.fieldFn = fn
-	sl.loaded = NewMapEventIds[T]()
+	sl.loaded = NewMapEventIDs[T]()
 	var quotedTypes = make([]string, len(pgTypes))
 	for i, pgType := range pgTypes {
 		quotedTypes[i] = fmt.Sprintf("'%s'", string(pgType))
@@ -1824,7 +1824,7 @@ func (r *Relay) applyEvent(e *EventInsert) {
 }
 
 func (op *StartOp) process(r *Relay) {
-	assert(!r.sessionIdsToSessionStates.Has(op.sessionID))
+	assert(!r.sessionIDsToSessionStates.Has(op.sessionID))
 	assert(op.sessionVersion != 0)
 	assert(op.sessionOps != nil)
 	logS(op.sessionID, "relay.startOp.start")
@@ -1834,21 +1834,21 @@ func (op *StartOp) process(r *Relay) {
 		sessionOps: op.sessionOps,
 		buffer:     make([]*EventState, 0),
 	}
-	r.sessionIdsToSessionStates.Set(op.sessionID, sessionState)
+	r.sessionIDsToSessionStates.Set(op.sessionID, sessionState)
 	r.lastSeenAtTouch(sessionState)
 }
 
 func (op *StopOp) process(r *Relay) {
-	sessionState, sessionExists := r.sessionIdsToSessionStates.GetHas(op.sessionID)
+	sessionState, sessionExists := r.sessionIDsToSessionStates.GetHas(op.sessionID)
 	logS(op.sessionID, "relay.stopOp.start exists=%t", sessionExists)
 	if sessionExists {
-		r.sessionIdsToSessionStates.Delete(op.sessionID)
+		r.sessionIDsToSessionStates.Delete(op.sessionID)
 		r.sendSessionOp(sessionState, op)
 	}
 }
 
 func (op *HeartbeatOp) process(r *Relay) {
-	sessionState := r.sessionIdsToSessionStates.Get(op.sessionID)
+	sessionState := r.sessionIDsToSessionStates.Get(op.sessionID)
 	if sessionState == nil {
 		logS(op.sessionID, "relay.heartbeatOp.drain")
 		return
@@ -1859,7 +1859,7 @@ func (op *HeartbeatOp) process(r *Relay) {
 
 func (op *AuthenticateOp) process(r *Relay) {
 	// Make sure the session isn't gone or already authenticated.
-	sessionState := r.sessionIdsToSessionStates.Get(op.sessionID)
+	sessionState := r.sessionIDsToSessionStates.Get(op.sessionID)
 	if sessionState == nil {
 		logS(op.sessionID, "relay.authenticateOp.drain")
 		return
@@ -1895,7 +1895,7 @@ func (op *AuthenticateOp) process(r *Relay) {
 	// a dangling session that only the server side thinks is still alive.
 	// Reject this authentication attempt from the second device, but with the stop
 	// the client should be able to successfully retry shortly.
-	iter := r.sessionIdsToSessionStates.Iter()
+	iter := r.sessionIDsToSessionStates.Iter()
 
 	for {
 		otherSessionID, otherSessionState, ok := iter.Next()
@@ -1914,7 +1914,7 @@ func (op *AuthenticateOp) process(r *Relay) {
 
 	// generate challenge
 	ch := make([]byte, 32)
-	crand.Read(ch)
+	_, _ = crand.Read(ch)
 
 	op.challenge = ch
 	sessionState.authChallenge = ch
@@ -1927,7 +1927,7 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 	logS(op.sessionID, "relay.challengeSolvedOp.start")
 	challengeSolvedOpStart := now()
 
-	sessionState := r.sessionIdsToSessionStates.Get(op.sessionID)
+	sessionState := r.sessionIDsToSessionStates.Get(op.sessionID)
 	if sessionState == nil {
 		logS(op.sessionID, "relay.challengeSolvedOp.drain")
 		return
@@ -2009,7 +2009,7 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 	sessionState.keyCardPublicKey = keyCardPublicKey
 
 	// Establish store seq.
-	r.hydrateStores(NewSetEventIds(storeID))
+	r.hydrateStores(NewSetEventIDs(storeID))
 	seqPair, has := r.storeIdsToStoreSeqs.GetHas(sessionState.storeID)
 	assert(has)
 
@@ -2047,7 +2047,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 	// 1. the manifest
 	manifestHash := sha3.NewLegacyKeccak256()
 	manifestHash.Write(storeManifest.storeTokenID)
-	fmt.Fprint(manifestHash, storeManifest.domain)
+	_, _ = fmt.Fprint(manifestHash, storeManifest.domain)
 	manifestHash.Write(storeManifest.publishedTagID)
 	log("relay.storeRootHash manifest=%x", manifestHash.Sum(nil))
 
@@ -2083,7 +2083,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 		for _, id := range stockIds {
 			count := stock.inventory.MustGet(id)
 			stockHash.Write(id)
-			fmt.Fprintf(stockHash, "%d", count)
+			_, _ = fmt.Fprintf(stockHash, "%d", count)
 		}
 	}
 	log("relay.storeRootHash stock=%x", stockHash.Sum(nil))
@@ -2104,7 +2104,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 func (op *EventWriteOp) process(r *Relay) {
 	sessionID := op.sessionID
 	requestID := op.im.RequestId
-	sessionState := r.sessionIdsToSessionStates.Get(sessionID)
+	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
 	if sessionState == nil {
 		logSR("relay.eventWriteOp.drain", sessionID, requestID)
 		return
@@ -2334,7 +2334,7 @@ func (r *Relay) validateStoreEventWrite(union *StoreEvent, m CachedMetadata, ses
 }
 
 func (op *EventPushOp) process(r *Relay) {
-	sessionState := r.sessionIdsToSessionStates.Get(op.sessionID)
+	sessionState := r.sessionIDsToSessionStates.Get(op.sessionID)
 	if sessionState == nil {
 		logS(op.sessionID, "relay.eventPushOp.drain")
 		return
@@ -2349,7 +2349,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	ctx := context.Background()
 	sessionID := op.sessionID
 	requestID := op.im.RequestId
-	sessionState := r.sessionIdsToSessionStates.Get(sessionID)
+	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
 	if sessionState == nil {
 		logS(sessionID, "relay.commitOrderOp.drain")
 		return
@@ -2403,7 +2403,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	orderId != $2 and
 	orderPayedAt is null`, sessionState.storeID, op.im.OrderId)
 	check(err)
-	otherOrderIds := NewMapEventIds[*CachedOrder]()
+	otherOrderIds := NewMapEventIDs[*CachedOrder]()
 	for otherOrderRows.Next() {
 		var otherOrderID eventID
 		check(otherOrderRows.Scan(&otherOrderID))
@@ -2414,7 +2414,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	check(otherOrderRows.Err())
 
 	// for convenience, sum up all items in the  other orders
-	otherOrderItemQuantities := NewMapEventIds[int32]()
+	otherOrderItemQuantities := NewMapEventIDs[int32]()
 	otherOrderIds.AllWithBreak(func(_ eventID, order *CachedOrder) bool {
 		if order.abandoned {
 			return false
@@ -2457,8 +2457,10 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 		// total += quantity * price
 		quantTimesPrice := new(apd.Decimal)
-		decimalCtx.Mul(quantTimesPrice, decQuantityt, item.price)
-		decimalCtx.Add(fiatSubtotal, fiatSubtotal, quantTimesPrice)
+		_, err = decimalCtx.Mul(quantTimesPrice, decQuantityt, item.price)
+		check(err)
+		_, err = decimalCtx.Add(fiatSubtotal, fiatSubtotal, quantTimesPrice)
+		check(err)
 		return false
 	})
 	if op.err != nil {
@@ -2538,11 +2540,13 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 			return
 		}
 
-		decimalCtx.Mul(inBaseTokens, inErc20, apd.New(1, int32(decimalCount)))
+		_, err = decimalCtx.Mul(inBaseTokens, inErc20, apd.New(1, int32(decimalCount)))
+		check(err)
 	} else {
 		// convert decimal in USD to ethereum
 		inEth := r.prices.FromFiatToCoin(fiatTotal)
-		decimalCtx.Mul(inBaseTokens, inEth, apd.New(1, 18))
+		_, err = decimalCtx.Mul(inBaseTokens, inEth, apd.New(1, 18))
+		check(err)
 	}
 
 	bigTotal.SetString(inBaseTokens.Text('f'), 10)
@@ -2673,7 +2677,7 @@ func (op *GetBlobUploadURLOp) process(r *Relay) {
 	initblobUplodBaseURLOnce.Do(initblobUplodBaseURL)
 	sessionID := op.sessionID
 	requestID := op.im.RequestId
-	sessionState := r.sessionIdsToSessionStates.Get(sessionID)
+	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
 	if sessionState == nil {
 		logS(sessionID, "relay.getBlobUploadURLOp.drain")
 		return
@@ -2691,7 +2695,7 @@ func (op *GetBlobUploadURLOp) process(r *Relay) {
 	var token string
 	var buf [32]byte
 	for {
-		crand.Read(buf[:])
+		_, _ = crand.Read(buf[:])
 		token = base64.URLEncoding.EncodeToString(buf[:])
 		if _, has := r.blobUploadTokens[token]; !has {
 			r.blobUploadTokens[token] = struct{}{}
@@ -2722,7 +2726,7 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 	log("db.KeyCardEnrolledOp.start storeId=%s", op.storeID)
 	start := now()
 
-	r.hydrateStores(NewSetEventIds(op.storeID))
+	r.hydrateStores(NewSetEventIDs(op.storeID))
 
 	evt := &StoreEvent{
 		Union: &StoreEvent_NewKeyCard{NewKeyCard: &NewKeyCard{
@@ -2766,7 +2770,7 @@ func (op *PaymentFoundInternalOp) process(r *Relay) {
 		createdByStoreID:        order.createdByStoreID,
 		createdByNetworkVersion: 1,
 	}
-	r.hydrateStores(NewSetEventIds(order.createdByStoreID))
+	r.hydrateStores(NewSetEventIDs(order.createdByStoreID))
 	// emit changeStock event
 	cs := &ChangeStock{
 		EventId: newEventID(),
@@ -2806,7 +2810,7 @@ func (r *Relay) debounceSessions() {
 	start := now()
 	ctx := context.Background()
 
-	r.sessionIdsToSessionStates.All(func(sessionId requestID, sessionState *SessionState) {
+	r.sessionIDsToSessionStates.All(func(sessionId requestID, sessionState *SessionState) {
 		// Kick the session if we haven't received any recent messages from it, including ping responses.
 		if time.Since(sessionState.lastSeenAt) > sessionKickTimeout {
 			r.metric.emit("sessions.kick", 1)
@@ -2992,7 +2996,7 @@ order by storeSeq asc limit $4`
 	debounceSessionsElapsed := took(start)
 	if debounceSessionsElapsed > 0 {
 		r.metric.emit("relay.debounceSessions.elapsed", uint64(debounceSessionsElapsed))
-		log("relay.debounceSessions.finish sessions=%d elapsed=%d", r.sessionIdsToSessionStates.Size(), debounceSessionsElapsed)
+		log("relay.debounceSessions.finish sessions=%d elapsed=%d", r.sessionIDsToSessionStates.Size(), debounceSessionsElapsed)
 	}
 }
 
@@ -3334,9 +3338,9 @@ func (r *Relay) memoryStats() {
 	log("relay.memoryStats.start")
 
 	// Shared between old and sharing worlds.
-	sessionCount := r.sessionIdsToSessionStates.Size()
+	sessionCount := r.sessionIDsToSessionStates.Size()
 	sessionVersionCounts := make(map[uint]uint64)
-	r.sessionIdsToSessionStates.All(func(sessionId requestID, sessionState *SessionState) {
+	r.sessionIDsToSessionStates.All(func(sessionId requestID, sessionState *SessionState) {
 		sessionVersionCount := sessionVersionCounts[sessionState.version]
 		sessionVersionCounts[sessionState.version] = sessionVersionCount + 1
 	})
@@ -3624,9 +3628,14 @@ func uploadBlobHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.Requ
 			}()
 		}
 
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{"ipfs_path": uploadedCid.String(), "url": "https://cloudflare-ipfs.com" + uploadedCid.String()})
-		return http.StatusCreated, nil
+		const status = http.StatusCreated
+		w.WriteHeader(status)
+		err = json.NewEncoder(w).Encode(map[string]any{"ipfs_path": uploadedCid.String(), "url": "https://cloudflare-ipfs.com" + uploadedCid.String()})
+		if err != nil {
+			log("relay.blobUpload.writeFailed err=%s", err)
+			// returning nil since responding with an error is not possible at this point
+		}
+		return status, nil
 	}
 	return func(w http.ResponseWriter, req *http.Request) {
 		code, err := fn(w, req)
@@ -3635,7 +3644,10 @@ func uploadBlobHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.Requ
 			jsonEnc := json.NewEncoder(w)
 			log("relay.blobUploadHandler err=%s", err)
 			w.WriteHeader(code)
-			jsonEnc.Encode(map[string]any{"handler": "getBlobUpload", "error": err.Error()})
+			err = jsonEnc.Encode(map[string]any{"handler": "getBlobUpload", "error": err.Error()})
+			if err != nil {
+				log("relay.blobUpload.writeFailed err=%s", err)
+			}
 			return
 		}
 	}
@@ -3690,15 +3702,24 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 		if !has {
 			return http.StatusForbidden, errors.New("access denied")
 		}
-
+		dbCtx := context.Background()
 		storeID := r.getOrCreateInternalStoreID(bigTokenID)
+		dbID := newRequestID()
 		const insertKeyCard = `insert into keyCards (id, storeId, cardPublicKey, userWalletAddr, linkedAt, lastAckedStoreSeq, lastSeenAt, lastVersion)
 		VALUES ($1, $2, $3, $4, now(), 0, now(), 1)`
-		_, err = r.connPool.Exec(context.Background(), insertKeyCard, newRequestID(), storeID, data.KeyCardPublicKey, userWallet)
+		_, err = r.connPool.Exec(dbCtx, insertKeyCard, dbID, storeID, data.KeyCardPublicKey, userWallet)
 		check(err)
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{"success": true})
+		err = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		if err != nil {
+			log("relay.enrollKeyCard.responseFailure err=%s", err)
+			// returning an error would mean sending error code
+			// we already sent one so we cant
+			_, err = r.connPool.Exec(dbCtx, `delete from keyCards where id = $1`, dbID)
+			check(err)
+			return 0, nil
+		}
 		go func() {
 			r.opsInternal <- &KeyCardEnrolledInternalOp{
 				storeID:          storeID,
@@ -3713,9 +3734,12 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 		r.metric.httpStatusCodes.WithLabelValues(strconv.Itoa(code), req.URL.Path).Inc()
 		if err != nil {
 			jsonEnc := json.NewEncoder(w)
-			log("relay.enrollKeyCard err=%s", err)
+			log("relay.enrollKeyCard.failed err=%s", err)
 			w.WriteHeader(code)
-			jsonEnc.Encode(map[string]any{"handler": "enrollKeyCard", "error": err.Error()})
+			err = jsonEnc.Encode(map[string]any{"handler": "enrollKeyCard", "error": err.Error()})
+			if err != nil {
+				log("relay.enrollKeyCard.failedToRespond err=%s", err)
+			}
 			return
 		}
 	}
@@ -3733,12 +3757,19 @@ func healthHandleFunc(r *Relay) func(http.ResponseWriter, *http.Request) {
 			log("relay.health.dbs.fail")
 			w.WriteHeader(500)
 			r.metric.httpStatusCodes.WithLabelValues("500", req.URL.Path).Inc()
-			fmt.Fprintln(w, "database unavailable")
+			_, err = fmt.Fprintln(w, "database unavailable")
+			if err != nil {
+				log("relay.health.okFailed error=%s", err)
+			}
 			return
 		}
 
 		log("relay.health.pass")
-		fmt.Fprintln(w, "health OK")
+		_, err = fmt.Fprintln(w, "health OK")
+		if err != nil {
+			log("relay.health.okFailed error=%s", err)
+			return
+		}
 		r.metric.httpStatusCodes.WithLabelValues("200", req.URL.Path).Inc()
 		log("relay.health.finish elapsed=%d", took(start))
 	}
