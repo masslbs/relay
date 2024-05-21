@@ -2315,18 +2315,16 @@ func (op *EventWriteOp) process(r *Relay) {
 }
 
 func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *Error {
+	_, storeManifestExists := r.storeManifestsByStoreID.get(m.createdByStoreID)
 	switch tv := union.Union.(type) {
 	case *Event_StoreManifest:
-		_, exists := r.storeManifestsByStoreID.get(m.createdByStoreID)
-		if exists {
+		if storeManifestExists {
 			return &Error{Code: invalidErrorCode, Message: "store already exists"}
 		}
 	case *Event_UpdateManifest:
-		_, exists := r.storeManifestsByStoreID.get(m.createdByStoreID)
-		if !exists {
+		if !storeManifestExists {
 			return notFoundError
 		}
-
 		// this feels like a validation step but we dont have access to the relay there
 		if tv.UpdateManifest.Field == UpdateManifest_MANIFEST_FIELD_ADD_ERC20 {
 			callOpts := &bind.CallOpts{
@@ -2377,12 +2375,18 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 
 		}
 	case *Event_CreateItem:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetCreateItem()
 		_, itemExists := r.itemsByItemID.get(evt.EventId)
 		if itemExists {
 			return &Error{Code: invalidErrorCode, Message: "item already exists"}
 		}
 	case *Event_UpdateItem:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetUpdateItem()
 		item, itemExists := r.itemsByItemID.get(evt.ItemId)
 		if !itemExists {
@@ -2392,12 +2396,18 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			return notFoundError
 		}
 	case *Event_CreateTag:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetCreateTag()
 		_, tagExists := r.tagsByTagID.get(evt.EventId)
 		if tagExists {
 			return &Error{Code: invalidErrorCode, Message: "tag already exists"}
 		}
 	case *Event_AddToTag:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetAddToTag()
 		tag, tagExists := r.tagsByTagID.get(evt.TagId)
 		if !tagExists {
@@ -2414,6 +2424,9 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			return notFoundError
 		}
 	case *Event_RemoveFromTag:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetRemoveFromTag()
 		tag, tagExists := r.tagsByTagID.get(evt.TagId)
 		if !tagExists {
@@ -2430,6 +2443,9 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			return notFoundError
 		}
 	case *Event_RenameTag:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetRenameTag()
 		tag, tagExists := r.tagsByTagID.get(evt.TagId)
 		if !tagExists {
@@ -2439,6 +2455,9 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			return notFoundError
 		}
 	case *Event_DeleteTag:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetDeleteTag()
 		tag, tagExists := r.tagsByTagID.get(evt.TagId)
 		if !tagExists {
@@ -2448,6 +2467,9 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			return notFoundError
 		}
 	case *Event_ChangeStock:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetChangeStock()
 		for i := 0; i < len(evt.ItemIds); i++ {
 			itemID := evt.ItemIds[i]
@@ -2468,12 +2490,18 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			}
 		}
 	case *Event_CreateCart:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetCreateCart()
 		_, cartExists := r.cartsByCartID.get(evt.EventId)
 		if cartExists {
 			return &Error{Code: invalidErrorCode, Message: "cart already exists"}
 		}
 	case *Event_ChangeCart:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetChangeCart()
 		cart, cartExists := r.cartsByCartID.get(evt.CartId)
 		if !cartExists {
@@ -2506,6 +2534,9 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			return &Error{Code: invalidErrorCode, Message: "not enough items in cart"}
 		}
 	case *Event_CartAbandoned:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetCartAbandoned()
 		cart, cartExists := r.cartsByCartID.get(evt.CartId)
 		if !cartExists {
