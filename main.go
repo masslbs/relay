@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"context"
 	crand "crypto/rand"
-	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -2703,8 +2702,6 @@ func (op *CommitCartOp) process(r *Relay) {
 		proof       common.Address // TODO
 		receiptHash [32]byte
 
-		etherCurrency = common.Address{} // ERC20 would be address(1)
-
 		usignErc20     = len(op.im.Erc20Addr) == 20
 		erc20TokenAddr common.Address
 	)
@@ -2726,7 +2723,6 @@ func (op *CommitCartOp) process(r *Relay) {
 
 	inBaseTokens := new(apd.Decimal)
 	if usignErc20 {
-		etherCurrency = common.Address{1}
 		erc20TokenAddr = common.Address(op.im.Erc20Addr)
 		var has bool
 		_, has = store.acceptedErc20s[erc20TokenAddr]
@@ -2765,8 +2761,9 @@ func (op *CommitCartOp) process(r *Relay) {
 	bigTotal.SetString(inBaseTokens.Text('f'), 10)
 
 	// TODO: actual proof. for now we just use the hash of the internal cartId as a nonce
-	hasher := sha512.New512_256()
-	copy(receiptHash[:], hasher.Sum(cart.cartID))
+	hasher := sha3.NewLegacyKeccak256()
+	hasher.Write(cart.cartID)
+	copy(receiptHash[:], hasher.Sum(nil))
 
 	bigStoreTokenID := new(big.Int).SetBytes(store.storeTokenID)
 
@@ -2794,7 +2791,7 @@ func (op *CommitCartOp) process(r *Relay) {
 		return
 	}
 
-	purchaseAddr, err := factory.GetPaymentAddress(callOpts, ownerAddr, proof, bigTotal, etherCurrency, receiptHash)
+	purchaseAddr, err := factory.GetPaymentAddress(callOpts, ownerAddr, proof, bigTotal, erc20TokenAddr, receiptHash)
 	if err != nil {
 		op.err = &Error{Code: invalidErrorCode, Message: "failed to create payment address"}
 		r.sendSessionOp(sessionState, op)
