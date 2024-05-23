@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"context"
 	crand "crypto/rand"
-	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -2202,7 +2201,7 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 // 3. the stock counts
 func (r *Relay) storeRootHash(storeID eventID) []byte {
 	start := now()
-	log("relay.storeRootHash storeId=%s", storeID)
+	//log("relay.storeRootHash storeId=%s", storeID)
 
 	storeManifest, has := r.storeManifestsByStoreID.get(storeID)
 	assertWithMessage(has, "no manifest for storeId")
@@ -2212,7 +2211,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 	manifestHash.Write(storeManifest.storeTokenID)
 	fmt.Fprint(manifestHash, storeManifest.domain)
 	manifestHash.Write(storeManifest.publishedTagID)
-	log("relay.storeRootHash manifest=%x", manifestHash.Sum(nil))
+	//log("relay.storeRootHash manifest=%x", manifestHash.Sum(nil))
 
 	// 2. all items in the published set
 	publishedItemsHash := sha3.NewLegacyKeccak256()
@@ -2227,7 +2226,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 			assertWithMessage(has, fmt.Sprintf("failed to load published itemId=%s", itemID))
 			publishedItemsHash.Write(item.itemID)
 		}
-		log("relay.storeRootHash published=%x", publishedItemsHash.Sum(nil))
+		//log("relay.storeRootHash published=%x", publishedItemsHash.Sum(nil))
 	}
 
 	// TODO: other tags
@@ -2238,7 +2237,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 	//assertWithMessage(has, "stock unavailable")
 	if has {
 		// TODO: we should probably always have a stock that's just empty
-		log("relay.storeRootHash.hasStock storeId=%s", storeID)
+		//log("relay.storeRootHash.hasStock storeId=%s", storeID)
 		// see above
 		stockIds := stock.inventory.Keys()
 		sort.Sort(stockIds)
@@ -2249,7 +2248,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 			fmt.Fprintf(stockHash, "%d", count)
 		}
 	}
-	log("relay.storeRootHash stock=%x", stockHash.Sum(nil))
+	//log("relay.storeRootHash stock=%x", stockHash.Sum(nil))
 
 	// final root hash of the three nodes
 	rootHash := sha3.NewLegacyKeccak256()
@@ -2259,7 +2258,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 
 	digest := rootHash.Sum(nil)
 	took := took(start)
-	log("relay.storeRootHash.hash digest=%x took=%d", digest, took)
+	log("relay.storeRootHash.hash store=%s digest=%x took=%d", storeID, digest, took)
 	r.metric.counterAdd("storeRootHash_took", float64(took))
 	return digest
 }
@@ -2315,18 +2314,16 @@ func (op *EventWriteOp) process(r *Relay) {
 }
 
 func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *Error {
+	_, storeManifestExists := r.storeManifestsByStoreID.get(m.createdByStoreID)
 	switch tv := union.Union.(type) {
 	case *Event_StoreManifest:
-		_, exists := r.storeManifestsByStoreID.get(m.createdByStoreID)
-		if exists {
+		if storeManifestExists {
 			return &Error{Code: invalidErrorCode, Message: "store already exists"}
 		}
 	case *Event_UpdateManifest:
-		_, exists := r.storeManifestsByStoreID.get(m.createdByStoreID)
-		if !exists {
+		if !storeManifestExists {
 			return notFoundError
 		}
-
 		// this feels like a validation step but we dont have access to the relay there
 		if tv.UpdateManifest.Field == UpdateManifest_MANIFEST_FIELD_ADD_ERC20 {
 			callOpts := &bind.CallOpts{
@@ -2374,15 +2371,20 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			if tokenName == "" {
 				return &Error{Code: invalidErrorCode, Message: "invalid token name"}
 			}
-
 		}
 	case *Event_CreateItem:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetCreateItem()
 		_, itemExists := r.itemsByItemID.get(evt.EventId)
 		if itemExists {
 			return &Error{Code: invalidErrorCode, Message: "item already exists"}
 		}
 	case *Event_UpdateItem:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetUpdateItem()
 		item, itemExists := r.itemsByItemID.get(evt.ItemId)
 		if !itemExists {
@@ -2392,12 +2394,18 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			return notFoundError
 		}
 	case *Event_CreateTag:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetCreateTag()
 		_, tagExists := r.tagsByTagID.get(evt.EventId)
 		if tagExists {
 			return &Error{Code: invalidErrorCode, Message: "tag already exists"}
 		}
 	case *Event_AddToTag:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetAddToTag()
 		tag, tagExists := r.tagsByTagID.get(evt.TagId)
 		if !tagExists {
@@ -2414,6 +2422,9 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			return notFoundError
 		}
 	case *Event_RemoveFromTag:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetRemoveFromTag()
 		tag, tagExists := r.tagsByTagID.get(evt.TagId)
 		if !tagExists {
@@ -2430,6 +2441,9 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			return notFoundError
 		}
 	case *Event_RenameTag:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetRenameTag()
 		tag, tagExists := r.tagsByTagID.get(evt.TagId)
 		if !tagExists {
@@ -2439,6 +2453,9 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			return notFoundError
 		}
 	case *Event_DeleteTag:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetDeleteTag()
 		tag, tagExists := r.tagsByTagID.get(evt.TagId)
 		if !tagExists {
@@ -2448,6 +2465,9 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			return notFoundError
 		}
 	case *Event_ChangeStock:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetChangeStock()
 		for i := 0; i < len(evt.ItemIds); i++ {
 			itemID := evt.ItemIds[i]
@@ -2468,12 +2488,18 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			}
 		}
 	case *Event_CreateCart:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetCreateCart()
 		_, cartExists := r.cartsByCartID.get(evt.EventId)
 		if cartExists {
 			return &Error{Code: invalidErrorCode, Message: "cart already exists"}
 		}
 	case *Event_ChangeCart:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetChangeCart()
 		cart, cartExists := r.cartsByCartID.get(evt.CartId)
 		if !cartExists {
@@ -2506,6 +2532,9 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			return &Error{Code: invalidErrorCode, Message: "not enough items in cart"}
 		}
 	case *Event_CartAbandoned:
+		if !storeManifestExists {
+			return notFoundError
+		}
 		evt := union.GetCartAbandoned()
 		cart, cartExists := r.cartsByCartID.get(evt.CartId)
 		if !cartExists {
@@ -2673,8 +2702,6 @@ func (op *CommitCartOp) process(r *Relay) {
 		proof       common.Address // TODO
 		receiptHash [32]byte
 
-		etherCurrency = common.Address{} // ERC20 would be address(1)
-
 		usignErc20     = len(op.im.Erc20Addr) == 20
 		erc20TokenAddr common.Address
 	)
@@ -2696,7 +2723,6 @@ func (op *CommitCartOp) process(r *Relay) {
 
 	inBaseTokens := new(apd.Decimal)
 	if usignErc20 {
-		etherCurrency = common.Address{1}
 		erc20TokenAddr = common.Address(op.im.Erc20Addr)
 		var has bool
 		_, has = store.acceptedErc20s[erc20TokenAddr]
@@ -2735,8 +2761,9 @@ func (op *CommitCartOp) process(r *Relay) {
 	bigTotal.SetString(inBaseTokens.Text('f'), 10)
 
 	// TODO: actual proof. for now we just use the hash of the internal cartId as a nonce
-	hasher := sha512.New512_256()
-	copy(receiptHash[:], hasher.Sum(cart.cartID))
+	hasher := sha3.NewLegacyKeccak256()
+	hasher.Write(cart.cartID)
+	copy(receiptHash[:], hasher.Sum(nil))
 
 	bigStoreTokenID := new(big.Int).SetBytes(store.storeTokenID)
 
@@ -2764,7 +2791,7 @@ func (op *CommitCartOp) process(r *Relay) {
 		return
 	}
 
-	purchaseAddr, err := factory.GetPaymentAddress(callOpts, ownerAddr, proof, bigTotal, etherCurrency, receiptHash)
+	purchaseAddr, err := factory.GetPaymentAddress(callOpts, ownerAddr, proof, bigTotal, erc20TokenAddr, receiptHash)
 	if err != nil {
 		op.err = &Error{Code: invalidErrorCode, Message: "failed to create payment address"}
 		r.sendSessionOp(sessionState, op)
