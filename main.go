@@ -2202,7 +2202,7 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 // 3. the stock counts
 func (r *Relay) storeRootHash(storeID eventID) []byte {
 	start := now()
-	log("relay.storeRootHash storeId=%s", storeID)
+	//log("relay.storeRootHash storeId=%s", storeID)
 
 	storeManifest, has := r.storeManifestsByStoreID.get(storeID)
 	assertWithMessage(has, "no manifest for storeId")
@@ -2212,7 +2212,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 	manifestHash.Write(storeManifest.storeTokenID)
 	fmt.Fprint(manifestHash, storeManifest.domain)
 	manifestHash.Write(storeManifest.publishedTagID)
-	log("relay.storeRootHash manifest=%x", manifestHash.Sum(nil))
+	//log("relay.storeRootHash manifest=%x", manifestHash.Sum(nil))
 
 	// 2. all items in the published set
 	publishedItemsHash := sha3.NewLegacyKeccak256()
@@ -2227,7 +2227,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 			assertWithMessage(has, fmt.Sprintf("failed to load published itemId=%s", itemID))
 			publishedItemsHash.Write(item.itemID)
 		}
-		log("relay.storeRootHash published=%x", publishedItemsHash.Sum(nil))
+		//log("relay.storeRootHash published=%x", publishedItemsHash.Sum(nil))
 	}
 
 	// TODO: other tags
@@ -2238,7 +2238,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 	//assertWithMessage(has, "stock unavailable")
 	if has {
 		// TODO: we should probably always have a stock that's just empty
-		log("relay.storeRootHash.hasStock storeId=%s", storeID)
+		//log("relay.storeRootHash.hasStock storeId=%s", storeID)
 		// see above
 		stockIds := stock.inventory.Keys()
 		sort.Sort(stockIds)
@@ -2249,7 +2249,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 			fmt.Fprintf(stockHash, "%d", count)
 		}
 	}
-	log("relay.storeRootHash stock=%x", stockHash.Sum(nil))
+	//log("relay.storeRootHash stock=%x", stockHash.Sum(nil))
 
 	// final root hash of the three nodes
 	rootHash := sha3.NewLegacyKeccak256()
@@ -2259,7 +2259,7 @@ func (r *Relay) storeRootHash(storeID eventID) []byte {
 
 	digest := rootHash.Sum(nil)
 	took := took(start)
-	log("relay.storeRootHash.hash digest=%x took=%d", digest, took)
+	log("relay.storeRootHash.hash store=%s digest=%x took=%d", storeID, digest, took)
 	r.metric.counterAdd("storeRootHash_took", float64(took))
 	return digest
 }
@@ -2372,7 +2372,6 @@ func (r *Relay) checkWrite(union *Event, m CachedMetadata, sess *SessionState) *
 			if tokenName == "" {
 				return &Error{Code: invalidErrorCode, Message: "invalid token name"}
 			}
-
 		}
 	case *Event_CreateItem:
 		if !storeManifestExists {
