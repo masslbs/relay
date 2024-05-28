@@ -73,7 +73,10 @@ create table events (
     totalInCrypto text,
      -- slight de-normalization to avoid going through keyCards table
     userWallet bytea,
-    cardPublicKey bytea
+    cardPublicKey bytea,
+
+    paymentId bytea,
+    paymentTtl decimal(70, 0)
 );
 alter table events add constraint eventsId check (octet_length(eventId) = 32);
 alter table events add constraint eventsSignature check (octet_length(signature) = 65);
@@ -126,6 +129,7 @@ create unique index eventsOnStoreSeq on events(createdByStoreId, storeSeq);
 CREATE TABLE payments (
     waiterId         bytea PRIMARY KEY NOT NULL,
     cartId           bytea NOT NULL,
+    paymentId        bytea NOT NULL, -- uint256
     createdByStoreId bytea NOT NULL,
     storeSeqNo       bigint not null, -- the seqNo of store when the cart was finalized
     cartFinalizedAt  TIMESTAMP NOT NULL,

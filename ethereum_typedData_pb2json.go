@@ -130,6 +130,8 @@ func (evt *CartFinalized) typedDataMap() map[string]any {
 		"sales_tax":       evt.SalesTax,
 		"total":           evt.Total,
 		"total_in_crypto": evt.TotalInCrypto,
+		"payment_id":      evt.PaymentId,
+		"payment_ttl":     evt.PaymentTtl,
 	}
 	if len(evt.Erc20Addr) == 20 {
 		m["erc20_addr"] = evt.Erc20Addr

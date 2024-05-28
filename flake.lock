@@ -2,24 +2,44 @@
   "nodes": {
     "contracts": {
       "inputs": {
+        "ds-test": "ds-test",
         "flake-parts": "flake-parts",
         "forge-std": "forge-std",
         "foundry": "foundry",
-        "nixpkgs": "nixpkgs_2",
+        "nixpkgs": [
+          "nixpkgs"
+        ],
         "permit2": "permit2",
         "solady": "solady"
       },
       "locked": {
-        "lastModified": 1717492321,
-        "narHash": "sha256-bfMj8krnDj8uGuyWtrOc+4l5AdCooJmlNHfZNHghBBw=",
+        "lastModified": 1717417778,
+        "narHash": "sha256-x+VGKqYZJB2pDcbsLIlJTOml3VV7X+HWpD/9bmdA1lQ=",
         "owner": "masslbs",
         "repo": "contracts",
-        "rev": "357dcb517fff8253464e1049bba564280c3c6da0",
+        "rev": "c02cc9f34f838720e655b14255011d9a0f141e48",
         "type": "github"
       },
       "original": {
         "owner": "masslbs",
+        "ref": "payments-v2-intergration",
         "repo": "contracts",
+        "type": "github"
+      }
+    },
+    "ds-test": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1677883973,
+        "narHash": "sha256-wXtNq4ZUohndNGs9VttOI9m9VW5QlVKOPtR8+mv2fBM=",
+        "owner": "dapphub",
+        "repo": "ds-test",
+        "rev": "e282159d5170298eb2455a6c05280ab5a73a4ef0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "dapphub",
+        "repo": "ds-test",
         "type": "github"
       }
     },
@@ -95,17 +115,15 @@
       "locked": {
         "lastModified": 1715903882,
         "narHash": "sha256-Uqr0ZwCnQL9ShWxIgG/ci/5ukGyuqt2n+C0GFKlJiho=",
-        "ref": "refs/heads/master",
+        "owner": "foundry-rs",
+        "repo": "forge-std",
         "rev": "52715a217dc51d0de15877878ab8213f6cbbbab5",
-        "revCount": 334,
-        "submodules": true,
-        "type": "git",
-        "url": "https://github.com/foundry-rs/forge-std"
+        "type": "github"
       },
       "original": {
-        "submodules": true,
-        "type": "git",
-        "url": "https://github.com/foundry-rs/forge-std"
+        "owner": "foundry-rs",
+        "repo": "forge-std",
+        "type": "github"
       }
     },
     "foundry": {
@@ -116,16 +134,16 @@
       "locked": {
         "lastModified": 1714727549,
         "narHash": "sha256-CWXRTxxcgMfQubJugpeg3yVWIfm70MYTtgaKWKgD60U=",
-        "owner": "shazow",
-        "repo": "foundry.nix",
+        "ref": "monthly",
         "rev": "47cf189ec395eda4b3e0623179d1075c8027ca97",
-        "type": "github"
+        "revCount": 436,
+        "type": "git",
+        "url": "https://github.com/shazow/foundry.nix.git"
       },
       "original": {
-        "owner": "shazow",
         "ref": "monthly",
-        "repo": "foundry.nix",
-        "type": "github"
+        "type": "git",
+        "url": "https://github.com/shazow/foundry.nix.git"
       }
     },
     "gitignore": {
@@ -216,22 +234,6 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1701282334,
-        "narHash": "sha256-MxCVrXY6v4QmfTwIysjjaX0XUhqBbxTWWB4HXtDYsdk=",
-        "owner": "nixos",
-        "repo": "nixpkgs",
-        "rev": "057f9aecfb71c4437d2b27d3323df7f93c010b7e",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nixos",
-        "ref": "23.11",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
-    "nixpkgs_3": {
-      "locked": {
         "lastModified": 1717159533,
         "narHash": "sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth/3Xuw=",
         "owner": "nixos",
@@ -246,7 +248,7 @@
         "type": "github"
       }
     },
-    "nixpkgs_4": {
+    "nixpkgs_3": {
       "locked": {
         "lastModified": 1710765496,
         "narHash": "sha256-p7ryWEeQfMwTB6E0wIUd5V2cFTgq+DRRBz2hYGnJZyA=",
@@ -267,22 +269,22 @@
       "locked": {
         "lastModified": 1696001773,
         "narHash": "sha256-sevmJhYn5/odTvS9si+KFw/R234KNaNfrnECdkVcL9w=",
-        "ref": "refs/heads/main",
+        "owner": "uniswap",
+        "repo": "permit2",
         "rev": "cc56ad0f3439c502c246fc5cfcc3db92bb8b7219",
-        "revCount": 184,
-        "type": "git",
-        "url": "https://github.com/uniswap/permit2.git"
+        "type": "github"
       },
       "original": {
-        "type": "git",
-        "url": "https://github.com/uniswap/permit2.git"
+        "owner": "uniswap",
+        "repo": "permit2",
+        "type": "github"
       }
     },
     "pre-commit-hooks": {
       "inputs": {
         "flake-compat": "flake-compat",
         "gitignore": "gitignore",
-        "nixpkgs": "nixpkgs_4",
+        "nixpkgs": "nixpkgs_3",
         "nixpkgs-stable": "nixpkgs-stable"
       },
       "locked": {
@@ -304,7 +306,7 @@
         "contracts": "contracts",
         "flake-utils": "flake-utils_2",
         "gomod2nix": "gomod2nix",
-        "nixpkgs": "nixpkgs_3",
+        "nixpkgs": "nixpkgs_2",
         "pre-commit-hooks": "pre-commit-hooks",
         "schema": "schema"
       }
@@ -312,15 +314,16 @@
     "schema": {
       "flake": false,
       "locked": {
-        "lastModified": 1713864796,
-        "narHash": "sha256-1eqpiYyVtcJfHuV55SHSkZIMFCabTTpe7etr6Dvtqq0=",
+        "lastModified": 1717076221,
+        "narHash": "sha256-KtHFy4uwiDyD3j9zBD4BM6tknvIcEOewjk8OppA3pHM=",
         "owner": "masslbs",
         "repo": "network-schema",
-        "rev": "1ccb579bd1e651605256d144b1fb3575cea81284",
+        "rev": "16b1c68224ff0f7e2e080c83a779d2adeb532217",
         "type": "github"
       },
       "original": {
         "owner": "masslbs",
+        "ref": "payments-v2-intergration",
         "repo": "network-schema",
         "type": "github"
       }
