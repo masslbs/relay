@@ -4736,7 +4736,12 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 		var bigTokenID big.Int
 		bigTokenID.SetBytes(data.StoreTokenID)
 
-		has, err := storeReg.HasAtLeastAccess(opts, &bigTokenID, userWallet, 1)
+		// updateRootHash PERM is equivalent to Clerk or higher
+		perm, err := storeReg.PERMUpdateRootHash(opts)
+		if err != nil {
+			return http.StatusBadRequest, fmt.Errorf("failed to get updateRootHash PERM: %w", err)
+		}
+		has, err := storeReg.HasPermission(opts, &bigTokenID, userWallet, perm)
 		if err != nil {
 			return http.StatusInternalServerError, fmt.Errorf("contract call error: %w", err)
 		}

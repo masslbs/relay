@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from abi/ERC20.json - git at dfca5599fdf0e533fb6aebeceb379122332fe8a3
+// Generated from abi/ERC20.json - git at 40e546096c8b253cd948f9275b1c67fba596fcbe
 
 // Code generated - DO NOT EDIT.
 // This file is a generated binding and any manual changes will be lost.

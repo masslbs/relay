@@ -54,7 +54,7 @@
       };
     };
   };
-  contracts_abi = contracts.packages.${pkgs.system}.market-build;
+  contracts_abi = contracts.packages.${pkgs.system}.default;
 in
   pkgs.mkShell {
     packages =

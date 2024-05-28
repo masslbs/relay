@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from abi/StoreReg.json - git at dfca5599fdf0e533fb6aebeceb379122332fe8a3
+// Generated from abi/StoreReg.json - git at 40e546096c8b253cd948f9275b1c67fba596fcbe
 
 // Code generated - DO NOT EDIT.
 // This file is a generated binding and any manual changes will be lost.
@@ -37,7 +37,7 @@ var (
 
 // RegStoreMetaData contains all meta data concerning the RegStore contract.
 var RegStoreMetaData = &bind.MetaData{
-	ABI: "[{\"type\":\"constructor\",\"inputs\":[{\"name\":\"r\",\"type\":\"address\",\"internalType\":\"contractRelayReg\"}],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"_getTokenMessageHash\",\"inputs\":[{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"pure\"},{\"type\":\"function\",\"name\":\"addRelay\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"relayId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"approve\",\"inputs\":[{\"name\":\"account\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"payable\"},{\"type\":\"function\",\"name\":\"balanceOf\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"result\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAllRelays\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256[]\",\"internalType\":\"uint256[]\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getApproved\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"result\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getRelayCount\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"hasAtLeastAccess\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"addr\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"want\",\"type\":\"uint8\",\"internalType\":\"enumAccessLevel\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"isApprovedForAll\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"operator\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"result\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"mint\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"name\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"pure\"},{\"type\":\"function\",\"name\":\"ownerOf\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"result\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"publishInviteVerifier\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"verifier\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"redeemInvite\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"v\",\"type\":\"uint8\",\"internalType\":\"uint8\"},{\"name\":\"r\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"s\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"registerUser\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"addr\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"acl\",\"type\":\"uint8\",\"internalType\":\"enumAccessLevel\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"relayReg\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"contractRelayReg\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"relays\",\"inputs\":[{\"name\":\"storeid\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"removeRelay\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"idx\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"removeUser\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"who\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"replaceRelay\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"idx\",\"type\":\"uint8\",\"internalType\":\"uint8\"},{\"name\":\"relayId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"requireOnlyAdminOrHigher\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"who\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"rootHashes\",\"inputs\":[{\"name\":\"storeid\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"safeTransferFrom\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"payable\"},{\"type\":\"function\",\"name\":\"safeTransferFrom\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"data\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"payable\"},{\"type\":\"function\",\"name\":\"setApprovalForAll\",\"inputs\":[{\"name\":\"operator\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"isApproved\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"storesToUsers\",\"inputs\":[{\"name\":\"storeid\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"storeuser\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"enumAccessLevel\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"supportsInterface\",\"inputs\":[{\"name\":\"interfaceId\",\"type\":\"bytes4\",\"internalType\":\"bytes4\"}],\"outputs\":[{\"name\":\"result\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"symbol\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"pure\"},{\"type\":\"function\",\"name\":\"tokenURI\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"transferFrom\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"payable\"},{\"type\":\"function\",\"name\":\"updateRootHash\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"hash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"event\",\"name\":\"Approval\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"account\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"ApprovalForAll\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"operator\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"isApproved\",\"type\":\"bool\",\"indexed\":false,\"internalType\":\"bool\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"Transfer\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"UserAdded\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"indexed\":false,\"internalType\":\"address\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"UserRemoved\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"users\",\"type\":\"address\",\"indexed\":false,\"internalType\":\"address\"}],\"anonymous\":false},{\"type\":\"error\",\"name\":\"AccountBalanceOverflow\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"BalanceQueryForZeroAddress\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidAccessLevel\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"NoVerifier\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"NotAuthorized\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"NotOwnerNorApproved\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"TokenAlreadyExists\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"TokenDoesNotExist\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"TransferFromIncorrectOwner\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"TransferToNonERC721ReceiverImplementer\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"TransferToZeroAddress\",\"inputs\":[]}]",
+	ABI: "[{\"type\":\"constructor\",\"inputs\":[{\"name\":\"r\",\"type\":\"address\",\"internalType\":\"contractRelayReg\"}],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"PERM_addPermission\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_addRelay\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_publishInviteVerifier\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_registerUser\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_removePermission\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_removeRelay\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_removeUser\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_replaceRelay\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_updateRootHash\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"_getTokenMessageHash\",\"inputs\":[{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"pure\"},{\"type\":\"function\",\"name\":\"addPermission\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"perm\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"addRelay\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"relayId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"allPermissionsGuard\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"perms\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"approve\",\"inputs\":[{\"name\":\"account\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"payable\"},{\"type\":\"function\",\"name\":\"balanceOf\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"result\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAllPermissions\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAllRelays\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256[]\",\"internalType\":\"uint256[]\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getApproved\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"result\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getRelayCount\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"hasEnoughPermissions\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"perms\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"hasPermission\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"perm\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"isApprovedForAll\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"operator\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"result\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"mint\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"name\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"pure\"},{\"type\":\"function\",\"name\":\"ownerOf\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"result\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"permissionGuard\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"perm\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"permsToBitmap\",\"inputs\":[{\"name\":\"perms\",\"type\":\"uint8[]\",\"internalType\":\"uint8[]\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"pure\"},{\"type\":\"function\",\"name\":\"publishInviteVerifier\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"verifier\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"redeemInvite\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"v\",\"type\":\"uint8\",\"internalType\":\"uint8\"},{\"name\":\"r\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"s\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"registerUser\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"perms\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"relayReg\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"contractRelayReg\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"relays\",\"inputs\":[{\"name\":\"storeid\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"removePermission\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"perm\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"removeRelay\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"idx\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"removeUser\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"replaceRelay\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"idx\",\"type\":\"uint8\",\"internalType\":\"uint8\"},{\"name\":\"relayId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"rootHashes\",\"inputs\":[{\"name\":\"storeid\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"safeTransferFrom\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"payable\"},{\"type\":\"function\",\"name\":\"safeTransferFrom\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"data\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"payable\"},{\"type\":\"function\",\"name\":\"setApprovalForAll\",\"inputs\":[{\"name\":\"operator\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"isApproved\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"supportsInterface\",\"inputs\":[{\"name\":\"interfaceId\",\"type\":\"bytes4\",\"internalType\":\"bytes4\"}],\"outputs\":[{\"name\":\"result\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"symbol\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"pure\"},{\"type\":\"function\",\"name\":\"tokenURI\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"transferFrom\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"payable\"},{\"type\":\"function\",\"name\":\"updateRootHash\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"hash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"event\",\"name\":\"Approval\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"account\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"ApprovalForAll\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"operator\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"isApproved\",\"type\":\"bool\",\"indexed\":false,\"internalType\":\"bool\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"PermissionAdded\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"indexed\":false,\"internalType\":\"address\"},{\"name\":\"permission\",\"type\":\"uint8\",\"indexed\":false,\"internalType\":\"uint8\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"PermissionRemoved\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"indexed\":false,\"internalType\":\"address\"},{\"name\":\"permission\",\"type\":\"uint8\",\"indexed\":false,\"internalType\":\"uint8\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"Transfer\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"UserAdded\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"indexed\":false,\"internalType\":\"address\"},{\"name\":\"permissions\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"UserRemoved\",\"inputs\":[{\"name\":\"storeId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"users\",\"type\":\"address\",\"indexed\":false,\"internalType\":\"address\"}],\"anonymous\":false},{\"type\":\"error\",\"name\":\"AccountBalanceOverflow\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"BalanceQueryForZeroAddress\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"NoVerifier\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"NotAuthorized\",\"inputs\":[{\"name\":\"permision\",\"type\":\"uint8\",\"internalType\":\"uint8\"}]},{\"type\":\"error\",\"name\":\"NotOwnerNorApproved\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"TokenAlreadyExists\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"TokenDoesNotExist\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"TransferFromIncorrectOwner\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"TransferToNonERC721ReceiverImplementer\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"TransferToZeroAddress\",\"inputs\":[]}]",
 }
 
 // RegStoreABI is the input ABI used to generate the binding from.
@@ -186,6 +186,285 @@ func (_RegStore *RegStoreTransactorRaw) Transact(opts *bind.TransactOpts, method
 	return _RegStore.Contract.contract.Transact(opts, method, params...)
 }
 
+// PERMAddPermission is a free data retrieval call binding the contract method 0x537f6178.
+//
+// Solidity: function PERM_addPermission() view returns(uint8)
+func (_RegStore *RegStoreCaller) PERMAddPermission(opts *bind.CallOpts) (uint8, error) {
+	var out []interface{}
+	err := _RegStore.contract.Call(opts, &out, "PERM_addPermission")
+
+	if err != nil {
+		return *new(uint8), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(uint8)).(*uint8)
+
+	return out0, err
+
+}
+
+// PERMAddPermission is a free data retrieval call binding the contract method 0x537f6178.
+//
+// Solidity: function PERM_addPermission() view returns(uint8)
+func (_RegStore *RegStoreSession) PERMAddPermission() (uint8, error) {
+	return _RegStore.Contract.PERMAddPermission(&_RegStore.CallOpts)
+}
+
+// PERMAddPermission is a free data retrieval call binding the contract method 0x537f6178.
+//
+// Solidity: function PERM_addPermission() view returns(uint8)
+func (_RegStore *RegStoreCallerSession) PERMAddPermission() (uint8, error) {
+	return _RegStore.Contract.PERMAddPermission(&_RegStore.CallOpts)
+}
+
+// PERMAddRelay is a free data retrieval call binding the contract method 0x0fb7bcf7.
+//
+// Solidity: function PERM_addRelay() view returns(uint8)
+func (_RegStore *RegStoreCaller) PERMAddRelay(opts *bind.CallOpts) (uint8, error) {
+	var out []interface{}
+	err := _RegStore.contract.Call(opts, &out, "PERM_addRelay")
+
+	if err != nil {
+		return *new(uint8), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(uint8)).(*uint8)
+
+	return out0, err
+
+}
+
+// PERMAddRelay is a free data retrieval call binding the contract method 0x0fb7bcf7.
+//
+// Solidity: function PERM_addRelay() view returns(uint8)
+func (_RegStore *RegStoreSession) PERMAddRelay() (uint8, error) {
+	return _RegStore.Contract.PERMAddRelay(&_RegStore.CallOpts)
+}
+
+// PERMAddRelay is a free data retrieval call binding the contract method 0x0fb7bcf7.
+//
+// Solidity: function PERM_addRelay() view returns(uint8)
+func (_RegStore *RegStoreCallerSession) PERMAddRelay() (uint8, error) {
+	return _RegStore.Contract.PERMAddRelay(&_RegStore.CallOpts)
+}
+
+// PERMPublishInviteVerifier is a free data retrieval call binding the contract method 0x0f66f8d8.
+//
+// Solidity: function PERM_publishInviteVerifier() view returns(uint8)
+func (_RegStore *RegStoreCaller) PERMPublishInviteVerifier(opts *bind.CallOpts) (uint8, error) {
+	var out []interface{}
+	err := _RegStore.contract.Call(opts, &out, "PERM_publishInviteVerifier")
+
+	if err != nil {
+		return *new(uint8), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(uint8)).(*uint8)
+
+	return out0, err
+
+}
+
+// PERMPublishInviteVerifier is a free data retrieval call binding the contract method 0x0f66f8d8.
+//
+// Solidity: function PERM_publishInviteVerifier() view returns(uint8)
+func (_RegStore *RegStoreSession) PERMPublishInviteVerifier() (uint8, error) {
+	return _RegStore.Contract.PERMPublishInviteVerifier(&_RegStore.CallOpts)
+}
+
+// PERMPublishInviteVerifier is a free data retrieval call binding the contract method 0x0f66f8d8.
+//
+// Solidity: function PERM_publishInviteVerifier() view returns(uint8)
+func (_RegStore *RegStoreCallerSession) PERMPublishInviteVerifier() (uint8, error) {
+	return _RegStore.Contract.PERMPublishInviteVerifier(&_RegStore.CallOpts)
+}
+
+// PERMRegisterUser is a free data retrieval call binding the contract method 0xd3c90b32.
+//
+// Solidity: function PERM_registerUser() view returns(uint8)
+func (_RegStore *RegStoreCaller) PERMRegisterUser(opts *bind.CallOpts) (uint8, error) {
+	var out []interface{}
+	err := _RegStore.contract.Call(opts, &out, "PERM_registerUser")
+
+	if err != nil {
+		return *new(uint8), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(uint8)).(*uint8)
+
+	return out0, err
+
+}
+
+// PERMRegisterUser is a free data retrieval call binding the contract method 0xd3c90b32.
+//
+// Solidity: function PERM_registerUser() view returns(uint8)
+func (_RegStore *RegStoreSession) PERMRegisterUser() (uint8, error) {
+	return _RegStore.Contract.PERMRegisterUser(&_RegStore.CallOpts)
+}
+
+// PERMRegisterUser is a free data retrieval call binding the contract method 0xd3c90b32.
+//
+// Solidity: function PERM_registerUser() view returns(uint8)
+func (_RegStore *RegStoreCallerSession) PERMRegisterUser() (uint8, error) {
+	return _RegStore.Contract.PERMRegisterUser(&_RegStore.CallOpts)
+}
+
+// PERMRemovePermission is a free data retrieval call binding the contract method 0xd1f9f40f.
+//
+// Solidity: function PERM_removePermission() view returns(uint8)
+func (_RegStore *RegStoreCaller) PERMRemovePermission(opts *bind.CallOpts) (uint8, error) {
+	var out []interface{}
+	err := _RegStore.contract.Call(opts, &out, "PERM_removePermission")
+
+	if err != nil {
+		return *new(uint8), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(uint8)).(*uint8)
+
+	return out0, err
+
+}
+
+// PERMRemovePermission is a free data retrieval call binding the contract method 0xd1f9f40f.
+//
+// Solidity: function PERM_removePermission() view returns(uint8)
+func (_RegStore *RegStoreSession) PERMRemovePermission() (uint8, error) {
+	return _RegStore.Contract.PERMRemovePermission(&_RegStore.CallOpts)
+}
+
+// PERMRemovePermission is a free data retrieval call binding the contract method 0xd1f9f40f.
+//
+// Solidity: function PERM_removePermission() view returns(uint8)
+func (_RegStore *RegStoreCallerSession) PERMRemovePermission() (uint8, error) {
+	return _RegStore.Contract.PERMRemovePermission(&_RegStore.CallOpts)
+}
+
+// PERMRemoveRelay is a free data retrieval call binding the contract method 0x5a59cd3d.
+//
+// Solidity: function PERM_removeRelay() view returns(uint8)
+func (_RegStore *RegStoreCaller) PERMRemoveRelay(opts *bind.CallOpts) (uint8, error) {
+	var out []interface{}
+	err := _RegStore.contract.Call(opts, &out, "PERM_removeRelay")
+
+	if err != nil {
+		return *new(uint8), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(uint8)).(*uint8)
+
+	return out0, err
+
+}
+
+// PERMRemoveRelay is a free data retrieval call binding the contract method 0x5a59cd3d.
+//
+// Solidity: function PERM_removeRelay() view returns(uint8)
+func (_RegStore *RegStoreSession) PERMRemoveRelay() (uint8, error) {
+	return _RegStore.Contract.PERMRemoveRelay(&_RegStore.CallOpts)
+}
+
+// PERMRemoveRelay is a free data retrieval call binding the contract method 0x5a59cd3d.
+//
+// Solidity: function PERM_removeRelay() view returns(uint8)
+func (_RegStore *RegStoreCallerSession) PERMRemoveRelay() (uint8, error) {
+	return _RegStore.Contract.PERMRemoveRelay(&_RegStore.CallOpts)
+}
+
+// PERMRemoveUser is a free data retrieval call binding the contract method 0xd0f64f9c.
+//
+// Solidity: function PERM_removeUser() view returns(uint8)
+func (_RegStore *RegStoreCaller) PERMRemoveUser(opts *bind.CallOpts) (uint8, error) {
+	var out []interface{}
+	err := _RegStore.contract.Call(opts, &out, "PERM_removeUser")
+
+	if err != nil {
+		return *new(uint8), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(uint8)).(*uint8)
+
+	return out0, err
+
+}
+
+// PERMRemoveUser is a free data retrieval call binding the contract method 0xd0f64f9c.
+//
+// Solidity: function PERM_removeUser() view returns(uint8)
+func (_RegStore *RegStoreSession) PERMRemoveUser() (uint8, error) {
+	return _RegStore.Contract.PERMRemoveUser(&_RegStore.CallOpts)
+}
+
+// PERMRemoveUser is a free data retrieval call binding the contract method 0xd0f64f9c.
+//
+// Solidity: function PERM_removeUser() view returns(uint8)
+func (_RegStore *RegStoreCallerSession) PERMRemoveUser() (uint8, error) {
+	return _RegStore.Contract.PERMRemoveUser(&_RegStore.CallOpts)
+}
+
+// PERMReplaceRelay is a free data retrieval call binding the contract method 0xbecf4da4.
+//
+// Solidity: function PERM_replaceRelay() view returns(uint8)
+func (_RegStore *RegStoreCaller) PERMReplaceRelay(opts *bind.CallOpts) (uint8, error) {
+	var out []interface{}
+	err := _RegStore.contract.Call(opts, &out, "PERM_replaceRelay")
+
+	if err != nil {
+		return *new(uint8), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(uint8)).(*uint8)
+
+	return out0, err
+
+}
+
+// PERMReplaceRelay is a free data retrieval call binding the contract method 0xbecf4da4.
+//
+// Solidity: function PERM_replaceRelay() view returns(uint8)
+func (_RegStore *RegStoreSession) PERMReplaceRelay() (uint8, error) {
+	return _RegStore.Contract.PERMReplaceRelay(&_RegStore.CallOpts)
+}
+
+// PERMReplaceRelay is a free data retrieval call binding the contract method 0xbecf4da4.
+//
+// Solidity: function PERM_replaceRelay() view returns(uint8)
+func (_RegStore *RegStoreCallerSession) PERMReplaceRelay() (uint8, error) {
+	return _RegStore.Contract.PERMReplaceRelay(&_RegStore.CallOpts)
+}
+
+// PERMUpdateRootHash is a free data retrieval call binding the contract method 0xbcd18721.
+//
+// Solidity: function PERM_updateRootHash() view returns(uint8)
+func (_RegStore *RegStoreCaller) PERMUpdateRootHash(opts *bind.CallOpts) (uint8, error) {
+	var out []interface{}
+	err := _RegStore.contract.Call(opts, &out, "PERM_updateRootHash")
+
+	if err != nil {
+		return *new(uint8), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(uint8)).(*uint8)
+
+	return out0, err
+
+}
+
+// PERMUpdateRootHash is a free data retrieval call binding the contract method 0xbcd18721.
+//
+// Solidity: function PERM_updateRootHash() view returns(uint8)
+func (_RegStore *RegStoreSession) PERMUpdateRootHash() (uint8, error) {
+	return _RegStore.Contract.PERMUpdateRootHash(&_RegStore.CallOpts)
+}
+
+// PERMUpdateRootHash is a free data retrieval call binding the contract method 0xbcd18721.
+//
+// Solidity: function PERM_updateRootHash() view returns(uint8)
+func (_RegStore *RegStoreCallerSession) PERMUpdateRootHash() (uint8, error) {
+	return _RegStore.Contract.PERMUpdateRootHash(&_RegStore.CallOpts)
+}
+
 // GetTokenMessageHash is a free data retrieval call binding the contract method 0x46e4a913.
 //
 // Solidity: function _getTokenMessageHash(address user) pure returns(bytes32)
@@ -217,6 +496,35 @@ func (_RegStore *RegStoreCallerSession) GetTokenMessageHash(user common.Address)
 	return _RegStore.Contract.GetTokenMessageHash(&_RegStore.CallOpts, user)
 }
 
+// AllPermissionsGuard is a free data retrieval call binding the contract method 0x53b8c992.
+//
+// Solidity: function allPermissionsGuard(uint256 id, uint256 perms) view returns()
+func (_RegStore *RegStoreCaller) AllPermissionsGuard(opts *bind.CallOpts, id *big.Int, perms *big.Int) error {
+	var out []interface{}
+	err := _RegStore.contract.Call(opts, &out, "allPermissionsGuard", id, perms)
+
+	if err != nil {
+		return err
+	}
+
+	return err
+
+}
+
+// AllPermissionsGuard is a free data retrieval call binding the contract method 0x53b8c992.
+//
+// Solidity: function allPermissionsGuard(uint256 id, uint256 perms) view returns()
+func (_RegStore *RegStoreSession) AllPermissionsGuard(id *big.Int, perms *big.Int) error {
+	return _RegStore.Contract.AllPermissionsGuard(&_RegStore.CallOpts, id, perms)
+}
+
+// AllPermissionsGuard is a free data retrieval call binding the contract method 0x53b8c992.
+//
+// Solidity: function allPermissionsGuard(uint256 id, uint256 perms) view returns()
+func (_RegStore *RegStoreCallerSession) AllPermissionsGuard(id *big.Int, perms *big.Int) error {
+	return _RegStore.Contract.AllPermissionsGuard(&_RegStore.CallOpts, id, perms)
+}
+
 // BalanceOf is a free data retrieval call binding the contract method 0x70a08231.
 //
 // Solidity: function balanceOf(address owner) view returns(uint256 result)
@@ -246,6 +554,37 @@ func (_RegStore *RegStoreSession) BalanceOf(owner common.Address) (*big.Int, err
 // Solidity: function balanceOf(address owner) view returns(uint256 result)
 func (_RegStore *RegStoreCallerSession) BalanceOf(owner common.Address) (*big.Int, error) {
 	return _RegStore.Contract.BalanceOf(&_RegStore.CallOpts, owner)
+}
+
+// GetAllPermissions is a free data retrieval call binding the contract method 0xcb5c0bc1.
+//
+// Solidity: function getAllPermissions(uint256 id, address user) view returns(uint256)
+func (_RegStore *RegStoreCaller) GetAllPermissions(opts *bind.CallOpts, id *big.Int, user common.Address) (*big.Int, error) {
+	var out []interface{}
+	err := _RegStore.contract.Call(opts, &out, "getAllPermissions", id, user)
+
+	if err != nil {
+		return *new(*big.Int), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+
+	return out0, err
+
+}
+
+// GetAllPermissions is a free data retrieval call binding the contract method 0xcb5c0bc1.
+//
+// Solidity: function getAllPermissions(uint256 id, address user) view returns(uint256)
+func (_RegStore *RegStoreSession) GetAllPermissions(id *big.Int, user common.Address) (*big.Int, error) {
+	return _RegStore.Contract.GetAllPermissions(&_RegStore.CallOpts, id, user)
+}
+
+// GetAllPermissions is a free data retrieval call binding the contract method 0xcb5c0bc1.
+//
+// Solidity: function getAllPermissions(uint256 id, address user) view returns(uint256)
+func (_RegStore *RegStoreCallerSession) GetAllPermissions(id *big.Int, user common.Address) (*big.Int, error) {
+	return _RegStore.Contract.GetAllPermissions(&_RegStore.CallOpts, id, user)
 }
 
 // GetAllRelays is a free data retrieval call binding the contract method 0xce667ce7.
@@ -341,12 +680,12 @@ func (_RegStore *RegStoreCallerSession) GetRelayCount(storeId *big.Int) (*big.In
 	return _RegStore.Contract.GetRelayCount(&_RegStore.CallOpts, storeId)
 }
 
-// HasAtLeastAccess is a free data retrieval call binding the contract method 0x45174ff3.
+// HasEnoughPermissions is a free data retrieval call binding the contract method 0x2e80d594.
 //
-// Solidity: function hasAtLeastAccess(uint256 storeId, address addr, uint8 want) view returns(bool)
-func (_RegStore *RegStoreCaller) HasAtLeastAccess(opts *bind.CallOpts, storeId *big.Int, addr common.Address, want uint8) (bool, error) {
+// Solidity: function hasEnoughPermissions(uint256 id, address user, uint256 perms) view returns(bool)
+func (_RegStore *RegStoreCaller) HasEnoughPermissions(opts *bind.CallOpts, id *big.Int, user common.Address, perms *big.Int) (bool, error) {
 	var out []interface{}
-	err := _RegStore.contract.Call(opts, &out, "hasAtLeastAccess", storeId, addr, want)
+	err := _RegStore.contract.Call(opts, &out, "hasEnoughPermissions", id, user, perms)
 
 	if err != nil {
 		return *new(bool), err
@@ -358,18 +697,49 @@ func (_RegStore *RegStoreCaller) HasAtLeastAccess(opts *bind.CallOpts, storeId *
 
 }
 
-// HasAtLeastAccess is a free data retrieval call binding the contract method 0x45174ff3.
+// HasEnoughPermissions is a free data retrieval call binding the contract method 0x2e80d594.
 //
-// Solidity: function hasAtLeastAccess(uint256 storeId, address addr, uint8 want) view returns(bool)
-func (_RegStore *RegStoreSession) HasAtLeastAccess(storeId *big.Int, addr common.Address, want uint8) (bool, error) {
-	return _RegStore.Contract.HasAtLeastAccess(&_RegStore.CallOpts, storeId, addr, want)
+// Solidity: function hasEnoughPermissions(uint256 id, address user, uint256 perms) view returns(bool)
+func (_RegStore *RegStoreSession) HasEnoughPermissions(id *big.Int, user common.Address, perms *big.Int) (bool, error) {
+	return _RegStore.Contract.HasEnoughPermissions(&_RegStore.CallOpts, id, user, perms)
 }
 
-// HasAtLeastAccess is a free data retrieval call binding the contract method 0x45174ff3.
+// HasEnoughPermissions is a free data retrieval call binding the contract method 0x2e80d594.
 //
-// Solidity: function hasAtLeastAccess(uint256 storeId, address addr, uint8 want) view returns(bool)
-func (_RegStore *RegStoreCallerSession) HasAtLeastAccess(storeId *big.Int, addr common.Address, want uint8) (bool, error) {
-	return _RegStore.Contract.HasAtLeastAccess(&_RegStore.CallOpts, storeId, addr, want)
+// Solidity: function hasEnoughPermissions(uint256 id, address user, uint256 perms) view returns(bool)
+func (_RegStore *RegStoreCallerSession) HasEnoughPermissions(id *big.Int, user common.Address, perms *big.Int) (bool, error) {
+	return _RegStore.Contract.HasEnoughPermissions(&_RegStore.CallOpts, id, user, perms)
+}
+
+// HasPermission is a free data retrieval call binding the contract method 0x823abfd9.
+//
+// Solidity: function hasPermission(uint256 id, address user, uint8 perm) view returns(bool)
+func (_RegStore *RegStoreCaller) HasPermission(opts *bind.CallOpts, id *big.Int, user common.Address, perm uint8) (bool, error) {
+	var out []interface{}
+	err := _RegStore.contract.Call(opts, &out, "hasPermission", id, user, perm)
+
+	if err != nil {
+		return *new(bool), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(bool)).(*bool)
+
+	return out0, err
+
+}
+
+// HasPermission is a free data retrieval call binding the contract method 0x823abfd9.
+//
+// Solidity: function hasPermission(uint256 id, address user, uint8 perm) view returns(bool)
+func (_RegStore *RegStoreSession) HasPermission(id *big.Int, user common.Address, perm uint8) (bool, error) {
+	return _RegStore.Contract.HasPermission(&_RegStore.CallOpts, id, user, perm)
+}
+
+// HasPermission is a free data retrieval call binding the contract method 0x823abfd9.
+//
+// Solidity: function hasPermission(uint256 id, address user, uint8 perm) view returns(bool)
+func (_RegStore *RegStoreCallerSession) HasPermission(id *big.Int, user common.Address, perm uint8) (bool, error) {
+	return _RegStore.Contract.HasPermission(&_RegStore.CallOpts, id, user, perm)
 }
 
 // IsApprovedForAll is a free data retrieval call binding the contract method 0xe985e9c5.
@@ -465,6 +835,66 @@ func (_RegStore *RegStoreCallerSession) OwnerOf(id *big.Int) (common.Address, er
 	return _RegStore.Contract.OwnerOf(&_RegStore.CallOpts, id)
 }
 
+// PermissionGuard is a free data retrieval call binding the contract method 0xe87b17b4.
+//
+// Solidity: function permissionGuard(uint256 id, uint8 perm) view returns()
+func (_RegStore *RegStoreCaller) PermissionGuard(opts *bind.CallOpts, id *big.Int, perm uint8) error {
+	var out []interface{}
+	err := _RegStore.contract.Call(opts, &out, "permissionGuard", id, perm)
+
+	if err != nil {
+		return err
+	}
+
+	return err
+
+}
+
+// PermissionGuard is a free data retrieval call binding the contract method 0xe87b17b4.
+//
+// Solidity: function permissionGuard(uint256 id, uint8 perm) view returns()
+func (_RegStore *RegStoreSession) PermissionGuard(id *big.Int, perm uint8) error {
+	return _RegStore.Contract.PermissionGuard(&_RegStore.CallOpts, id, perm)
+}
+
+// PermissionGuard is a free data retrieval call binding the contract method 0xe87b17b4.
+//
+// Solidity: function permissionGuard(uint256 id, uint8 perm) view returns()
+func (_RegStore *RegStoreCallerSession) PermissionGuard(id *big.Int, perm uint8) error {
+	return _RegStore.Contract.PermissionGuard(&_RegStore.CallOpts, id, perm)
+}
+
+// PermsToBitmap is a free data retrieval call binding the contract method 0x06232ef4.
+//
+// Solidity: function permsToBitmap(uint8[] perms) pure returns(uint256)
+func (_RegStore *RegStoreCaller) PermsToBitmap(opts *bind.CallOpts, perms []uint8) (*big.Int, error) {
+	var out []interface{}
+	err := _RegStore.contract.Call(opts, &out, "permsToBitmap", perms)
+
+	if err != nil {
+		return *new(*big.Int), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+
+	return out0, err
+
+}
+
+// PermsToBitmap is a free data retrieval call binding the contract method 0x06232ef4.
+//
+// Solidity: function permsToBitmap(uint8[] perms) pure returns(uint256)
+func (_RegStore *RegStoreSession) PermsToBitmap(perms []uint8) (*big.Int, error) {
+	return _RegStore.Contract.PermsToBitmap(&_RegStore.CallOpts, perms)
+}
+
+// PermsToBitmap is a free data retrieval call binding the contract method 0x06232ef4.
+//
+// Solidity: function permsToBitmap(uint8[] perms) pure returns(uint256)
+func (_RegStore *RegStoreCallerSession) PermsToBitmap(perms []uint8) (*big.Int, error) {
+	return _RegStore.Contract.PermsToBitmap(&_RegStore.CallOpts, perms)
+}
+
 // RelayReg is a free data retrieval call binding the contract method 0x38887dde.
 //
 // Solidity: function relayReg() view returns(address)
@@ -527,35 +957,6 @@ func (_RegStore *RegStoreCallerSession) Relays(storeid *big.Int, arg1 *big.Int) 
 	return _RegStore.Contract.Relays(&_RegStore.CallOpts, storeid, arg1)
 }
 
-// RequireOnlyAdminOrHigher is a free data retrieval call binding the contract method 0x385b38bb.
-//
-// Solidity: function requireOnlyAdminOrHigher(uint256 storeId, address who) view returns()
-func (_RegStore *RegStoreCaller) RequireOnlyAdminOrHigher(opts *bind.CallOpts, storeId *big.Int, who common.Address) error {
-	var out []interface{}
-	err := _RegStore.contract.Call(opts, &out, "requireOnlyAdminOrHigher", storeId, who)
-
-	if err != nil {
-		return err
-	}
-
-	return err
-
-}
-
-// RequireOnlyAdminOrHigher is a free data retrieval call binding the contract method 0x385b38bb.
-//
-// Solidity: function requireOnlyAdminOrHigher(uint256 storeId, address who) view returns()
-func (_RegStore *RegStoreSession) RequireOnlyAdminOrHigher(storeId *big.Int, who common.Address) error {
-	return _RegStore.Contract.RequireOnlyAdminOrHigher(&_RegStore.CallOpts, storeId, who)
-}
-
-// RequireOnlyAdminOrHigher is a free data retrieval call binding the contract method 0x385b38bb.
-//
-// Solidity: function requireOnlyAdminOrHigher(uint256 storeId, address who) view returns()
-func (_RegStore *RegStoreCallerSession) RequireOnlyAdminOrHigher(storeId *big.Int, who common.Address) error {
-	return _RegStore.Contract.RequireOnlyAdminOrHigher(&_RegStore.CallOpts, storeId, who)
-}
-
 // RootHashes is a free data retrieval call binding the contract method 0x53b93557.
 //
 // Solidity: function rootHashes(uint256 storeid) view returns(bytes32)
@@ -585,37 +986,6 @@ func (_RegStore *RegStoreSession) RootHashes(storeid *big.Int) ([32]byte, error)
 // Solidity: function rootHashes(uint256 storeid) view returns(bytes32)
 func (_RegStore *RegStoreCallerSession) RootHashes(storeid *big.Int) ([32]byte, error) {
 	return _RegStore.Contract.RootHashes(&_RegStore.CallOpts, storeid)
-}
-
-// StoresToUsers is a free data retrieval call binding the contract method 0xb253af66.
-//
-// Solidity: function storesToUsers(uint256 storeid, address storeuser) view returns(uint8)
-func (_RegStore *RegStoreCaller) StoresToUsers(opts *bind.CallOpts, storeid *big.Int, storeuser common.Address) (uint8, error) {
-	var out []interface{}
-	err := _RegStore.contract.Call(opts, &out, "storesToUsers", storeid, storeuser)
-
-	if err != nil {
-		return *new(uint8), err
-	}
-
-	out0 := *abi.ConvertType(out[0], new(uint8)).(*uint8)
-
-	return out0, err
-
-}
-
-// StoresToUsers is a free data retrieval call binding the contract method 0xb253af66.
-//
-// Solidity: function storesToUsers(uint256 storeid, address storeuser) view returns(uint8)
-func (_RegStore *RegStoreSession) StoresToUsers(storeid *big.Int, storeuser common.Address) (uint8, error) {
-	return _RegStore.Contract.StoresToUsers(&_RegStore.CallOpts, storeid, storeuser)
-}
-
-// StoresToUsers is a free data retrieval call binding the contract method 0xb253af66.
-//
-// Solidity: function storesToUsers(uint256 storeid, address storeuser) view returns(uint8)
-func (_RegStore *RegStoreCallerSession) StoresToUsers(storeid *big.Int, storeuser common.Address) (uint8, error) {
-	return _RegStore.Contract.StoresToUsers(&_RegStore.CallOpts, storeid, storeuser)
 }
 
 // SupportsInterface is a free data retrieval call binding the contract method 0x01ffc9a7.
@@ -709,6 +1079,27 @@ func (_RegStore *RegStoreSession) TokenURI(id *big.Int) (string, error) {
 // Solidity: function tokenURI(uint256 id) view returns(string)
 func (_RegStore *RegStoreCallerSession) TokenURI(id *big.Int) (string, error) {
 	return _RegStore.Contract.TokenURI(&_RegStore.CallOpts, id)
+}
+
+// AddPermission is a paid mutator transaction binding the contract method 0x07c2bdd2.
+//
+// Solidity: function addPermission(uint256 storeId, address user, uint8 perm) returns()
+func (_RegStore *RegStoreTransactor) AddPermission(opts *bind.TransactOpts, storeId *big.Int, user common.Address, perm uint8) (*types.Transaction, error) {
+	return _RegStore.contract.Transact(opts, "addPermission", storeId, user, perm)
+}
+
+// AddPermission is a paid mutator transaction binding the contract method 0x07c2bdd2.
+//
+// Solidity: function addPermission(uint256 storeId, address user, uint8 perm) returns()
+func (_RegStore *RegStoreSession) AddPermission(storeId *big.Int, user common.Address, perm uint8) (*types.Transaction, error) {
+	return _RegStore.Contract.AddPermission(&_RegStore.TransactOpts, storeId, user, perm)
+}
+
+// AddPermission is a paid mutator transaction binding the contract method 0x07c2bdd2.
+//
+// Solidity: function addPermission(uint256 storeId, address user, uint8 perm) returns()
+func (_RegStore *RegStoreTransactorSession) AddPermission(storeId *big.Int, user common.Address, perm uint8) (*types.Transaction, error) {
+	return _RegStore.Contract.AddPermission(&_RegStore.TransactOpts, storeId, user, perm)
 }
 
 // AddRelay is a paid mutator transaction binding the contract method 0x48f6092a.
@@ -816,25 +1207,46 @@ func (_RegStore *RegStoreTransactorSession) RedeemInvite(storeId *big.Int, v uin
 	return _RegStore.Contract.RedeemInvite(&_RegStore.TransactOpts, storeId, v, r, s, user)
 }
 
-// RegisterUser is a paid mutator transaction binding the contract method 0x3785096a.
+// RegisterUser is a paid mutator transaction binding the contract method 0x55789e2a.
 //
-// Solidity: function registerUser(uint256 storeId, address addr, uint8 acl) returns()
-func (_RegStore *RegStoreTransactor) RegisterUser(opts *bind.TransactOpts, storeId *big.Int, addr common.Address, acl uint8) (*types.Transaction, error) {
-	return _RegStore.contract.Transact(opts, "registerUser", storeId, addr, acl)
+// Solidity: function registerUser(uint256 storeId, address user, uint256 perms) returns()
+func (_RegStore *RegStoreTransactor) RegisterUser(opts *bind.TransactOpts, storeId *big.Int, user common.Address, perms *big.Int) (*types.Transaction, error) {
+	return _RegStore.contract.Transact(opts, "registerUser", storeId, user, perms)
 }
 
-// RegisterUser is a paid mutator transaction binding the contract method 0x3785096a.
+// RegisterUser is a paid mutator transaction binding the contract method 0x55789e2a.
 //
-// Solidity: function registerUser(uint256 storeId, address addr, uint8 acl) returns()
-func (_RegStore *RegStoreSession) RegisterUser(storeId *big.Int, addr common.Address, acl uint8) (*types.Transaction, error) {
-	return _RegStore.Contract.RegisterUser(&_RegStore.TransactOpts, storeId, addr, acl)
+// Solidity: function registerUser(uint256 storeId, address user, uint256 perms) returns()
+func (_RegStore *RegStoreSession) RegisterUser(storeId *big.Int, user common.Address, perms *big.Int) (*types.Transaction, error) {
+	return _RegStore.Contract.RegisterUser(&_RegStore.TransactOpts, storeId, user, perms)
 }
 
-// RegisterUser is a paid mutator transaction binding the contract method 0x3785096a.
+// RegisterUser is a paid mutator transaction binding the contract method 0x55789e2a.
 //
-// Solidity: function registerUser(uint256 storeId, address addr, uint8 acl) returns()
-func (_RegStore *RegStoreTransactorSession) RegisterUser(storeId *big.Int, addr common.Address, acl uint8) (*types.Transaction, error) {
-	return _RegStore.Contract.RegisterUser(&_RegStore.TransactOpts, storeId, addr, acl)
+// Solidity: function registerUser(uint256 storeId, address user, uint256 perms) returns()
+func (_RegStore *RegStoreTransactorSession) RegisterUser(storeId *big.Int, user common.Address, perms *big.Int) (*types.Transaction, error) {
+	return _RegStore.Contract.RegisterUser(&_RegStore.TransactOpts, storeId, user, perms)
+}
+
+// RemovePermission is a paid mutator transaction binding the contract method 0xf721fab8.
+//
+// Solidity: function removePermission(uint256 storeId, address user, uint8 perm) returns()
+func (_RegStore *RegStoreTransactor) RemovePermission(opts *bind.TransactOpts, storeId *big.Int, user common.Address, perm uint8) (*types.Transaction, error) {
+	return _RegStore.contract.Transact(opts, "removePermission", storeId, user, perm)
+}
+
+// RemovePermission is a paid mutator transaction binding the contract method 0xf721fab8.
+//
+// Solidity: function removePermission(uint256 storeId, address user, uint8 perm) returns()
+func (_RegStore *RegStoreSession) RemovePermission(storeId *big.Int, user common.Address, perm uint8) (*types.Transaction, error) {
+	return _RegStore.Contract.RemovePermission(&_RegStore.TransactOpts, storeId, user, perm)
+}
+
+// RemovePermission is a paid mutator transaction binding the contract method 0xf721fab8.
+//
+// Solidity: function removePermission(uint256 storeId, address user, uint8 perm) returns()
+func (_RegStore *RegStoreTransactorSession) RemovePermission(storeId *big.Int, user common.Address, perm uint8) (*types.Transaction, error) {
+	return _RegStore.Contract.RemovePermission(&_RegStore.TransactOpts, storeId, user, perm)
 }
 
 // RemoveRelay is a paid mutator transaction binding the contract method 0xe9d928d5.
@@ -860,23 +1272,23 @@ func (_RegStore *RegStoreTransactorSession) RemoveRelay(storeId *big.Int, idx ui
 
 // RemoveUser is a paid mutator transaction binding the contract method 0x0c8f91a9.
 //
-// Solidity: function removeUser(uint256 storeId, address who) returns()
-func (_RegStore *RegStoreTransactor) RemoveUser(opts *bind.TransactOpts, storeId *big.Int, who common.Address) (*types.Transaction, error) {
-	return _RegStore.contract.Transact(opts, "removeUser", storeId, who)
+// Solidity: function removeUser(uint256 storeId, address user) returns()
+func (_RegStore *RegStoreTransactor) RemoveUser(opts *bind.TransactOpts, storeId *big.Int, user common.Address) (*types.Transaction, error) {
+	return _RegStore.contract.Transact(opts, "removeUser", storeId, user)
 }
 
 // RemoveUser is a paid mutator transaction binding the contract method 0x0c8f91a9.
 //
-// Solidity: function removeUser(uint256 storeId, address who) returns()
-func (_RegStore *RegStoreSession) RemoveUser(storeId *big.Int, who common.Address) (*types.Transaction, error) {
-	return _RegStore.Contract.RemoveUser(&_RegStore.TransactOpts, storeId, who)
+// Solidity: function removeUser(uint256 storeId, address user) returns()
+func (_RegStore *RegStoreSession) RemoveUser(storeId *big.Int, user common.Address) (*types.Transaction, error) {
+	return _RegStore.Contract.RemoveUser(&_RegStore.TransactOpts, storeId, user)
 }
 
 // RemoveUser is a paid mutator transaction binding the contract method 0x0c8f91a9.
 //
-// Solidity: function removeUser(uint256 storeId, address who) returns()
-func (_RegStore *RegStoreTransactorSession) RemoveUser(storeId *big.Int, who common.Address) (*types.Transaction, error) {
-	return _RegStore.Contract.RemoveUser(&_RegStore.TransactOpts, storeId, who)
+// Solidity: function removeUser(uint256 storeId, address user) returns()
+func (_RegStore *RegStoreTransactorSession) RemoveUser(storeId *big.Int, user common.Address) (*types.Transaction, error) {
+	return _RegStore.Contract.RemoveUser(&_RegStore.TransactOpts, storeId, user)
 }
 
 // ReplaceRelay is a paid mutator transaction binding the contract method 0x3447af9f.
@@ -1321,6 +1733,298 @@ func (_RegStore *RegStoreFilterer) ParseApprovalForAll(log types.Log) (*RegStore
 	return event, nil
 }
 
+// RegStorePermissionAddedIterator is returned from FilterPermissionAdded and is used to iterate over the raw logs and unpacked data for PermissionAdded events raised by the RegStore contract.
+type RegStorePermissionAddedIterator struct {
+	Event *RegStorePermissionAdded // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *RegStorePermissionAddedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(RegStorePermissionAdded)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(RegStorePermissionAdded)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *RegStorePermissionAddedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *RegStorePermissionAddedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// RegStorePermissionAdded represents a PermissionAdded event raised by the RegStore contract.
+type RegStorePermissionAdded struct {
+	StoreId    *big.Int
+	User       common.Address
+	Permission uint8
+	Raw        types.Log // Blockchain specific contextual infos
+}
+
+// FilterPermissionAdded is a free log retrieval operation binding the contract event 0xfe5ce55a0223949361eee308dd59d3ba26f5c9c0485a8bc3acfdef8bff7f1606.
+//
+// Solidity: event PermissionAdded(uint256 indexed storeId, address user, uint8 permission)
+func (_RegStore *RegStoreFilterer) FilterPermissionAdded(opts *bind.FilterOpts, storeId []*big.Int) (*RegStorePermissionAddedIterator, error) {
+
+	var storeIdRule []interface{}
+	for _, storeIdItem := range storeId {
+		storeIdRule = append(storeIdRule, storeIdItem)
+	}
+
+	logs, sub, err := _RegStore.contract.FilterLogs(opts, "PermissionAdded", storeIdRule)
+	if err != nil {
+		return nil, err
+	}
+	return &RegStorePermissionAddedIterator{contract: _RegStore.contract, event: "PermissionAdded", logs: logs, sub: sub}, nil
+}
+
+// WatchPermissionAdded is a free log subscription operation binding the contract event 0xfe5ce55a0223949361eee308dd59d3ba26f5c9c0485a8bc3acfdef8bff7f1606.
+//
+// Solidity: event PermissionAdded(uint256 indexed storeId, address user, uint8 permission)
+func (_RegStore *RegStoreFilterer) WatchPermissionAdded(opts *bind.WatchOpts, sink chan<- *RegStorePermissionAdded, storeId []*big.Int) (event.Subscription, error) {
+
+	var storeIdRule []interface{}
+	for _, storeIdItem := range storeId {
+		storeIdRule = append(storeIdRule, storeIdItem)
+	}
+
+	logs, sub, err := _RegStore.contract.WatchLogs(opts, "PermissionAdded", storeIdRule)
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(RegStorePermissionAdded)
+				if err := _RegStore.contract.UnpackLog(event, "PermissionAdded", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParsePermissionAdded is a log parse operation binding the contract event 0xfe5ce55a0223949361eee308dd59d3ba26f5c9c0485a8bc3acfdef8bff7f1606.
+//
+// Solidity: event PermissionAdded(uint256 indexed storeId, address user, uint8 permission)
+func (_RegStore *RegStoreFilterer) ParsePermissionAdded(log types.Log) (*RegStorePermissionAdded, error) {
+	event := new(RegStorePermissionAdded)
+	if err := _RegStore.contract.UnpackLog(event, "PermissionAdded", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// RegStorePermissionRemovedIterator is returned from FilterPermissionRemoved and is used to iterate over the raw logs and unpacked data for PermissionRemoved events raised by the RegStore contract.
+type RegStorePermissionRemovedIterator struct {
+	Event *RegStorePermissionRemoved // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *RegStorePermissionRemovedIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(RegStorePermissionRemoved)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(RegStorePermissionRemoved)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *RegStorePermissionRemovedIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *RegStorePermissionRemovedIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// RegStorePermissionRemoved represents a PermissionRemoved event raised by the RegStore contract.
+type RegStorePermissionRemoved struct {
+	StoreId    *big.Int
+	User       common.Address
+	Permission uint8
+	Raw        types.Log // Blockchain specific contextual infos
+}
+
+// FilterPermissionRemoved is a free log retrieval operation binding the contract event 0x7357f7ed6884dc29891d5b9cf8a0acec4aaeded84da448cd3d3805b123f7bc1e.
+//
+// Solidity: event PermissionRemoved(uint256 indexed storeId, address user, uint8 permission)
+func (_RegStore *RegStoreFilterer) FilterPermissionRemoved(opts *bind.FilterOpts, storeId []*big.Int) (*RegStorePermissionRemovedIterator, error) {
+
+	var storeIdRule []interface{}
+	for _, storeIdItem := range storeId {
+		storeIdRule = append(storeIdRule, storeIdItem)
+	}
+
+	logs, sub, err := _RegStore.contract.FilterLogs(opts, "PermissionRemoved", storeIdRule)
+	if err != nil {
+		return nil, err
+	}
+	return &RegStorePermissionRemovedIterator{contract: _RegStore.contract, event: "PermissionRemoved", logs: logs, sub: sub}, nil
+}
+
+// WatchPermissionRemoved is a free log subscription operation binding the contract event 0x7357f7ed6884dc29891d5b9cf8a0acec4aaeded84da448cd3d3805b123f7bc1e.
+//
+// Solidity: event PermissionRemoved(uint256 indexed storeId, address user, uint8 permission)
+func (_RegStore *RegStoreFilterer) WatchPermissionRemoved(opts *bind.WatchOpts, sink chan<- *RegStorePermissionRemoved, storeId []*big.Int) (event.Subscription, error) {
+
+	var storeIdRule []interface{}
+	for _, storeIdItem := range storeId {
+		storeIdRule = append(storeIdRule, storeIdItem)
+	}
+
+	logs, sub, err := _RegStore.contract.WatchLogs(opts, "PermissionRemoved", storeIdRule)
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(RegStorePermissionRemoved)
+				if err := _RegStore.contract.UnpackLog(event, "PermissionRemoved", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParsePermissionRemoved is a log parse operation binding the contract event 0x7357f7ed6884dc29891d5b9cf8a0acec4aaeded84da448cd3d3805b123f7bc1e.
+//
+// Solidity: event PermissionRemoved(uint256 indexed storeId, address user, uint8 permission)
+func (_RegStore *RegStoreFilterer) ParsePermissionRemoved(log types.Log) (*RegStorePermissionRemoved, error) {
+	event := new(RegStorePermissionRemoved)
+	if err := _RegStore.contract.UnpackLog(event, "PermissionRemoved", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
 // RegStoreTransferIterator is returned from FilterTransfer and is used to iterate over the raw logs and unpacked data for Transfer events raised by the RegStore contract.
 type RegStoreTransferIterator struct {
 	Event *RegStoreTransfer // Event containing the contract specifics and raw log
@@ -1552,14 +2256,15 @@ func (it *RegStoreUserAddedIterator) Close() error {
 
 // RegStoreUserAdded represents a UserAdded event raised by the RegStore contract.
 type RegStoreUserAdded struct {
-	StoreId *big.Int
-	User    common.Address
-	Raw     types.Log // Blockchain specific contextual infos
+	StoreId     *big.Int
+	User        common.Address
+	Permissions *big.Int
+	Raw         types.Log // Blockchain specific contextual infos
 }
 
-// FilterUserAdded is a free log retrieval operation binding the contract event 0x785caf8769bd44d265fce8c1a3327e91646fe19be3a87506383b5e95a5c43494.
+// FilterUserAdded is a free log retrieval operation binding the contract event 0x865275e7fa20bfbd4ba610b45893bd10c6b08b8aeb9964b72ad321d370726e5f.
 //
-// Solidity: event UserAdded(uint256 indexed storeId, address user)
+// Solidity: event UserAdded(uint256 indexed storeId, address user, uint256 permissions)
 func (_RegStore *RegStoreFilterer) FilterUserAdded(opts *bind.FilterOpts, storeId []*big.Int) (*RegStoreUserAddedIterator, error) {
 
 	var storeIdRule []interface{}
@@ -1574,9 +2279,9 @@ func (_RegStore *RegStoreFilterer) FilterUserAdded(opts *bind.FilterOpts, storeI
 	return &RegStoreUserAddedIterator{contract: _RegStore.contract, event: "UserAdded", logs: logs, sub: sub}, nil
 }
 
-// WatchUserAdded is a free log subscription operation binding the contract event 0x785caf8769bd44d265fce8c1a3327e91646fe19be3a87506383b5e95a5c43494.
+// WatchUserAdded is a free log subscription operation binding the contract event 0x865275e7fa20bfbd4ba610b45893bd10c6b08b8aeb9964b72ad321d370726e5f.
 //
-// Solidity: event UserAdded(uint256 indexed storeId, address user)
+// Solidity: event UserAdded(uint256 indexed storeId, address user, uint256 permissions)
 func (_RegStore *RegStoreFilterer) WatchUserAdded(opts *bind.WatchOpts, sink chan<- *RegStoreUserAdded, storeId []*big.Int) (event.Subscription, error) {
 
 	var storeIdRule []interface{}
@@ -1616,9 +2321,9 @@ func (_RegStore *RegStoreFilterer) WatchUserAdded(opts *bind.WatchOpts, sink cha
 	}), nil
 }
 
-// ParseUserAdded is a log parse operation binding the contract event 0x785caf8769bd44d265fce8c1a3327e91646fe19be3a87506383b5e95a5c43494.
+// ParseUserAdded is a log parse operation binding the contract event 0x865275e7fa20bfbd4ba610b45893bd10c6b08b8aeb9964b72ad321d370726e5f.
 //
-// Solidity: event UserAdded(uint256 indexed storeId, address user)
+// Solidity: event UserAdded(uint256 indexed storeId, address user, uint256 permissions)
 func (_RegStore *RegStoreFilterer) ParseUserAdded(log types.Log) (*RegStoreUserAdded, error) {
 	event := new(RegStoreUserAdded)
 	if err := _RegStore.contract.UnpackLog(event, "UserAdded", log); err != nil {

@@ -3,6 +3,7 @@
 // SPDX-FileCopyrightText: 2024 Mass Labs
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 
 // This file defines the protocol between relays and clients.
 // It is orthogonal to the store registry and other smart contracts.
