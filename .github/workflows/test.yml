@@ -73,7 +73,7 @@ jobs:
         id: extract_branch
 
       - name: git clone contracts
-        uses: actions/checkout@v4
+        uses: ./relay/.github/actions/checkout
         with:
           repository: masslbs/contracts
           ref: ${{ steps.extract_branch.outputs.branch }}
