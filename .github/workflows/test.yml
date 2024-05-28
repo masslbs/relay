@@ -80,9 +80,7 @@ jobs:
           path: contracts
 
       - name: build ABIs and deploy market contracts
-        run: |
-          nix build '.#market-build' # pystoretest is using ../contracts/result/abi/store.json
-          nix develop -c deploy-market
+        run: nix develop -c deploy-market
         working-directory: contracts
 
       - name: git clone pystoretest
