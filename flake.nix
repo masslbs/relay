@@ -13,9 +13,9 @@
     gomod2nix.inputs.flake-utils.follows = "flake-utils";
     pre-commit-hooks.url = "github:cachix/pre-commit-hooks.nix";
 
-    contracts.url = "github:masslbs/contracts/wanderer";
+    contracts.url = "github:masslbs/contracts/fix-input2";
     schema = {
-      url = "git+ssh://git@github.com/masslbs/network-schema.git?ref=main";
+      url = "github:masslbs/network-schema";
       flake = false;
     };
   };
