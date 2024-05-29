@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from abi/PaymentFactory.json - git at 40e546096c8b253cd948f9275b1c67fba596fcbe
+// Generated from abi/PaymentFactory.json - git at 357dcb517fff8253464e1049bba564280c3c6da0
 
 // Code generated - DO NOT EDIT.
 // This file is a generated binding and any manual changes will be lost.

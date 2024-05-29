@@ -67,16 +67,19 @@ jobs:
 
       # relay builds => run tests
 
-      - name: Extract branch name
+      - name: Extract branches
         shell: bash
-        run: echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
-        id: extract_branch
+        run: |
+          echo "contracts=$(jq -r '.nodes.contracts.original.ref' relay/flake.lock)" >> $GITHUB_OUTPUT
+          echo "relay_pr=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
+        id: branches
 
       - name: git clone contracts
         uses: ./relay/.github/actions/checkout
         with:
           repository: masslbs/contracts
-          ref: ${{ steps.extract_branch.outputs.branch }}
+          ref: ${{ steps.branches.outputs.relay_pr }}
+          fallback-branch: ${{ steps.branches.outputs.contracts }}
           path: contracts
 
       - name: build ABIs and deploy market contracts
@@ -89,7 +92,7 @@ jobs:
           repository: masslbs/pystoretest
           ssh-key: ${{ secrets.SSH_CHECKOUT_PYSTORETEST }}
           path: pystoretest
-          ref: ${{ steps.extract_branch.outputs.branch }} # same as PR
+          ref: ${{ steps.branches.outputs.relay_pr }}
 
       - name: prepare env file for relay
         run: |

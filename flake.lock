@@ -10,16 +10,15 @@
         "solady": "solady"
       },
       "locked": {
-        "lastModified": 1712612591,
-        "narHash": "sha256-AmV5r0NW4nYHv0T85whKNUcjrSVf1ZtD/h7xIOkid3s=",
+        "lastModified": 1717492321,
+        "narHash": "sha256-bfMj8krnDj8uGuyWtrOc+4l5AdCooJmlNHfZNHghBBw=",
         "owner": "masslbs",
         "repo": "contracts",
-        "rev": "40e546096c8b253cd948f9275b1c67fba596fcbe",
+        "rev": "357dcb517fff8253464e1049bba564280c3c6da0",
         "type": "github"
       },
       "original": {
         "owner": "masslbs",
-        "ref": "wanderer",
         "repo": "contracts",
         "type": "github"
       }
@@ -45,11 +44,11 @@
         "nixpkgs-lib": "nixpkgs-lib"
       },
       "locked": {
-        "lastModified": 1712014858,
-        "narHash": "sha256-sB4SWl2lX95bExY2gMFG5HIzvva5AVMJd4Igm+GpZNw=",
+        "lastModified": 1715865404,
+        "narHash": "sha256-/GJvTdTpuDjNn84j82cU6bXztE0MSkdnTWClUCRub78=",
         "owner": "hercules-ci",
         "repo": "flake-parts",
-        "rev": "9126214d0a59633752a136528f5f3b9aa8565b7d",
+        "rev": "8dc45382d5206bd292f9c2768b8058a8fd8311d9",
         "type": "github"
       },
       "original": {
@@ -94,11 +93,11 @@
     "forge-std": {
       "flake": false,
       "locked": {
-        "lastModified": 1711427226,
-        "narHash": "sha256-34hRHqOvNbiWZlIV/bds6a+frf5nCntwjYzideerVgQ=",
+        "lastModified": 1715903882,
+        "narHash": "sha256-Uqr0ZwCnQL9ShWxIgG/ci/5ukGyuqt2n+C0GFKlJiho=",
         "ref": "refs/heads/master",
-        "rev": "e4aef94c1768803a16fe19f7ce8b65defd027cfd",
-        "revCount": 321,
+        "rev": "52715a217dc51d0de15877878ab8213f6cbbbab5",
+        "revCount": 334,
         "submodules": true,
         "type": "git",
         "url": "https://github.com/foundry-rs/forge-std"
@@ -115,18 +114,18 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1712135466,
-        "narHash": "sha256-+xFfYk17EI0zZTGmhh3MyeSpl7RVohoVp/4HaSvGj4I=",
-        "ref": "monthly",
-        "rev": "ece7c960a440c6725a7a5576d1f49a5fabde3747",
-        "revCount": 434,
-        "type": "git",
-        "url": "https://github.com/shazow/foundry.nix.git"
+        "lastModified": 1714727549,
+        "narHash": "sha256-CWXRTxxcgMfQubJugpeg3yVWIfm70MYTtgaKWKgD60U=",
+        "owner": "shazow",
+        "repo": "foundry.nix",
+        "rev": "47cf189ec395eda4b3e0623179d1075c8027ca97",
+        "type": "github"
       },
       "original": {
+        "owner": "shazow",
         "ref": "monthly",
-        "type": "git",
-        "url": "https://github.com/shazow/foundry.nix.git"
+        "repo": "foundry.nix",
+        "type": "github"
       }
     },
     "gitignore": {
@@ -160,11 +159,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1716202913,
-        "narHash": "sha256-zjPNXI4DWBOrPsrK8u/XTsm5Q36quONQvz0jhAKHEeg=",
+        "lastModified": 1717050755,
+        "narHash": "sha256-C9IEHABulv2zEDFA+Bf0E1nmfN4y6MIUe5eM2RCrDC0=",
         "owner": "nix-community",
         "repo": "gomod2nix",
-        "rev": "4702caff8e201f4c98fe3583637a930d253447c8",
+        "rev": "31b6d2e40b36456e792cd6cf50d5a8ddd2fa59a1",
         "type": "github"
       },
       "original": {
@@ -189,20 +188,14 @@
     },
     "nixpkgs-lib": {
       "locked": {
-        "dir": "lib",
-        "lastModified": 1711703276,
-        "narHash": "sha256-iMUFArF0WCatKK6RzfUJknjem0H9m4KgorO/p3Dopkk=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "d8fe5e6c92d0d190646fb9f1056741a229980089",
-        "type": "github"
+        "lastModified": 1714640452,
+        "narHash": "sha256-QBx10+k6JWz6u7VsohfSw8g8hjdBZEf8CFzXH1/1Z94=",
+        "type": "tarball",
+        "url": "https://github.com/NixOS/nixpkgs/archive/50eb7ecf4cd0a5756d7275c8ba36790e5bd53e33.tar.gz"
       },
       "original": {
-        "dir": "lib",
-        "owner": "NixOS",
-        "ref": "nixos-unstable",
-        "repo": "nixpkgs",
-        "type": "github"
+        "type": "tarball",
+        "url": "https://github.com/NixOS/nixpkgs/archive/50eb7ecf4cd0a5756d7275c8ba36790e5bd53e33.tar.gz"
       }
     },
     "nixpkgs-stable": {
@@ -239,11 +232,11 @@
     },
     "nixpkgs_3": {
       "locked": {
-        "lastModified": 1716633019,
-        "narHash": "sha256-xim1b5/HZYbWaZKyI7cn9TJCM6ewNVZnesRr00mXeS4=",
+        "lastModified": 1717159533,
+        "narHash": "sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth/3Xuw=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "9d29cd266cebf80234c98dd0b87256b6be0af44e",
+        "rev": "a62e6edd6d5e1fa0329b8653c801147986f8d446",
         "type": "github"
       },
       "original": {
@@ -321,26 +314,25 @@
       "locked": {
         "lastModified": 1713864796,
         "narHash": "sha256-1eqpiYyVtcJfHuV55SHSkZIMFCabTTpe7etr6Dvtqq0=",
-        "ref": "main",
+        "owner": "masslbs",
+        "repo": "network-schema",
         "rev": "1ccb579bd1e651605256d144b1fb3575cea81284",
-        "revCount": 1,
-        "type": "git",
-        "url": "ssh://git@github.com/masslbs/network-schema.git"
+        "type": "github"
       },
       "original": {
-        "ref": "main",
-        "type": "git",
-        "url": "ssh://git@github.com/masslbs/network-schema.git"
+        "owner": "masslbs",
+        "repo": "network-schema",
+        "type": "github"
       }
     },
     "solady": {
       "flake": false,
       "locked": {
-        "lastModified": 1712595757,
-        "narHash": "sha256-H9eLADP5UcgKzyJiFuhEj1d8vfqnYhTacknUHaHfP8U=",
+        "lastModified": 1716653360,
+        "narHash": "sha256-737uC8mcKba2MhwylPd1yt/nsAL4SNuRabkJb9rMl3Q=",
         "owner": "Vectorized",
         "repo": "solady",
-        "rev": "4ed19e1e837d00a76c5b60f003be688045bd971d",
+        "rev": "bfff552c0d282c15258cab9377a7d4c5247d0434",
         "type": "github"
       },
       "original": {
