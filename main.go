@@ -885,7 +885,16 @@ func (op *EventWriteOp) handle(sess *Session) {
 }
 
 func (im *CommitCartRequest) validate(_ uint) *Error {
-	return validateEventID(im.CartId, "cart_id")
+	errs := []*Error{
+		validateEventID(im.CartId, "cart_id"),
+	}
+	if erc20 := im.GetErc20Addr(); erc20 != nil {
+		errs = append(errs, validateEthAddressBytes(erc20, "erc20_addr"))
+	}
+	if ea := im.GetEscrowAddr(); ea != nil {
+		errs = append(errs, validateEthAddressBytes(ea, "escrow_addr"))
+	}
+	return coalesce(errs...)
 }
 
 func (im *CommitCartRequest) handle(sess *Session) {
@@ -2807,13 +2816,23 @@ func (op *CommitCartOp) process(r *Relay) {
 		return
 	}
 
+	// if there is an escrow address use it for payee
+	ea := op.im.GetEscrowAddr()
+	isEndpoint := ea != nil
+	payeeAddress := ownerAddr
+	if isEndpoint {
+		isEndpoint = true
+		payeeAddress = common.Address(ea)
+	}
+
 	var pr = PaymentRequest{}
 	pr.ChainId = new(big.Int).SetInt64(int64(r.ethClient.chainID))
 	pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
 	pr.Order = receiptHash
 	pr.Currency = erc20TokenAddr
 	pr.Amount = bigTotal
-	pr.PayeeAddress = ownerAddr
+	pr.PayeeAddress = payeeAddress
+	pr.IsPaymentEndpoint = isEndpoint
 	pr.ShopId = bigStoreTokenID
 	// TODO: calculate signature
 	pr.ShopSignature = bytes.Repeat([]byte{0}, 64)
