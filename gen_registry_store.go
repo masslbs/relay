@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from abi/StoreReg.json - git at c02cc9f34f838720e655b14255011d9a0f141e48
+// Generated from abi/StoreReg.json - git at c2efd6ad09570392e4d30595f0e0120384dbadfb
 
 // Code generated - DO NOT EDIT.
 // This file is a generated binding and any manual changes will be lost.

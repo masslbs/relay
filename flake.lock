@@ -13,16 +13,15 @@
         "solady": "solady"
       },
       "locked": {
-        "lastModified": 1717417778,
-        "narHash": "sha256-x+VGKqYZJB2pDcbsLIlJTOml3VV7X+HWpD/9bmdA1lQ=",
+        "lastModified": 1717502262,
+        "narHash": "sha256-mfJmZ0kKtb/T6O9WuYZqIcJySCXhuxCqbSiQvPEdc/o=",
         "owner": "masslbs",
         "repo": "contracts",
-        "rev": "c02cc9f34f838720e655b14255011d9a0f141e48",
+        "rev": "c2efd6ad09570392e4d30595f0e0120384dbadfb",
         "type": "github"
       },
       "original": {
         "owner": "masslbs",
-        "ref": "payments-v2-intergration",
         "repo": "contracts",
         "type": "github"
       }
@@ -64,11 +63,11 @@
         "nixpkgs-lib": "nixpkgs-lib"
       },
       "locked": {
-        "lastModified": 1715865404,
-        "narHash": "sha256-/GJvTdTpuDjNn84j82cU6bXztE0MSkdnTWClUCRub78=",
+        "lastModified": 1717285511,
+        "narHash": "sha256-iKzJcpdXih14qYVcZ9QC9XuZYnPc6T8YImb6dX166kw=",
         "owner": "hercules-ci",
         "repo": "flake-parts",
-        "rev": "8dc45382d5206bd292f9c2768b8058a8fd8311d9",
+        "rev": "2a55567fcf15b1b1c7ed712a2c6fadaec7412ea8",
         "type": "github"
       },
       "original": {
@@ -134,16 +133,16 @@
       "locked": {
         "lastModified": 1714727549,
         "narHash": "sha256-CWXRTxxcgMfQubJugpeg3yVWIfm70MYTtgaKWKgD60U=",
-        "ref": "monthly",
+        "owner": "shazow",
+        "repo": "foundry.nix",
         "rev": "47cf189ec395eda4b3e0623179d1075c8027ca97",
-        "revCount": 436,
-        "type": "git",
-        "url": "https://github.com/shazow/foundry.nix.git"
+        "type": "github"
       },
       "original": {
-        "ref": "monthly",
-        "type": "git",
-        "url": "https://github.com/shazow/foundry.nix.git"
+        "owner": "shazow",
+        "repo": "foundry.nix",
+        "rev": "47cf189ec395eda4b3e0623179d1075c8027ca97",
+        "type": "github"
       }
     },
     "gitignore": {
@@ -206,14 +205,14 @@
     },
     "nixpkgs-lib": {
       "locked": {
-        "lastModified": 1714640452,
-        "narHash": "sha256-QBx10+k6JWz6u7VsohfSw8g8hjdBZEf8CFzXH1/1Z94=",
+        "lastModified": 1717284937,
+        "narHash": "sha256-lIbdfCsf8LMFloheeE6N31+BMIeixqyQWbSr2vk79EQ=",
         "type": "tarball",
-        "url": "https://github.com/NixOS/nixpkgs/archive/50eb7ecf4cd0a5756d7275c8ba36790e5bd53e33.tar.gz"
+        "url": "https://github.com/NixOS/nixpkgs/archive/eb9ceca17df2ea50a250b6b27f7bf6ab0186f198.tar.gz"
       },
       "original": {
         "type": "tarball",
-        "url": "https://github.com/NixOS/nixpkgs/archive/50eb7ecf4cd0a5756d7275c8ba36790e5bd53e33.tar.gz"
+        "url": "https://github.com/NixOS/nixpkgs/archive/eb9ceca17df2ea50a250b6b27f7bf6ab0186f198.tar.gz"
       }
     },
     "nixpkgs-stable": {
@@ -331,11 +330,11 @@
     "solady": {
       "flake": false,
       "locked": {
-        "lastModified": 1716653360,
-        "narHash": "sha256-737uC8mcKba2MhwylPd1yt/nsAL4SNuRabkJb9rMl3Q=",
+        "lastModified": 1717493279,
+        "narHash": "sha256-mFKKe6CrYOT69H7LypN/MrMfQLuA9rv3sNSMABQx0us=",
         "owner": "Vectorized",
         "repo": "solady",
-        "rev": "bfff552c0d282c15258cab9377a7d4c5247d0434",
+        "rev": "54eb8737224ba015e5591c4c8e97c78cdf8f0e0f",
         "type": "github"
       },
       "original": {
