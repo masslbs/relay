@@ -885,7 +885,16 @@ func (op *EventWriteOp) handle(sess *Session) {
 }
 
 func (im *CommitCartRequest) validate(_ uint) *Error {
-	return validateEventID(im.CartId, "cart_id")
+	errs := []*Error{
+		validateEventID(im.CartId, "cart_id"),
+	}
+	if erc20 := im.GetErc20Addr(); erc20 != nil {
+		errs = append(errs, validateEthAddressBytes(erc20, "erc20_addr"))
+	}
+	if ea := im.GetEscrowAddr(); ea != nil {
+		errs = append(errs, validateEthAddressBytes(ea, "escrow_addr"))
+	}
+	return coalesce(errs...)
 }
 
 func (im *CommitCartRequest) handle(sess *Session) {
@@ -1592,7 +1601,7 @@ func (r *Relay) readEvents(whereFragment string, indexedIds []eventID) []EventIn
 	query := fmt.Sprintf(`select serverSeq, storeSeq, eventId, eventType, createdByKeyCardId, createdByStoreId, createdAt, createdByNetworkSchemaVersion, signature,
 	storeTokenId, domain, publishedTagId, manifestUpdateField, string, addr, referencedEventId, itemId, price,
 	metadata, itemUpdateField, name, tagId, cartId, quantity, itemIds, changes, txHash,
-    purchaseAddr, erc20Addr, subTotal, salesTax, total, totalInCrypto
+    purchaseAddr, erc20Addr, subTotal, salesTax, total, totalInCrypto, paymentId, paymentTtl
 from events where %s order by serverSeq asc`, whereFragment)
 	var rows pgx.Rows
 	var err error
@@ -1639,11 +1648,13 @@ from events where %s order by serverSeq asc`, whereFragment)
 			salesTax                *string
 			total                   *string
 			totalInCrypto           *string
+			paymentId               *[]byte
+			paymentTtl              *string
 		)
 		err := rows.Scan(&serverSeq, &storeSeq, &eID, &eventType, &createdByKeyCardID, &createdByStoreID, &createdAt, &createdByNetworkVersion, &signature,
 			&storeTokenID, &domain, &publishedTagID, &manifestUpdateField, &stringVal, &addrVal, &referencedEventID, &itemID, &price,
 			&metadata, &itemUpdateField, &name, &tagID, &cartID, &quantity, &itemIds, &changes, &txHash,
-			&purchaseAddr, &erc20Addr, &subTotal, &salesTax, &total, &totalInCrypto,
+			&purchaseAddr, &erc20Addr, &subTotal, &salesTax, &total, &totalInCrypto, &paymentId, &paymentTtl,
 		)
 		check(err)
 		m := CachedMetadata{
@@ -1802,6 +1813,8 @@ from events where %s order by serverSeq asc`, whereFragment)
 				SalesTax:      *salesTax,
 				Total:         *total,
 				TotalInCrypto: *totalInCrypto,
+				PaymentId:     *paymentId,
+				PaymentTtl:    *paymentTtl,
 			}
 			if erc20Addr != nil {
 				cf.Erc20Addr = *erc20Addr
@@ -1880,7 +1893,7 @@ var dbEntryInsertColumns = []string{
 	"name", "tagId",
 	"cartId", "quantity", "itemIds", "changes", "txHash",
 	"purchaseAddr", "erc20Addr", "subTotal", "salesTax", "total", "totalInCrypto",
-	"userWallet", "cardPublicKey"}
+	"userWallet", "cardPublicKey", "paymentId", "paymentTtl"}
 
 func (r *Relay) flushEvents() {
 	if len(r.queuedEventInserts) == 0 {
@@ -2561,6 +2574,8 @@ func (op *EventPushOp) process(r *Relay) {
 	}
 }
 
+const DefaultPaymentTTL = 60 * 60 * 24
+
 func (op *CommitCartOp) process(r *Relay) {
 	ctx := context.Background()
 	sessionID := op.sessionID
@@ -2619,6 +2634,8 @@ func (op *CommitCartOp) process(r *Relay) {
 	cartId != $2 and
 	cartPayedAt is null`, sessionState.storeID, op.im.CartId)
 	check(err)
+	defer otherCartRows.Close()
+
 	otherCartIds := NewMapEventIds[*CachedCart]()
 	for otherCartRows.Next() {
 		var otherCartID eventID
@@ -2699,7 +2716,6 @@ func (op *CommitCartOp) process(r *Relay) {
 	var (
 		bigTotal = new(big.Int)
 
-		proof       common.Address // TODO
 		receiptHash [32]byte
 
 		usignErc20     = len(op.im.Erc20Addr) == 20
@@ -2714,6 +2730,7 @@ func (op *CommitCartOp) process(r *Relay) {
 		r.sendSessionOp(sessionState, op)
 		return
 	}
+	defer gethClient.Close()
 
 	callOpts := &bind.CallOpts{
 		Pending: false,
@@ -2767,6 +2784,7 @@ func (op *CommitCartOp) process(r *Relay) {
 
 	bigStoreTokenID := new(big.Int).SetBytes(store.storeTokenID)
 
+	// owner
 	storeReg, err := NewRegStoreCaller(r.ethClient.contractAddresses.StoreRegistry, gethClient)
 	if err != nil {
 		logSR("relay.commitCartOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
@@ -2783,27 +2801,67 @@ func (op *CommitCartOp) process(r *Relay) {
 		return
 	}
 
-	factory, err := NewPaymentFactoryCaller(r.ethClient.contractAddresses.PaymentFactory, gethClient)
-	if err != nil {
-		logSR("relay.commitCartOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
-		op.err = &Error{Code: invalidErrorCode, Message: "failed to get store owner"}
-		r.sendSessionOp(sessionState, op)
-		return
-	}
-
-	purchaseAddr, err := factory.GetPaymentAddress(callOpts, ownerAddr, proof, bigTotal, erc20TokenAddr, receiptHash)
-	if err != nil {
-		op.err = &Error{Code: invalidErrorCode, Message: "failed to create payment address"}
-		r.sendSessionOp(sessionState, op)
-		return
-	}
-	blockNo, err := gethClient.BlockNumber(context.Background())
+	// ttl
+	blockNo, err := gethClient.BlockNumber(ctx)
 	if err != nil {
 		op.err = &Error{Code: invalidErrorCode, Message: "failed to get block number"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
-	log("relay.commitCartOp.paymentAddress addr=%x total=%s currentBlock=%d", purchaseAddr, bigTotal.String(), blockNo)
+
+	block, err := gethClient.BlockByNumber(ctx, new(big.Int).SetInt64(int64(blockNo)))
+	if err != nil {
+		op.err = &Error{Code: invalidErrorCode, Message: "failed to get block number"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
+	// if there is an escrow address use it for payee
+	ea := op.im.GetEscrowAddr()
+	isEndpoint := ea != nil
+	payeeAddress := ownerAddr
+	if isEndpoint {
+		isEndpoint = true
+		payeeAddress = common.Address(ea)
+	}
+
+	var pr = PaymentRequest{}
+	pr.ChainId = new(big.Int).SetInt64(int64(r.ethClient.chainID))
+	pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
+	pr.Order = receiptHash
+	pr.Currency = erc20TokenAddr
+	pr.Amount = bigTotal
+	pr.PayeeAddress = payeeAddress
+	pr.IsPaymentEndpoint = isEndpoint
+	pr.ShopId = bigStoreTokenID
+	// TODO: calculate signature
+	pr.ShopSignature = bytes.Repeat([]byte{0}, 64)
+
+	// get paymentId and create fallback address
+	paymentsContract, err := NewPaymentsByAddressCaller(r.ethClient.contractAddresses.Payments, gethClient)
+	if err != nil {
+		logSR("relay.commitCartOp.newPaymentsByAddressFailed err=%s", sessionID, requestID, err.Error())
+		op.err = &Error{Code: invalidErrorCode, Message: "contract interaction error"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
+	paymentId, err := paymentsContract.GetPaymentId(callOpts, pr)
+	if err != nil {
+		logSR("relay.commitCartOp.getPaymentIdFailed err=%s", sessionID, requestID, err.Error())
+		op.err = &Error{Code: invalidErrorCode, Message: "failed to paymentId"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
+	purchaseAddr, err := paymentsContract.GetPaymentAddress(callOpts, pr, ownerAddr)
+	if err != nil {
+		op.err = &Error{Code: invalidErrorCode, Message: "failed to create payment address"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
+	log("relay.commitCartOp.paymentRequest id=%s addr=%x total=%s currentBlock=%d", paymentId.Text(16), purchaseAddr, bigTotal.String(), blockNo)
 
 	// mark cart as finalized by creating the event and updating payments table
 	var (
@@ -2817,8 +2875,8 @@ func (op *CommitCartOp) process(r *Relay) {
 	cf.SubTotal = roundPrice(fiatSubtotal).Text('f')
 	cf.SalesTax = roundPrice(salesTax).Text('f')
 	cf.Total = roundPrice(fiatTotal).Text('f')
-
-	op.cartFinalizedID = cf.EventId
+	cf.PaymentId = paymentId.Bytes()
+	cf.PaymentTtl = pr.Ttl.String()
 
 	w.waiterID = newRequestID()
 	w.cartID = op.im.CartId
@@ -2827,6 +2885,7 @@ func (op *CommitCartOp) process(r *Relay) {
 	w.lastBlockNo.SetInt64(int64(blockNo))
 	w.coinsTotal.Set(bigTotal)
 	w.coinsPayed.SetInt64(0)
+	w.paymentId = SQLStringBigInt{*paymentId}
 
 	if usignErc20 {
 		cf.Erc20Addr = erc20TokenAddr[:]
@@ -2847,13 +2906,15 @@ func (op *CommitCartOp) process(r *Relay) {
 
 	seqPair := r.storeIdsToStoreSeqs.MustGet(sessionState.storeID)
 	// TODO: we could join against events instead for some of these fields but let's not disrupt this now
-	const insertPaymentWaiterQuery = `insert into payments (waiterId, storeSeqNo, createdByStoreId, cartId, cartFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+	const insertPaymentWaiterQuery = `insert into payments (waiterId, storeSeqNo, createdByStoreId, cartId, cartFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr, paymentId)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	_, err = r.syncTx.Exec(ctx, insertPaymentWaiterQuery,
-		w.waiterID, seqPair.lastWrittenStoreSeq, cart.createdByStoreID, w.cartID, w.cartFinalizedAt, w.purchaseAddr.Bytes(), w.lastBlockNo, w.coinsPayed, w.coinsTotal, w.erc20TokenAddr)
+		w.waiterID, seqPair.lastWrittenStoreSeq, cart.createdByStoreID, w.cartID, w.cartFinalizedAt, w.purchaseAddr.Bytes(), w.lastBlockNo, w.coinsPayed, w.coinsTotal, w.erc20TokenAddr, w.paymentId.Bytes())
 	check(err)
 
 	r.commitSyncTransaction()
+
+	op.cartFinalizedID = cf.EventId
 
 	logSR("relay.commitCartOp.finish took=%d", sessionID, requestID, took(start))
 	r.sendSessionOp(sessionState, op)
@@ -3033,6 +3094,8 @@ func formInsert(e *Event, meta CachedMetadata) []interface{} {
 			nil,                          // totalInCrypto
 			nil,                          // userWallet
 			nil,                          // cardPublicKey
+			nil,                          // paymentId
+			nil,                          // paymentTtl
 		}
 
 	case *Event_UpdateManifest:
@@ -3084,6 +3147,8 @@ func formInsert(e *Event, meta CachedMetadata) []interface{} {
 			nil,                          // totalInCrypto
 			nil,                          // userWallet
 			nil,                          // cardPublicKey
+			nil,                          // paymentId
+			nil,                          // paymentTtl
 		}
 
 	case *Event_CreateItem:
@@ -3124,6 +3189,8 @@ func formInsert(e *Event, meta CachedMetadata) []interface{} {
 			nil,                          // totalInCrypto
 			nil,                          // userWallet
 			nil,                          // cardPublicKey
+			nil,                          // paymentId
+			nil,                          // paymentTtl
 		}
 
 	case *Event_UpdateItem:
@@ -3172,6 +3239,8 @@ func formInsert(e *Event, meta CachedMetadata) []interface{} {
 			nil,                          // totalInCrypto
 			nil,                          // userWallet
 			nil,                          // cardPublicKey
+			nil,                          // paymentId
+			nil,                          // paymentTtl
 		}
 
 	case *Event_CreateTag:
@@ -3212,6 +3281,8 @@ func formInsert(e *Event, meta CachedMetadata) []interface{} {
 			nil,                          // totalInCrypto
 			nil,                          // userWallet
 			nil,                          // cardPublicKey
+			nil,                          // paymentId
+			nil,                          // paymentTtl
 		}
 
 	case *Event_AddToTag:
@@ -3252,6 +3323,8 @@ func formInsert(e *Event, meta CachedMetadata) []interface{} {
 			nil,                          // totalInCrypto
 			nil,                          // userWallet
 			nil,                          // cardPublicKey
+			nil,                          // paymentId
+			nil,                          // paymentTtl
 		}
 
 	case *Event_RemoveFromTag:
@@ -3292,6 +3365,8 @@ func formInsert(e *Event, meta CachedMetadata) []interface{} {
 			nil,                          // totalInCrypto
 			nil,                          // userWallet
 			nil,                          // cardPublicKey
+			nil,                          // paymentId
+			nil,                          // paymentTtl
 		}
 
 	case *Event_RenameTag:
@@ -3332,6 +3407,8 @@ func formInsert(e *Event, meta CachedMetadata) []interface{} {
 			nil,                          // totalInCrypto
 			nil,                          // userWallet
 			nil,                          // cardPublicKey
+			nil,                          // paymentId
+			nil,                          // paymentTtl
 		}
 
 	case *Event_DeleteTag:
@@ -3372,6 +3449,8 @@ func formInsert(e *Event, meta CachedMetadata) []interface{} {
 			nil,                          // totalInCrypto
 			nil,                          // userWallet
 			nil,                          // cardPublicKey
+			nil,                          // paymentId
+			nil,                          // paymentTtl
 		}
 
 	case *Event_CreateCart:
@@ -3412,6 +3491,8 @@ func formInsert(e *Event, meta CachedMetadata) []interface{} {
 			nil,                          // totalInCrypto
 			nil,                          // userWallet
 			nil,                          // cardPublicKey
+			nil,                          // paymentId
+			nil,                          // paymentTtl
 		}
 
 	case *Event_ChangeCart:
@@ -3452,6 +3533,8 @@ func formInsert(e *Event, meta CachedMetadata) []interface{} {
 			nil,                          // totalInCrypto
 			nil,                          // userWallet
 			nil,                          // cardPublicKey
+			nil,                          // paymentId
+			nil,                          // paymentTtl
 		}
 
 	case *Event_ChangeStock:
@@ -3498,6 +3581,8 @@ func formInsert(e *Event, meta CachedMetadata) []interface{} {
 			nil,                          // totalInCrypto
 			nil,                          // userWallet
 			nil,                          // cardPublicKey
+			nil,                          // paymentId
+			nil,                          // paymentTtl
 		}
 	case *Event_CartFinalized:
 		cf := e.GetCartFinalized()
@@ -3541,6 +3626,8 @@ func formInsert(e *Event, meta CachedMetadata) []interface{} {
 			cf.TotalInCrypto,             // totalInCrypto
 			nil,                          // userWallet
 			nil,                          // cardPublicKey
+			cf.PaymentId,                 // paymentId
+			cf.PaymentTtl,                // paymentTtl
 		}
 
 	case *Event_CartAbandoned:
@@ -3581,6 +3668,8 @@ func formInsert(e *Event, meta CachedMetadata) []interface{} {
 			nil,                          // totalInCrypto
 			nil,                          // userWallet
 			nil,                          // cardPublicKey
+			nil,                          // paymentId
+			nil,                          // paymentTtl
 		}
 
 	case *Event_NewKeyCard:
@@ -3621,48 +3710,52 @@ func formInsert(e *Event, meta CachedMetadata) []interface{} {
 			nil,                          // totalInCrypto
 			nkc.UserWalletAddr,           // userWallet
 			nkc.CardPublicKey,            // cardPublicKey
+			nil,                          // paymentId
+			nil,                          // paymentTtl
 		}
 
 		/*
-			case Foo:
-				ce := e.Get()
+				case Foo:
+					ce := e.Get()
 				return []interface{}{
-					eventTypeUpdateManifest,      // eventType
-					ce.EventId,                   // eventId
-					meta.createdByKeyCardID,      // createdByKeyCardId
-					meta.createdByStoreID,        // createdByStoreId
-					meta.storeSeq,                // storeSeq
-					now(),                        // createdAt
-					meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
-					meta.serverSeq,               // serverSeq
-					e.Signature,                  // signature
-					nil,                          // storeTokenId
-					nil,                          // domain
-					nil,                          // publishedTagId
-					nil,                          // manifestUpdateField
-					nil,                          // string
-					nil,                          // addr
-					nil,                          // referencedEventId
-					nil,                          // itemId
-					nil,                          // price
-					nil,                          // metadata
-					nil,                          // itemUpdateField
-					nil,                          // name
-					nil,                          // tagId
-					nil,                          // cartId
-					nil,                          // quantity
-					nil,                          // itemIds
-					nil,                          // changes
-					nil,                          // txHash
-					nil,                          // purchaseAddr
-					nil,                          // erc20Addr
-					nil,                          // subTotal
-					nil,                          // salesTax
-					nil,                          // total
-					nil,                          // totalInCrypto
-					nil,                          // userWallet
-					nil,                          // cardPublicKey
-				}
+						eventTypeUpdateManifest,      // eventType
+						ce.EventId,                   // eventId
+						meta.createdByKeyCardID,      // createdByKeyCardId
+						meta.createdByStoreID,        // createdByStoreId
+						meta.storeSeq,                // storeSeq
+						now(),                        // createdAt
+						meta.createdByNetworkVersion, // createdByNetworkSchemaVersion
+						meta.serverSeq,               // serverSeq
+						e.Signature,                  // signature
+						nil,                          // storeTokenId
+						nil,                          // domain
+						nil,                          // publishedTagId
+						nil,                          // manifestUpdateField
+						nil,                          // string
+						nil,                          // addr
+						nil,                          // referencedEventId
+						nil,                          // itemId
+						nil,                          // price
+						nil,                          // metadata
+						nil,                          // itemUpdateField
+						nil,                          // name
+						nil,                          // tagId
+						nil,                          // cartId
+						nil,                          // quantity
+						nil,                          // itemIds
+						nil,                          // changes
+						nil,                          // txHash
+						nil,                          // purchaseAddr
+						nil,                          // erc20Addr
+						nil,                          // subTotal
+						nil,                          // salesTax
+						nil,                          // total
+						nil,                          // totalInCrypto
+						nil,                          // userWallet
+						nil,                          // cardPublicKey
+			          	nil, // paymentId
+				        nil, // paymentTtl
+					}
 		*/
 
 	default:
@@ -3765,7 +3858,7 @@ func (r *Relay) debounceSessions() {
 			query := `select serverSeq, storeSeq, eventId, eventType, createdByKeyCardId, createdByStoreId, createdAt, signature,
 			storeTokenId, domain, publishedTagId, manifestUpdateField, string, addr, referencedEventId, itemId, price,
 			metadata, itemUpdateField, name, tagId, cartId, quantity, itemIds, changes, txHash, userWallet, cardPublicKey,
-            purchaseAddr, erc20Addr, subTotal, salesTax, total, totalInCrypto
+            purchaseAddr, erc20Addr, subTotal, salesTax, total, totalInCrypto, paymentId, paymentTtl
 from events
 where createdByStoreId = $1
 	and storeSeq > $2
@@ -3804,10 +3897,12 @@ order by storeSeq asc limit $4`
 					salesTax            *string
 					total               *string
 					totalInCrypto       *string
+					paymentID           *[]byte
+					paymentTtl          *string
 				)
 				err := rows.Scan(&eventState.serverSeq, &eventState.storeSeq, &eventState.eventID, &eventState.eventType, &eventState.created.byDeviceID, &eventState.created.byStoreID, &eventState.created.at, &eventState.signature,
 					&storeTokenID, &domain, &publishedTagID, &manifestUpdateField, &stringVal, &addrVal, &referencedEventID, &itemID, &price, &metadata, &itemUpdateField, &name, &tagID, &cartID, &quantity, &itemIds, &changes, &txHash, &userWallet, &cardPublicKey,
-					&purchaseAddr, &erc20Addr, &subTotal, &salesTax, &total, &totalInCrypto,
+					&purchaseAddr, &erc20Addr, &subTotal, &salesTax, &total, &totalInCrypto, &paymentID, &paymentTtl,
 				)
 				check(err)
 				reads++
@@ -3940,6 +4035,8 @@ order by storeSeq asc limit $4`
 					assert(salesTax != nil)
 					assert(total != nil)
 					assert(totalInCrypto != nil)
+					assert(paymentID != nil)
+					assert(paymentTtl != nil)
 					cf := &CartFinalized{
 						EventId:       eventState.eventID,
 						CartId:        *cartID,
@@ -3948,6 +4045,8 @@ order by storeSeq asc limit $4`
 						SalesTax:      *salesTax,
 						Total:         *total,
 						TotalInCrypto: *totalInCrypto,
+						PaymentId:     *paymentID,
+						PaymentTtl:    *paymentTtl,
 					}
 					if erc20Addr != nil {
 						cf.Erc20Addr = *erc20Addr
@@ -4067,6 +4166,7 @@ type PaymentWaiter struct {
 	lastBlockNo     SQLStringBigInt
 	coinsPayed      SQLStringBigInt
 	coinsTotal      SQLStringBigInt
+	paymentId       SQLStringBigInt
 
 	// (optional) contract of the erc20 that we are looking for
 	erc20TokenAddr *common.Address
@@ -4218,7 +4318,10 @@ func (r *Relay) watchEthereumPayments() error {
 	return nil
 }
 
-var transferSignatureErc20 = crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)"))
+var (
+	eventSignatureTransferErc20 = crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)"))
+	eventSignaturePaymentMade   = crypto.Keccak256Hash([]byte("PaymentMade(uint256)"))
+)
 
 func (r *Relay) watchErc20Payments() error {
 	log("relay.watchErc20Payments.start")
@@ -4301,7 +4404,7 @@ func (r *Relay) watchErc20Payments() error {
 		FromBlock: lowestLastBlock,
 		ToBlock:   currentBlockNo,
 		Topics: [][]common.Hash{
-			{transferSignatureErc20},
+			{eventSignatureTransferErc20},
 			// TODO: it would seem that {transferSignatureErc20, {}, purchaseAddrAsHash} would be the right filter, but it doesn't work
 			// See the following article but i'm not willing to do all that just right now
 			// https://dave-appleton.medium.com/overcoming-ethclients-filter-restrictions-81e232a8eccd
@@ -4316,6 +4419,7 @@ func (r *Relay) watchErc20Payments() error {
 	}
 
 	// iterate over all matching logs of events from that erc20 contract with the transfer signature
+	var lastBlockNo uint64
 	for _, vLog := range logs {
 		// log("relay.watchErc20Payments.checking block=%d", vLog.BlockNumber)
 		// log("relay.watchErc20Payments.checking topics=%#v", vLog.Topics[1:])
@@ -4330,7 +4434,7 @@ func (r *Relay) watchErc20Payments() error {
 			_, has := r.cartsByCartID.get(cartID)
 			assertWithMessage(has, fmt.Sprintf("cart not found for cartId=%s", cartID))
 
-			evts, err := r.ethClient.erc20ContractABI.Unpack("Transfer", vLog.Data)
+			evts, err := r.ethClient.ABIs.erc20Contract.Unpack("Transfer", vLog.Data)
 			if err != nil {
 				log("relay.watchErc20Payments.transferErc20.failedToUnpackTransfer err=%s", err)
 				continue
@@ -4364,9 +4468,16 @@ func (r *Relay) watchErc20Payments() error {
 				check(err)
 			}
 		}
+		if vLog.BlockNumber > lastBlockNo {
+			lastBlockNo = vLog.BlockNumber
+		}
+
+	}
+	if lastBlockNo > 0 {
+		lastBlockBig := new(big.Int).SetUint64(lastBlockNo)
 		for _, waiter := range waiters {
 			// only advance those waiters which last blocks are lower then the block we just checked
-			if waiter.lastBlockNo.Cmp(big.NewInt(int64(vLog.BlockNumber))) == -1 {
+			if waiter.lastBlockNo.Cmp(lastBlockBig) == -1 {
 				continue
 			}
 			// move up block number
@@ -4376,10 +4487,137 @@ func (r *Relay) watchErc20Payments() error {
 			log("relay.watchErc20Payments.advance cartId=%x newLastBlock=%s", waiter.cartID, waiter.lastBlockNo.String())
 		}
 	}
-
 	stillWaiting := len(waiters)
 	log("relay.watchErc20Payments.finish elapsed=%d openWaiters=%d", took(start), stillWaiting)
 	r.metric.emit("relay_payments_erc20_open", uint64(stillWaiting))
+	return nil
+}
+
+func (r *Relay) watchPaymentMade() error {
+	log("relay.watchPaymentMade.start")
+
+	var (
+		start = now()
+
+		// this is the block iterator
+		lowestLastBlock = new(big.Int)
+
+		waiters = make(map[common.Hash]PaymentWaiter)
+	)
+
+	ctx, cancel := context.WithDeadline(context.Background(), start.Add(watcherTimeout))
+	defer cancel()
+
+	gethClient, err := r.ethClient.getClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer gethClient.Close()
+
+	openPaymentsQry := `SELECT waiterId, cartId, cartFinalizedAt, paymentId, lastBlockNo
+		FROM payments
+		WHERE cartPayedAt IS NULL AND cartFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
+	rows, err := r.connPool.Query(ctx, openPaymentsQry)
+	check(err)
+	defer rows.Close()
+	for rows.Next() {
+		var waiter PaymentWaiter
+		err := rows.Scan(&waiter.waiterID, &waiter.cartID, &waiter.cartFinalizedAt, &waiter.paymentId, &waiter.lastBlockNo)
+		check(err)
+		assert(waiter.lastBlockNo.Cmp(bigZero) != 0)
+
+		// init first
+		if lowestLastBlock.Cmp(bigZero) == 0 {
+			lowestLastBlock = &waiter.lastBlockNo.Int
+		}
+		// is this waiter smaller?
+		if lowestLastBlock.Cmp(&waiter.lastBlockNo.Int) == -1 {
+			lowestLastBlock = &waiter.lastBlockNo.Int
+		}
+		pid := common.Hash(waiter.paymentId.Bytes())
+		//log("relay.watchPaymentMade.want pid=%s", pid.Hex())
+		waiters[pid] = waiter
+	}
+	check(rows.Err())
+
+	if len(waiters) == 0 {
+		log("relay.watchPaymentMade.noOpenPayments took=%d", took(start))
+		return nil
+	}
+
+	// Get the latest block number.
+	currentBlockNoInt, err := gethClient.BlockNumber(ctx)
+	if err != nil {
+		return fmt.Errorf("relay.watchPaymentMade.blockNumber err=%s", err)
+	}
+
+	log("relay.watchPaymentMade.starting currentBlock=%d", currentBlockNoInt)
+	currentBlockNo := big.NewInt(int64(currentBlockNoInt))
+
+	qry := ethereum.FilterQuery{
+		Addresses: []common.Address{r.ethClient.contractAddresses.Payments},
+		FromBlock: lowestLastBlock,
+		ToBlock:   currentBlockNo,
+		Topics: [][]common.Hash{
+			{eventSignaturePaymentMade},
+		},
+	}
+	logs, err := gethClient.FilterLogs(ctx, qry)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			log("relay.watchPaymentMade.noNewBlocks took=%d", took(start))
+			return nil // possibly no new block, dont try again immediatly
+		}
+		return err
+	}
+
+	// iterate over all matching logs of events from that erc20 contract with the transfer signature
+	var lastBlockNo uint64
+	for _, vLog := range logs {
+		//log("relay.watchPaymentMade.checking block=%d", vLog.BlockNumber)
+
+		var paymentIdHash = common.Hash(vLog.Topics[1])
+		//log("relay.watchPaymentMade.seen pid=%s", paymentIdHash.Hex())
+
+		if waiter, has := waiters[paymentIdHash]; has {
+			cartID := waiter.cartID
+			//log("relay.watchPaymentMade.found cartId=%s txHash=%x", cartID, vLog.TxHash)
+
+			_, has := r.cartsByCartID.get(cartID)
+			assertWithMessage(has, fmt.Sprintf("cart not found for cartId=%s", cartID))
+
+			op := PaymentFoundInternalOp{
+				cartID: cartID,
+				txHash: vLog.TxHash,
+				done:   make(chan struct{}),
+			}
+			r.opsInternal <- &op
+			<-op.done // block until op was processed by server loop
+
+			delete(waiters, paymentIdHash)
+			log("relay.watchPaymentMade.completed cartId=%s txHash=%x", cartID, vLog.TxHash)
+		}
+		if vLog.BlockNumber > lastBlockNo {
+			lastBlockNo = vLog.BlockNumber
+		}
+	}
+	if lastBlockNo > 0 {
+		lastBlockBig := new(big.Int).SetUint64(lastBlockNo)
+		for _, waiter := range waiters {
+			// only advance those waiters which last blocks are lower then the block we just checked
+			if waiter.lastBlockNo.Cmp(lastBlockBig) == -1 {
+				continue
+			}
+			// move up block number
+			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = $2 WHERE cartId = $1;`
+			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, waiter.cartID, currentBlockNo.String())
+			check(err)
+			log("relay.watchPaymentMade.advance cartId=%x newLastBlock=%s", waiter.cartID, waiter.lastBlockNo.String())
+		}
+	}
+	stillWaiting := len(waiters)
+	log("relay.watchPaymentMade.finish elapsed=%d openWaiters=%d", took(start), stillWaiting)
+	r.metric.emit("relay_payments_open", uint64(stillWaiting))
 	return nil
 }
 
@@ -4851,50 +5089,47 @@ func server() {
 	r.writesEnabled = true
 	go r.run()
 
-	go func() {
-		for {
-			op := func() error {
-				err := r.watchEthereumPayments()
-				if err != nil {
-					log("relay.run.watchEthereumPayments.error %+v", err)
-					return repeat.HintTemporary(err)
-				}
-				return nil
-			}
-
-			err := repeat.Repeat(repeat.Fn(op),
-				repeat.LimitMaxTries(10),
-				repeat.StopOnSuccess(),
-			)
+	// spawn payment watchers
+	var ops = []repeat.Operation{
+		repeat.Fn(func() error {
+			err := r.watchPaymentMade()
 			if err != nil {
-				r.metric.counterAdd("relay_watchError_error", 1)
+				log("relay.watchPayemtnMade.error %+v", err)
+				return repeat.HintTemporary(err)
 			}
-			// sleep 5 second plus sum jitter
-			time.Sleep(ethereumBlockInterval/2 + time.Duration(rand.Intn(1000))*time.Millisecond)
-		}
-	}()
-
-	go func() {
-		for {
-			op := func() error {
-				err := r.watchErc20Payments()
-				if err != nil {
-					log("relay.watchErc20Payments.error %+v", err)
-					return repeat.HintTemporary(err)
-				}
-				return nil
-			}
-			err := repeat.Repeat(repeat.Fn(op),
-				repeat.LimitMaxTries(10),
-				repeat.StopOnSuccess(),
-			)
+			return nil
+		}),
+		repeat.Fn(func() error {
+			err := r.watchEthereumPayments()
 			if err != nil {
-				r.metric.counterAdd("relay_watchError_error", 1)
+				log("relay.watchEthereumPayments.error %+v", err)
+				return repeat.HintTemporary(err)
 			}
-			// sleep 5 second plus sum jitter
-			time.Sleep(ethereumBlockInterval/2 + time.Duration(rand.Intn(1000))*time.Millisecond)
-		}
-	}()
+			return nil
+		}),
+		repeat.Fn(func() error {
+			err := r.watchErc20Payments()
+			if err != nil {
+				log("relay.watchErc20Payments.error %+v", err)
+				return repeat.HintTemporary(err)
+			}
+			return nil
+		}),
+	}
+	for _, op := range ops {
+		go func(op repeat.Operation) {
+			for {
+				err := repeat.Repeat(op,
+					repeat.LimitMaxTries(10),
+					repeat.StopOnSuccess(),
+				)
+				if err != nil {
+					r.metric.counterAdd("relay_watchError_error", 1)
+				}
+				time.Sleep(ethereumBlockInterval/2 + time.Duration(rand.Intn(1000))*time.Millisecond)
+			}
+		}(op)
+	}
 
 	// open metrics and pprof after relay & ethclient booted
 	openPProfEndpoint()

@@ -39,12 +39,15 @@ type ethClient struct {
 	gasTipCap *big.Int
 	gasFeeCap *big.Int
 
-	erc20ContractABI abi.ABI
+	ABIs struct {
+		erc20Contract abi.ABI
+		payments      abi.ABI
+	}
 
 	contractAddresses struct {
-		PaymentFactory common.Address `json:"PaymentFactory"`
-		StoreRegistry  common.Address `json:"StoreReg"`
-		RelayRegistry  common.Address `json:"RelayReg"`
+		Payments      common.Address `json:"Payments"`
+		StoreRegistry common.Address `json:"StoreReg"`
+		RelayRegistry common.Address `json:"RelayReg"`
 	}
 	secret *ecdsa.PrivateKey
 	wallet common.Address
@@ -112,19 +115,14 @@ func newEthClient() *ethClient {
 	err = json.Unmarshal(addrData, &c.contractAddresses)
 	check(err)
 
-	// c.stores, err = NewRegStore(c.contractAddresses.StoreRegistry, c.Client)
-	// check(err)
 	log("ethClient.newEthClient storeRegAddr=%s", c.contractAddresses.StoreRegistry.Hex())
-
-	// c.relays, err = NewRegRelay(c.contractAddresses.RelayRegistry, c.Client)
-	// check(err)
 	log("ethClient.newEthClient relayRegAddr=%s", c.contractAddresses.RelayRegistry.Hex())
+	log("ethClient.newEthClient paymentsByAddressAddr=%s", c.contractAddresses.Payments.Hex())
 
-	// c.paymentFactory, err = NewPaymentFactory(c.contractAddresses.PaymentFactory, c.Client)
-	// check(err)
-	log("ethClient.newEthClient paymentFactoryAddr=%s", c.contractAddresses.PaymentFactory.Hex())
+	c.ABIs.erc20Contract, err = abi.JSON(strings.NewReader(ERC20MetaData.ABI))
+	check(err)
 
-	c.erc20ContractABI, err = abi.JSON(strings.NewReader(ERC20MetaData.ABI))
+	c.ABIs.payments, err = abi.JSON(strings.NewReader(PaymentsByAddressMetaData.ABI))
 	check(err)
 
 	callOpts := &bind.CallOpts{

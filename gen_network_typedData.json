@@ -193,6 +193,14 @@
     {
       "name": "total_in_crypto",
       "type": "string"
+    },
+    {
+      "name": "payment_id",
+      "type": "bytes32"
+    },
+    {
+      "name": "payment_ttl",
+      "type": "string"
     }
   ],
   "CartAbandoned": [

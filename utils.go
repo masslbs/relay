@@ -274,6 +274,8 @@ func (bi *SQLStringBigInt) Scan(src interface{}) error {
 			return fmt.Errorf("failed to parse BIGINT string value: %q", src)
 		}
 		_, _ = parsed.Int(&bi.Int)
+	case []byte:
+		bi.SetBytes(src)
 	default:
 		return fmt.Errorf("unsupported Scan source type: %T", src)
 	}
