@@ -189,57 +189,76 @@ func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
 	// for these we ned to remove the fields from the spec that are not set
 	// since we already omit the values from the message in TypeAndTypedDataMap()
 	if um := evt.GetUpdateStoreManifest(); um != nil {
-		usedTypeSpec = make([]apitypes.Type, 3)
-		copy(usedTypeSpec, tdTypeSpec[:2])
-		switch um.Field {
-		case UpdateStoreManifest_MANIFEST_FIELD_DOMAIN:
-			// keep type: string
-			usedTypeSpec[2] = tdTypeSpec[2]
-		case UpdateStoreManifest_MANIFEST_FIELD_PUBLISHED_TAG:
-			// keep type: id
-			usedTypeSpec[2] = tdTypeSpec[3]
-		case UpdateStoreManifest_MANIFEST_FIELD_ADD_ERC20:
-			// keep type: erc20_addr
-			usedTypeSpec[2] = tdTypeSpec[4]
-		case UpdateStoreManifest_MANIFEST_FIELD_REMOVE_ERC20:
-			// keep type: erc20_addr
-			usedTypeSpec[2] = tdTypeSpec[4]
-		default:
-			panic(fmt.Sprintf("eventHash: unknown updateManifest field: %v", um.Field))
+		usedTypeSpec = make([]apitypes.Type, 1)
+		copy(usedTypeSpec[:1], tdTypeSpec[:1])
+		if d := um.Domain; d != nil {
+			usedTypeSpec = append(usedTypeSpec, apitypes.Type{
+				Name: "domain",
+				Type: "string",
+			})
+		}
+		if pt := um.PublishedTagId; len(pt) > 0 {
+			usedTypeSpec = append(usedTypeSpec, apitypes.Type{
+				Name: "published_tag_id",
+				Type: "bytes32",
+			})
+		}
+		if id := um.AddErc20Addr; len(id) > 0 {
+			usedTypeSpec = append(usedTypeSpec, apitypes.Type{
+				Name: "add_erc20_addr",
+				Type: "address",
+			})
+		}
+		if id := um.RemoveErc20Addr; len(id) > 0 {
+			usedTypeSpec = append(usedTypeSpec, apitypes.Type{
+				Name: "remove_erc20_addr",
+				Type: "address",
+			})
 		}
 	} else if ui := evt.GetUpdateItem(); ui != nil {
-		usedTypeSpec = make([]apitypes.Type, 4)
-		copy(usedTypeSpec, tdTypeSpec[:3])
-		switch ui.Field {
-		case UpdateItem_ITEM_FIELD_PRICE:
-			// keep type: price
-			usedTypeSpec[3] = tdTypeSpec[3]
-		case UpdateItem_ITEM_FIELD_METADATA:
-			// keep type: metadata
-			usedTypeSpec[3] = tdTypeSpec[4]
-		default:
-			panic(fmt.Sprintf("eventHash: unknown updateItem field: %v", ui.Field))
+		usedTypeSpec = make([]apitypes.Type, 2)
+		copy(usedTypeSpec, tdTypeSpec[:2])
+		if p := ui.Price; p != nil {
+			usedTypeSpec = append(usedTypeSpec, apitypes.Type{
+				Name: "price",
+				Type: "string",
+			})
+		}
+		if meta := ui.Metadata; len(meta) > 0 {
+			usedTypeSpec = append(usedTypeSpec, apitypes.Type{
+				Name: "metadata",
+				Type: "bytes",
+			})
 		}
 	} else if ut := evt.GetUpdateTag(); ut != nil {
-		usedTypeSpec = make([]apitypes.Type, 4)
-		copy(usedTypeSpec, tdTypeSpec[:3])
-		switch ut.Action {
-		case UpdateTag_TAG_ACTION_ADD_ITEM:
-			fallthrough
-		case UpdateTag_TAG_ACTION_REMOVE_ITEM:
-			// keep type: item_id
-			usedTypeSpec[3] = tdTypeSpec[3]
-		case UpdateTag_TAG_ACTION_RENAME:
-			// keep type: new_name
-			usedTypeSpec[3] = tdTypeSpec[4]
-		case UpdateTag_TAG_ACTION_DELETE_TAG:
-			// keep type: delete
-			usedTypeSpec[3] = tdTypeSpec[5]
-		default:
-			panic(fmt.Sprintf("eventHash: unknown updateTag action: %v", ut.Action))
+		usedTypeSpec = make([]apitypes.Type, 2)
+		copy(usedTypeSpec, tdTypeSpec[:2])
+		if id := ut.AddItemId; len(id) > 0 {
+			usedTypeSpec = append(usedTypeSpec, apitypes.Type{
+				Name: "add_item_id",
+				Type: "bytes32",
+			})
+		}
+		if id := ut.RemoveItemId; len(id) > 0 {
+			usedTypeSpec = append(usedTypeSpec, apitypes.Type{
+				Name: "remove_item_id",
+				Type: "bytes32",
+			})
+		}
+		if r := ut.Rename; r != nil {
+			usedTypeSpec = append(usedTypeSpec, apitypes.Type{
+				Name: "rename",
+				Type: "string",
+			})
+		}
+		if d := ut.Delete; d != nil {
+			usedTypeSpec = append(usedTypeSpec, apitypes.Type{
+				Name: "delete",
+				Type: "bool",
+			})
 		}
 	} else if cs := evt.GetChangeStock(); cs != nil && len(cs.OrderId) == 0 {
-		// for ChangeStock we need to remove the cart_id field if it's not set
+		// we need to remove these two fields if the change not related to an order
 		usedTypeSpec = tdTypeSpec[:3]
 		delete(message, "order_id")
 		delete(message, "tx_hash")
@@ -251,14 +270,13 @@ func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
 
 		fin, ok := uo.Action.(*UpdateOrder_ItemsFinalized_)
 		if ok && len(fin.ItemsFinalized.CurrencyAddr) == 0 {
-			// splice out erc20_addr
+			// splice out currency_addr
 			copiedSpec := make([]apitypes.Type, len(actionFieldSpec)-1)
-			copy(copiedSpec, actionFieldSpec[:5])
+			copy(copiedSpec, actionFieldSpec[:6])
 			copy(copiedSpec[6:], actionFieldSpec[7:])
 			actionFieldSpec = copiedSpec
 		}
 		types[actionFieldName] = actionFieldSpec
-
 	} else {
 		usedTypeSpec = tdTypeSpec
 	}
@@ -280,7 +298,7 @@ func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
 	// EIP-712 typed data marshalling
 	sighash, _, err := apitypes.TypedDataAndHash(typedData)
 	if err != nil {
-		return nil, fmt.Errorf("Event.hash: TypedDataAndHash error: %w", err)
+		return nil, fmt.Errorf("TypedDataAndHash error: %w", err)
 	}
 
 	return sighash, nil

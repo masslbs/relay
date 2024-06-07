@@ -23,19 +23,19 @@
       "type": "bytes32"
     },
     {
-      "name": "field",
-      "type": "int256"
-    },
-    {
-      "name": "string",
+      "name": "domain",
       "type": "string"
     },
     {
-      "name": "tag_id",
+      "name": "published_tag_id",
       "type": "bytes32"
     },
     {
-      "name": "erc20_addr",
+      "name": "add_erc20_addr",
+      "type": "address"
+    },
+    {
+      "name": "remove_erc20_addr",
       "type": "address"
     }
   ],
@@ -61,10 +61,6 @@
     {
       "name": "item_id",
       "type": "bytes32"
-    },
-    {
-      "name": "field",
-      "type": "int256"
     },
     {
       "name": "price",
@@ -95,20 +91,20 @@
       "type": "bytes32"
     },
     {
-      "name": "action",
-      "type": "int256"
-    },
-    {
-      "name": "item_id",
+      "name": "add_item_id",
       "type": "bytes32"
     },
     {
-      "name": "new_name",
-      "type": "string"
+      "name": "remove_item_id",
+      "type": "bytes32"
     },
     {
       "name": "delete",
       "type": "bool"
+    },
+    {
+      "name": "rename",
+      "type": "string"
     }
   ],
   "CreateOrder": [

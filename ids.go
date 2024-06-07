@@ -34,7 +34,7 @@ func (id requestID) String() string {
 
 func validateRequestID(id requestID, field string) *Error {
 	if !checkRequestID(id) {
-		return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("Field `%s` must be an request id", field)}
+		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` must be an request id", field)}
 	}
 	return nil
 }

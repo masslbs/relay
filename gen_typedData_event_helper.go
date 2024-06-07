@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from network-schema:typedData.json at version v2 (64d582e035063484932d49537ca0bb135c1cd36c).
+// Generated from network-schema:typedData.json at version v2 (acc60bbe41693018700efca8dfe97ceeabb9fca3).
 //lint:file-ignore U1000 Ignore all unused code, it's generated
 
 package main

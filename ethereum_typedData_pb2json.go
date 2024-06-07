@@ -32,21 +32,18 @@ func (evt *StoreManifest) typedDataMap() map[string]any {
 func (evt *UpdateStoreManifest) typedDataMap() map[string]any {
 	m := map[string]any{
 		"event_id": evt.EventId,
-		"field":    big.NewInt(int64(evt.Field)),
 	}
-	switch evt.Field {
-	case UpdateStoreManifest_MANIFEST_FIELD_DOMAIN:
-		m["string"] = evt.Value.(*UpdateStoreManifest_String_).String_
-	case UpdateStoreManifest_MANIFEST_FIELD_PUBLISHED_TAG:
-		m["tag_id"] = evt.Value.(*UpdateStoreManifest_TagId).TagId
-	case UpdateStoreManifest_MANIFEST_FIELD_ADD_ERC20:
-		def := evt.Value.(*UpdateStoreManifest_Erc20Addr).Erc20Addr
-		m["erc20_addr"] = def
-	case UpdateStoreManifest_MANIFEST_FIELD_REMOVE_ERC20:
-		def := evt.Value.(*UpdateStoreManifest_Erc20Addr).Erc20Addr
-		m["erc20_addr"] = def
-	default:
-		panic(fmt.Sprintf("unknown field: %v", evt.Field))
+	if d := evt.Domain; d != nil {
+		m["domain"] = *d
+	}
+	if pt := evt.PublishedTagId; len(pt) > 0 {
+		m["published_tag_id"] = pt
+	}
+	if addr := evt.AddErc20Addr; len(addr) > 0 {
+		m["add_erc20_addr"] = addr
+	}
+	if addr := evt.RemoveErc20Addr; len(addr) > 0 {
+		m["remove_erc20_addr"] = addr
 	}
 	return m
 }
@@ -63,16 +60,12 @@ func (evt *UpdateItem) typedDataMap() map[string]any {
 	m := map[string]any{
 		"event_id": evt.EventId,
 		"item_id":  evt.ItemId,
-		"field":    big.NewInt(int64(evt.Field)),
 	}
-	switch evt.Field {
-	case UpdateItem_ITEM_FIELD_PRICE:
-		price := evt.Value.(*UpdateItem_Price).Price
-		m["price"] = price
-	case UpdateItem_ITEM_FIELD_METADATA:
-		m["metadata"] = evt.Value.(*UpdateItem_Metadata).Metadata
-	default:
-		panic(fmt.Sprintf("unknown field: %v", evt.Field))
+	if p := evt.Price; p != nil {
+		m["price"] = *p
+	}
+	if meta := evt.Metadata; len(meta) > 0 {
+		m["metadata"] = meta
 	}
 	return m
 }
@@ -88,20 +81,18 @@ func (evt *UpdateTag) typedDataMap() map[string]any {
 	m := map[string]any{
 		"event_id": evt.EventId,
 		"tag_id":   evt.TagId,
-		"action":   big.NewInt(int64(evt.Action)),
 	}
-	switch evt.Action {
-	case UpdateTag_TAG_ACTION_ADD_ITEM:
-		fallthrough
-	case UpdateTag_TAG_ACTION_REMOVE_ITEM:
-		itemID := evt.Value.(*UpdateTag_ItemId).ItemId
-		m["item_id"] = itemID
-	case UpdateTag_TAG_ACTION_RENAME:
-		m["new_name"] = evt.Value.(*UpdateTag_NewName).NewName
-	case UpdateTag_TAG_ACTION_DELETE_TAG:
-		m["delete"] = true
-	default:
-		panic(fmt.Sprintf("unknown action: %v", evt.Action))
+	if id := evt.AddItemId; len(id) > 0 {
+		m["add_item_id"] = id
+	}
+	if id := evt.RemoveItemId; len(id) > 0 {
+		m["remove_item_id"] = id
+	}
+	if r := evt.Rename; r != nil {
+		m["rename"] = *r
+	}
+	if d := evt.Delete; d != nil {
+		m["delete"] = *d
 	}
 	return m
 }

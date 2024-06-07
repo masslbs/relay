@@ -131,42 +131,42 @@ func coalesce(errs ...*Error) *Error {
 }
 
 var tooManyConcurrentRequestsError = &Error{
-	Code:    ErrorCodes_tooManyConcurrentRequests,
+	Code:    ErrorCodes_TOO_MANY_CONCURRENT_REQUESTS,
 	Message: "Too many concurrent requests sent to server",
 }
 
 var alreadyAuthenticatedError = &Error{
-	Code:    ErrorCodes_alreadyAuthenticated,
+	Code:    ErrorCodes_ALREADY_AUTHENTICATED,
 	Message: "Already authenticated in a previous message",
 }
 
 var notAuthenticatedError = &Error{
-	Code:    ErrorCodes_notAuthenticated,
+	Code:    ErrorCodes_NOT_AUTHENTICATED,
 	Message: "Must authenticate before sending any other messages",
 }
 
 var alreadyConnectedError = &Error{
-	Code:    ErrorCodes_alreadyConnected,
+	Code:    ErrorCodes_ALREADY_CONNECTED,
 	Message: "Already connected from this device in another session",
 }
 
 var unlinkedKeyCardError = &Error{
-	Code:    ErrorCodes_unlinkedKeyCard,
+	Code:    ErrorCodes_UNLINKED_KEYCARD,
 	Message: "Key Card was removed from the Store",
 }
 
 var notFoundError = &Error{
-	Code:    ErrorCodes_notFound,
+	Code:    ErrorCodes_NOT_FOUND,
 	Message: "Item not found",
 }
 
 var simulateError = &Error{
-	Code:    ErrorCodes_simulated,
+	Code:    ErrorCodes_SIMULATED,
 	Message: "Error condition simulated for this message",
 }
 
 var minimumVersionError = &Error{
-	Code:    ErrorCodes_minumumVersionNotReached,
+	Code:    ErrorCodes_MINUMUM_VERSION_NOT_REACHED,
 	Message: "Minumum version not reached for this request",
 }
 
@@ -664,37 +664,25 @@ func validateStoreManifest(_ uint, event *StoreManifest) *Error {
 
 func validateUpdateStoreManifest(_ uint, event *UpdateStoreManifest) *Error {
 	errs := []*Error{validateEventID(event.EventId, "event_id")}
-	switch event.Field {
-	case UpdateStoreManifest_MANIFEST_FIELD_DOMAIN:
-		strVal, ok := event.Value.(*UpdateStoreManifest_String_)
-		if ok {
-			errs = append(errs, validateURL(strVal.String_, "domain_value"))
-		} else {
-			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for domain"})
-		}
-	case UpdateStoreManifest_MANIFEST_FIELD_PUBLISHED_TAG:
-		idVal, ok := event.Value.(*UpdateStoreManifest_TagId)
-		if ok {
-			errs = append(errs, validateEventID(idVal.TagId, "published_tag"))
-		} else {
-			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for published_tag"})
-		}
-	case UpdateStoreManifest_MANIFEST_FIELD_ADD_ERC20:
-		val, ok := event.Value.(*UpdateStoreManifest_Erc20Addr)
-		if ok {
-			errs = append(errs, validateEthAddressBytes(val.Erc20Addr, "erc20_token_addr"))
-		} else {
-			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("Invalid value type for add_erc20 - got %T", event.Value)})
-		}
-	case UpdateStoreManifest_MANIFEST_FIELD_REMOVE_ERC20:
-		val, ok := event.Value.(*UpdateStoreManifest_Erc20Addr)
-		if ok {
-			errs = append(errs, validateEthAddressBytes(val.Erc20Addr, "erc20_token_addr"))
-		} else {
-			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for remove_erc20"})
-		}
-	default:
-		errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid update field"})
+	hasOpt := false
+	if d := event.Domain; d != nil {
+		errs = append(errs, validateURL(*d, "domain"))
+		hasOpt = true
+	}
+	if pt := event.PublishedTagId; len(pt) > 0 {
+		errs = append(errs, validateEventID(pt, "published_tag_id"))
+		hasOpt = true
+	}
+	if add := event.AddErc20Addr; len(add) > 0 {
+		errs = append(errs, validateEthAddressBytes(add, "add_erc20_token_addr"))
+		hasOpt = true
+	}
+	if remove := event.RemoveErc20Addr; len(remove) > 0 {
+		errs = append(errs, validateEthAddressBytes(remove, "remove_erc20_token_addr"))
+		hasOpt = true
+	}
+	if !hasOpt {
+		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "has no options set"})
 	}
 	return coalesce(errs...)
 }
@@ -705,10 +693,10 @@ func validateCreateItem(_ uint, event *CreateItem) *Error {
 		validateDecimalPrice(event.Price, "price"),
 	}
 	if !json.Valid(event.Metadata) {
-		errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid metadata"})
+		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "Invalid metadata"})
 	}
 	if len(event.Metadata) > maxItemMedataBytes {
-		errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Too much metadata"})
+		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "Too much metadata"})
 	}
 	return coalesce(errs...)
 }
@@ -718,25 +706,22 @@ func validateUpdateItem(_ uint, event *UpdateItem) *Error {
 		validateEventID(event.EventId, "event_id"),
 		validateEventID(event.ItemId, "item_id"),
 	}
-	switch event.Field {
-	case UpdateItem_ITEM_FIELD_PRICE:
-		priceStr, ok := event.Value.(*UpdateItem_Price)
-		if !ok {
-			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for price"})
-		} else {
-			errs = append(errs, validateDecimalPrice(priceStr.Price, "price"))
+	hasOpt := false
+	if pr := event.Price; pr != nil {
+		errs = append(errs, validateDecimalPrice(*pr, "price"))
+		hasOpt = true
+	}
+	if meta := event.Metadata; len(meta) > 0 {
+		if !json.Valid(meta) {
+			errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "Invalid metadata"})
 		}
-	case UpdateItem_ITEM_FIELD_METADATA:
-		v, ok := event.Value.(*UpdateItem_Metadata)
-		if !ok {
-			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for price"})
-		} else if !json.Valid(v.Metadata) {
-			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid metadata"})
-		} else if len(v.Metadata) > maxItemMedataBytes {
-			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Too much metadata"})
+		if len(meta) > maxItemMedataBytes {
+			errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "Too much metadata"})
 		}
-	default:
-		errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid update field"})
+		hasOpt = true
+	}
+	if !hasOpt {
+		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "has no options set"})
 	}
 	return coalesce(errs...)
 }
@@ -753,40 +738,34 @@ func validateUpdateTag(_ uint, event *UpdateTag) *Error {
 		validateEventID(event.EventId, "event_id"),
 		validateEventID(event.TagId, "tag_id"),
 	}
-	switch event.Action {
-	case UpdateTag_TAG_ACTION_ADD_ITEM:
-		fallthrough
-	case UpdateTag_TAG_ACTION_REMOVE_ITEM:
-		itemID, ok := event.Value.(*UpdateTag_ItemId)
-		if !ok {
-			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for item_id"})
-		} else {
-			errs = append(errs, validateEventID(itemID.ItemId, "item_id"))
-		}
-	case UpdateTag_TAG_ACTION_RENAME:
-		newName, ok := event.Value.(*UpdateTag_NewName)
-		if !ok {
-			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for new_name"})
-		} else {
-			errs = append(errs, validateString(newName.NewName, "new_name", 32))
-		}
-	case UpdateTag_TAG_ACTION_DELETE_TAG:
-		_, ok := event.Value.(*UpdateTag_Delete)
-		if !ok {
-			errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid value type for delete"})
-		}
-	default:
-		errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "Invalid action"})
+	hasOpt := false
+	if add := event.AddItemId; len(add) > 0 {
+		errs = append(errs, validateEventID(add, "add_item_id"))
+		hasOpt = true
+	}
+	if rm := event.RemoveItemId; len(rm) > 0 {
+		errs = append(errs, validateEventID(rm, "remove_item_id"))
+		hasOpt = true
+	}
+	if rename := event.Rename; rename != nil {
+		errs = append(errs, validateString(*rename, "rename", 32))
+		hasOpt = true
+	}
+	if event.Delete != nil {
+		hasOpt = true
+	}
+	if !hasOpt {
+		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "has no options set"})
 	}
 	return coalesce(errs...)
 }
 
 func validateChangeStock(_ uint, event *ChangeStock) *Error {
 	if len(event.OrderId) != 0 {
-		return &Error{Code: ErrorCodes_invalid, Message: "OrderId must be empty"}
+		return &Error{Code: ErrorCodes_INVALID, Message: "OrderId must be empty"}
 	}
 	if len(event.ItemIds) != len(event.Diffs) {
-		return &Error{Code: ErrorCodes_invalid, Message: "ItemId and Diff must have the same length"}
+		return &Error{Code: ErrorCodes_INVALID, Message: "ItemId and Diff must have the same length"}
 	}
 	for i, item := range event.ItemIds {
 		if err := validateEventID(item, fmt.Sprintf("item_id[%d]", i)); err != nil {
@@ -811,7 +790,7 @@ func validateUpdateOrder(_ uint, event *UpdateOrder) *Error {
 	case *UpdateOrder_ChangeItems_:
 		errs = append(errs, validateChangeItems(2, tv.ChangeItems))
 	case *UpdateOrder_ItemsFinalized_:
-		errs = append(errs, &Error{Code: ErrorCodes_invalid, Message: "OrderFinalized is not allowed in EventWriteRequest"})
+		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "OrderFinalized is not allowed in EventWriteRequest"})
 	case *UpdateOrder_OrderCanceled_:
 		errs = append(errs, validateOrderCanceled(2, tv.OrderCanceled))
 	default:
@@ -828,7 +807,7 @@ func validateChangeItems(_ uint, event *UpdateOrder_ChangeItems) *Error {
 
 func validateOrderCanceled(_ uint, event *UpdateOrder_OrderCanceled) *Error {
 	if event.Timestamp == 0 {
-		return &Error{Code: ErrorCodes_invalid, Message: "timestamp can't be 0"}
+		return &Error{Code: ErrorCodes_INVALID, Message: "timestamp can't be 0"}
 	}
 	return nil
 }
@@ -840,7 +819,7 @@ func (im *EventWriteRequest) validate(version uint) *Error {
 	var decodedEvt StoreEvent
 	if pberr := im.Event.UnmarshalTo(&decodedEvt); pberr != nil {
 		log("eventWriteRequest.validate: anypb unmarshal failed: %s", pberr.Error())
-		return &Error{Code: ErrorCodes_invalid, Message: "invalid protobuf encoding"}
+		return &Error{Code: ErrorCodes_INVALID, Message: "invalid protobuf encoding"}
 	}
 	if err := validateBytes(decodedEvt.Signature, "signature", signatureBytes); err != nil {
 		return err
@@ -866,10 +845,10 @@ func (im *EventWriteRequest) validate(version uint) *Error {
 	case *StoreEvent_UpdateOrder:
 		err = validateUpdateOrder(version, union.UpdateOrder)
 	case *StoreEvent_NewKeyCard:
-		err = &Error{Code: ErrorCodes_invalid, Message: "NewKeyCard is not allowed in EventWriteRequest"}
+		err = &Error{Code: ErrorCodes_INVALID, Message: "NewKeyCard is not allowed in EventWriteRequest"}
 	default:
 		log("eventWriteRequest.validate: unrecognized event type: %T", decodedEvt.Union)
-		return &Error{Code: ErrorCodes_invalid, Message: "Unrecognized event type"}
+		return &Error{Code: ErrorCodes_INVALID, Message: "Unrecognized event type"}
 	}
 	if err != nil {
 		return err
@@ -1143,18 +1122,17 @@ func (current *CachedStoreManifest) update(union *StoreEvent, meta CachedMetadat
 		current.publishedTagID = sm.PublishedTagId
 	case *StoreEvent_UpdateStoreManifest:
 		um := union.GetUpdateStoreManifest()
-		if um.Field == UpdateStoreManifest_MANIFEST_FIELD_DOMAIN {
-			current.domain = um.Value.(*UpdateStoreManifest_String_).String_
-		} else if um.Field == UpdateStoreManifest_MANIFEST_FIELD_PUBLISHED_TAG {
-			current.publishedTagID = um.Value.(*UpdateStoreManifest_TagId).TagId
-		} else if um.Field == UpdateStoreManifest_MANIFEST_FIELD_ADD_ERC20 {
-			erc20 := um.Value.(*UpdateStoreManifest_Erc20Addr).Erc20Addr
-			current.acceptedErc20s[common.Address(erc20)] = struct{}{}
-		} else if um.Field == UpdateStoreManifest_MANIFEST_FIELD_REMOVE_ERC20 {
-			erc20 := um.Value.(*UpdateStoreManifest_Erc20Addr).Erc20Addr
-			delete(current.acceptedErc20s, common.Address(erc20))
-		} else {
-			panic(fmt.Sprintf("unhandled update field: %d", um.Field))
+		if d := um.Domain; d != nil {
+			current.domain = *d
+		}
+		if pt := um.PublishedTagId; len(pt) > 0 {
+			current.publishedTagID = pt
+		}
+		if addr := um.AddErc20Addr; len(addr) > 0 {
+			current.acceptedErc20s[common.Address(addr)] = struct{}{}
+		}
+		if addr := um.RemoveErc20Addr; len(addr) > 0 {
+			delete(current.acceptedErc20s, common.Address(addr))
 		}
 	case *StoreEvent_NewKeyCard:
 		nkc := union.GetNewKeyCard()
@@ -1188,11 +1166,11 @@ func (current *CachedItem) update(union *StoreEvent, meta CachedMetadata) {
 		current.inited = true
 	case *StoreEvent_UpdateItem:
 		ui := union.GetUpdateItem()
-		if ui.Field == UpdateItem_ITEM_FIELD_PRICE {
-			current.price, _, err = apd.NewFromString(ui.GetPrice())
+		if p := ui.Price; p != nil {
+			current.price, _, err = apd.NewFromString(*p)
 			check(err)
 		}
-		if ui.Field == UpdateItem_ITEM_FIELD_METADATA {
+		if meta := ui.Metadata; len(meta) > 0 {
 			current.metadata = ui.GetMetadata()
 		}
 	default:
@@ -1227,17 +1205,17 @@ func (current *CachedTag) update(evt *StoreEvent, meta CachedMetadata) {
 
 	case *StoreEvent_UpdateTag:
 		ut := evt.GetUpdateTag()
-		switch ut.Action {
-		case UpdateTag_TAG_ACTION_REMOVE_ITEM:
-			fallthrough
-		case UpdateTag_TAG_ACTION_ADD_ITEM:
-			current.items.Add(ut.Value.(*UpdateTag_ItemId).ItemId)
-		case UpdateTag_TAG_ACTION_RENAME:
-			current.name = ut.Value.(*UpdateTag_NewName).NewName
-		case UpdateTag_TAG_ACTION_DELETE_TAG:
+		if id := ut.AddItemId; len(id) > 0 {
+			current.items.Add(id)
+		}
+		if id := ut.RemoveItemId; len(id) > 0 {
+			current.items.Delete(id)
+		}
+		if r := ut.Rename; r != nil {
+			current.name = *r
+		}
+		if d := ut.Delete; d != nil && *d == true {
 			current.deleted = true
-		default:
-			panic(fmt.Sprintf("unhandled action type: %d", ut.Action))
 		}
 	default:
 		panic(fmt.Sprintf("unhandled event type: %T", evt.Union))
@@ -2096,7 +2074,7 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 		return
 	} else if sessionState.keyCardID == nil {
 		logS(op.sessionID, "relay.challengeSolvedOp.invalidSessionState")
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "authentication not started"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "authentication not started"}
 		r.sendSessionOp(sessionState, op)
 		return
 	} else if sessionState.storeID != nil {
@@ -2286,7 +2264,7 @@ func (op *EventWriteOp) process(r *Relay) {
 	// check signature
 	if err := r.ethClient.eventVerify(op.decodedStoreEvt, sessionState.keyCardPublicKey); err != nil {
 		logSR("relay.eventWriteOp.verifyEventFailed err=%s", sessionID, requestID, err.Error())
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "invalid signature"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "invalid signature"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2326,7 +2304,7 @@ func (r *Relay) checkStoreEventWriteConsistency(union *StoreEvent, m CachedMetad
 			return notFoundError
 		}
 		if storeManifestExists {
-			return &Error{Code: ErrorCodes_invalid, Message: "store already exists"}
+			return &Error{Code: ErrorCodes_INVALID, Message: "store already exists"}
 		}
 
 	case *StoreEvent_UpdateStoreManifest:
@@ -2337,14 +2315,12 @@ func (r *Relay) checkStoreEventWriteConsistency(union *StoreEvent, m CachedMetad
 			return notFoundError
 		}
 		// this feels like a pre-op validation step but we dont have access to the relay there
-		if tv.UpdateStoreManifest.Field == UpdateStoreManifest_MANIFEST_FIELD_ADD_ERC20 {
+		if addr := tv.UpdateStoreManifest.AddErc20Addr; len(addr) > 0 {
 			callOpts := &bind.CallOpts{
 				Pending: false,
 				From:    r.ethClient.wallet,
 				Context: context.Background(),
 			}
-
-			erc20TokenAddr := tv.UpdateStoreManifest.GetErc20Addr()
 
 			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 			defer cancel()
@@ -2352,36 +2328,35 @@ func (r *Relay) checkStoreEventWriteConsistency(union *StoreEvent, m CachedMetad
 			gethClient, err := r.ethClient.getClient(ctx)
 			if err != nil {
 				log("relay.validateWrite.failedToGetClient err=%s", err)
-				return &Error{Code: ErrorCodes_invalid, Message: "internal server error"}
+				return &Error{Code: ErrorCodes_INVALID, Message: "internal server error"}
 			}
 			defer gethClient.Close()
 
-			tokenCaller, err := NewERC20Caller(common.Address(erc20TokenAddr), gethClient)
+			tokenCaller, err := NewERC20Caller(common.Address(addr), gethClient)
 			if err != nil {
 				log("relay.validateWrite.newERC20Caller err=%s", err)
-				return &Error{Code: ErrorCodes_invalid, Message: "failed to create token caller"}
+				return &Error{Code: ErrorCodes_INVALID, Message: "failed to create token caller"}
 			}
 			decimalCount, err := tokenCaller.Decimals(callOpts)
 			if err != nil {
-				return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("failed to get token decimals: %s", err)}
+				return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token decimals: %s", err)}
 			}
 			if decimalCount < 1 || decimalCount > 18 {
-				return &Error{Code: ErrorCodes_invalid, Message: "invalid token decimals"}
+				return &Error{Code: ErrorCodes_INVALID, Message: "invalid token decimals"}
 			}
 			symbol, err := tokenCaller.Symbol(callOpts)
 			if err != nil {
-				return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("failed to get token symbol: %s", err)}
+				return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token symbol: %s", err)}
 			}
 			if symbol == "" {
-				return &Error{Code: ErrorCodes_invalid, Message: "invalid token symbol"}
+				return &Error{Code: ErrorCodes_INVALID, Message: "invalid token symbol"}
 			}
-
 			tokenName, err := tokenCaller.Name(callOpts)
 			if err != nil {
-				return &Error{Code: ErrorCodes_invalid, Message: fmt.Sprintf("failed to get token name: %s", err)}
+				return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token name: %s", err)}
 			}
 			if tokenName == "" {
-				return &Error{Code: ErrorCodes_invalid, Message: "invalid token name"}
+				return &Error{Code: ErrorCodes_INVALID, Message: "invalid token name"}
 			}
 		}
 	case *StoreEvent_CreateItem:
@@ -2391,7 +2366,7 @@ func (r *Relay) checkStoreEventWriteConsistency(union *StoreEvent, m CachedMetad
 		evt := union.GetCreateItem()
 		_, itemExists := r.itemsByItemID.get(evt.EventId)
 		if itemExists {
-			return &Error{Code: ErrorCodes_invalid, Message: "item already exists"}
+			return &Error{Code: ErrorCodes_INVALID, Message: "item already exists"}
 		}
 
 	case *StoreEvent_UpdateItem:
@@ -2414,7 +2389,7 @@ func (r *Relay) checkStoreEventWriteConsistency(union *StoreEvent, m CachedMetad
 		evt := union.GetCreateTag()
 		_, tagExists := r.tagsByTagID.get(evt.EventId)
 		if tagExists {
-			return &Error{Code: ErrorCodes_invalid, Message: "tag already exists"}
+			return &Error{Code: ErrorCodes_INVALID, Message: "tag already exists"}
 		}
 
 	case *StoreEvent_UpdateTag:
@@ -2429,24 +2404,26 @@ func (r *Relay) checkStoreEventWriteConsistency(union *StoreEvent, m CachedMetad
 		if !tag.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
 			return notFoundError
 		}
-		switch evt.Action {
-		case UpdateTag_TAG_ACTION_ADD_ITEM:
-			fallthrough
-		case UpdateTag_TAG_ACTION_REMOVE_ITEM:
-			itemID := evt.GetItemId()
-			item, itemExists := r.itemsByItemID.get(itemID)
+		if id := evt.AddItemId; len(id) > 0 {
+			item, itemExists := r.itemsByItemID.get(id)
 			if !itemExists {
 				return notFoundError
 			}
 			if !item.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
 				return notFoundError
 			}
-		case UpdateTag_TAG_ACTION_RENAME:
-			// nothing to do
-		case UpdateTag_TAG_ACTION_DELETE_TAG:
-			// nothing to do
-		default:
-			panic(fmt.Errorf("eventWritesOp.validateWrite.unrecognizeType eventType=%T", union.Union))
+		}
+		if id := evt.RemoveItemId; len(id) > 0 {
+			item, itemExists := r.itemsByItemID.get(id)
+			if !itemExists {
+				return notFoundError
+			}
+			if !item.createdByStoreID.Equal(sess.storeID) { // not allow to alter data from other stores
+				return notFoundError
+			}
+		}
+		if d := evt.Delete; d != nil && *d == false {
+			return &Error{Code: ErrorCodes_INVALID, Message: "Can't undelete a tag"}
 		}
 
 	case *StoreEvent_ChangeStock:
@@ -2468,7 +2445,7 @@ func (r *Relay) checkStoreEventWriteConsistency(union *StoreEvent, m CachedMetad
 			if storeStockExists {
 				items, has := storeStock.inventory.GetHas(itemID)
 				if has && items+change < 0 {
-					return &Error{Code: ErrorCodes_outOfStock, Message: "not enough stock"}
+					return &Error{Code: ErrorCodes_OUT_OF_STOCK, Message: "not enough stock"}
 				}
 			}
 		}
@@ -2480,7 +2457,7 @@ func (r *Relay) checkStoreEventWriteConsistency(union *StoreEvent, m CachedMetad
 		evt := union.GetCreateOrder()
 		_, orderExists := r.ordersByOrderID.get(evt.EventId)
 		if orderExists {
-			return &Error{Code: ErrorCodes_invalid, Message: "order already exists"}
+			return &Error{Code: ErrorCodes_INVALID, Message: "order already exists"}
 		}
 
 	case *StoreEvent_UpdateOrder:
@@ -2501,7 +2478,7 @@ func (r *Relay) checkStoreEventWriteConsistency(union *StoreEvent, m CachedMetad
 		switch tv := evt.Action.(type) {
 		case *UpdateOrder_ChangeItems_:
 			if order.finalized {
-				return &Error{Code: ErrorCodes_invalid, Message: "order already finalized"}
+				return &Error{Code: ErrorCodes_INVALID, Message: "order already finalized"}
 			}
 			change := tv.ChangeItems
 			item, itemExists := r.itemsByItemID.get(change.ItemId)
@@ -2513,19 +2490,19 @@ func (r *Relay) checkStoreEventWriteConsistency(union *StoreEvent, m CachedMetad
 			}
 			stock, has := r.stockByStoreID.get(m.createdByStoreID)
 			if !has {
-				return &Error{Code: ErrorCodes_invalid, Message: "not enough stock"}
+				return &Error{Code: ErrorCodes_INVALID, Message: "not enough stock"}
 			}
 			inStock, has := stock.inventory.GetHas(change.ItemId)
 			if !has || inStock < change.Quantity {
-				return &Error{Code: ErrorCodes_invalid, Message: "not enough stock"}
+				return &Error{Code: ErrorCodes_INVALID, Message: "not enough stock"}
 			}
 			inOrder := order.items.Get(change.ItemId)
 			if change.Quantity < 0 && inOrder+change.Quantity < 0 {
-				return &Error{Code: ErrorCodes_invalid, Message: "not enough items in order"}
+				return &Error{Code: ErrorCodes_INVALID, Message: "not enough items in order"}
 			}
 		case *UpdateOrder_OrderCanceled_:
 			if !order.finalized {
-				return &Error{Code: ErrorCodes_invalid, Message: "order is not finalized"}
+				return &Error{Code: ErrorCodes_INVALID, Message: "order is not finalized"}
 			}
 		}
 
@@ -2585,26 +2562,26 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		}
 	}
 	if order.finalized {
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "order is already finalized"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "order is already finalized"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 	if order.items.Size() == 0 {
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "order is empty"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "order is empty"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
 	stock, has := r.stockByStoreID.get(sessionState.storeID)
 	if !has {
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "not enough stock"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "not enough stock"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
 	store, has := r.storeManifestsByStoreID.get(sessionState.storeID)
 	if !has {
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "store not found"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "store not found"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2657,13 +2634,13 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 		stockItems, has := stock.inventory.GetHas(itemId)
 		if !has {
-			op.err = &Error{Code: ErrorCodes_outOfStock, Message: "not enough stock"}
+			op.err = &Error{Code: ErrorCodes_OUT_OF_STOCK, Message: "not enough stock"}
 			return true
 		}
 
 		usedInOtherOrders := otherOrderItemQuantities.Get(itemId)
 		if stockItems-usedInOtherOrders < quantity {
-			op.err = &Error{Code: ErrorCodes_outOfStock, Message: "not enough stock"}
+			op.err = &Error{Code: ErrorCodes_OUT_OF_STOCK, Message: "not enough stock"}
 			return true
 		}
 
@@ -2709,7 +2686,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	gethClient, err := r.ethClient.getClient(ctx)
 	if err != nil {
 		logSR("relay.commitOrderOp.failedToGetGethClient err=%s", sessionID, requestID, err.Error())
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "internal server error"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "internal server error"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2728,7 +2705,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		_, has = store.acceptedErc20s[erc20TokenAddr]
 		if !has {
 			logSR("relay.commitOrderOp.noSuchAcceptedErc20s addr=%s", sessionID, requestID, erc20TokenAddr.Hex())
-			op.err = &Error{Code: ErrorCodes_invalid, Message: "erc20 not accepted"}
+			op.err = &Error{Code: ErrorCodes_INVALID, Message: "erc20 not accepted"}
 			r.sendSessionOp(sessionState, op)
 			return
 		}
@@ -2739,14 +2716,14 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		tokenCaller, err := NewERC20Caller(erc20TokenAddr, gethClient)
 		if err != nil {
 			logSR("relay.commitOrderOp.failedToCreateERC20Caller err=%s", sessionID, requestID, err.Error())
-			op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to create erc20 caller"}
+			op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to create erc20 caller"}
 			r.sendSessionOp(sessionState, op)
 			return
 		}
 		decimalCount, err := tokenCaller.Decimals(callOpts)
 		if err != nil {
 			logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
-			op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to establish contract decimals"}
+			op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to establish contract decimals"}
 			r.sendSessionOp(sessionState, op)
 			return
 		}
@@ -2773,7 +2750,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	storeReg, err := NewRegStoreCaller(r.ethClient.contractAddresses.StoreRegistry, gethClient)
 	if err != nil {
 		logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to create store registry caller"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to create store registry caller"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2781,7 +2758,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	ownerAddr, err := storeReg.OwnerOf(callOpts, bigStoreTokenID)
 	if err != nil {
 		logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to get store owner"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get store owner"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2789,14 +2766,14 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	// ttl
 	blockNo, err := gethClient.BlockNumber(ctx)
 	if err != nil {
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to get block number"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get block number"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
 	block, err := gethClient.BlockByNumber(ctx, new(big.Int).SetInt64(int64(blockNo)))
 	if err != nil {
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to get block number"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get block number"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2828,7 +2805,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	paymentsContract, err := NewPaymentsByAddressCaller(r.ethClient.contractAddresses.Payments, gethClient)
 	if err != nil {
 		logSR("relay.commitCartOp.newPaymentsByAddressFailed err=%s", sessionID, requestID, err.Error())
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "contract interaction error"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "contract interaction error"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2836,14 +2813,14 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	paymentId, err := paymentsContract.GetPaymentId(callOpts, pr)
 	if err != nil {
 		logSR("relay.commitCartOp.getPaymentIdFailed err=%s", sessionID, requestID, err.Error())
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to paymentId"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to paymentId"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
 	purchaseAddr, err := paymentsContract.GetPaymentAddress(callOpts, pr, ownerAddr)
 	if err != nil {
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "failed to create payment address"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to create payment address"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2896,7 +2873,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	err = r.ethClient.eventSign(cfEvent)
 	if err != nil {
 		logSR("relay.commitOrderOp.eventSignFailed err=%s", sessionID, requestID, err)
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "interal server error"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "interal server error"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2904,7 +2881,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	cfAny, err := anypb.New(cfEvent)
 	if err != nil {
 		logSR("relay.commitOrderOp.anypb err=%s", sessionID, requestID, err)
-		op.err = &Error{Code: ErrorCodes_invalid, Message: "interal server error"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "interal server error"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}

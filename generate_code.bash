@@ -30,12 +30,15 @@ for input in network-schema/*.proto; do
 done
 rm -r network-schema/
 
+sed -i 's/ErrorCodes_ERROR_CODES_/ErrorCodes_/' gen_network_error.pb.go
+
+
+
 cp $MASS_SCHEMA/typedData.json gen_network_typedData.json
 go run generate_typedData_event_helper.go $SCHEMA_VERSION $SCHEMA_COMMIT_HASH > gen_typedData_event_helper.go
 
 go run generate_types.go $SCHEMA_VERSION $SCHEMA_COMMIT_HASH > gen_types.go
 go run generate_constants.go $SCHEMA_VERSION $SCHEMA_COMMIT_HASH > gen_constants.go
-
 # smart contract wrapper
 abigen --pkg main --type ERC20 --out gen_erc20.go --abi $MASS_CONTRACTS/abi/ERC20.json
 abigen --pkg main --type RegRelay --out gen_registry_relay.go --abi $MASS_CONTRACTS/abi/RelayReg.json
