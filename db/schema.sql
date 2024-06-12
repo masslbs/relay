@@ -61,7 +61,7 @@ alter table events add constraint eventsCheckReferenceIdForChangeCart check (
 -- Indicies that apply to all events.
 create unique index eventsOnEventId on events(eventId);
 create unique index eventsOnServerSeq on events(serverSeq);
-create unique index eventsOnStoreSeq on events(createdByStoreId, storeSeq);
+create unique index eventsOnStoreSeq on events(createdByStoreId, serverSeq);
 
 create table eventPropagations (
     eventId bytea not null
@@ -70,9 +70,9 @@ create table eventPropagations (
 create table keyCardEvents (
     keyCardId bytea not null,
     keyCardSeq bigint not null,
-    eventStoreSeq bigint not null
+    serverSeq bigint not null
 );
-create unique index keyCardStoreEvtUnique on keyCardEvents(keyCardId, eventStoreSeq);
+create unique index keyCardStoreEvtUnique on keyCardEvents(keyCardId, serverSeq);
 create unique index keyCardEventsSeqsUnique on keyCardEvents(keyCardId, keyCardSeq);
 
 CREATE TABLE payments (

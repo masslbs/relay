@@ -1000,14 +1000,6 @@ func getIpfsClient(ctx context.Context, errCount int, lastErr error) (*ipfsRpc.H
 type EventState struct {
 	eventID eventID
 
-	created struct {
-		at                     time.Time
-		byDeviceID, byStoreID  requestID
-		byNetworkSchemaVersion uint64
-	}
-
-	storeSeq uint64
-
 	kcSeq uint64
 	acked bool
 
@@ -1310,9 +1302,9 @@ type CachedEvent interface {
 }
 
 type KeyCardEvent struct {
-	keyCardId     requestID
-	eventStoreSeq uint64
-	keyCardSeq    uint64
+	keyCardId  requestID
+	serverSeq  uint64
+	keyCardSeq uint64
 }
 
 // SeqPairKeyCard helps with writing events to the database
@@ -2172,7 +2164,7 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 	sessionState.authChallenge = nil
 
 	r.sendSessionOp(sessionState, op)
-	logS(op.sessionID, "relay.authenticateOp.finish elapsed=%d", took(challengeSolvedOpStart))
+	logS(op.sessionID, "relay.challengeSolvedOp.finish elapsed=%d", took(challengeSolvedOpStart))
 }
 
 // compute current store hash
@@ -2990,10 +2982,10 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 	check(prevRows.Err())
 
 	// replay previous store history
-	const existingStoreEventsQuery = `select eventType, storeSeq, createdByKeyCardId
+	const existingStoreEventsQuery = `select eventType, serverSeq, createdByKeyCardId
 from events
 where createdByStoreId = $1
-order by storeSeq`
+order by serverSeq`
 	evtRows, err := r.connPool.Query(ctx, existingStoreEventsQuery, op.storeID)
 	check(err)
 	// TODO: check for missing closes
@@ -3007,7 +2999,7 @@ order by storeSeq`
 			eventType          eventType
 			createdByKeyCardID requestID
 		)
-		err = evtRows.Scan(&eventType, &kcEvt.eventStoreSeq, &createdByKeyCardID)
+		err = evtRows.Scan(&eventType, &kcEvt.serverSeq, &createdByKeyCardID)
 		check(err)
 
 		switch eventType {
@@ -3044,9 +3036,9 @@ order by storeSeq`
 	if evtCount := len(kcEvents); evtCount > 0 {
 		keyCardEventRows := make([][]any, evtCount)
 		for i, ue := range kcEvents {
-			keyCardEventRows[i] = []interface{}{ue.keyCardId, ue.keyCardSeq, ue.eventStoreSeq}
+			keyCardEventRows[i] = []interface{}{ue.keyCardId, ue.keyCardSeq, ue.serverSeq}
 		}
-		insertedRows, _ := r.bulkInsert("keyCardEvents", []string{"keyCardId", "keyCardSeq", "eventStoreSeq"}, keyCardEventRows)
+		insertedRows, _ := r.bulkInsert("keyCardEvents", []string{"keyCardId", "keyCardSeq", "serverSeq"}, keyCardEventRows)
 		assertWithMessage(len(insertedRows) == len(kcEvents), "new keycard log isnt empty")
 	}
 
@@ -3136,7 +3128,7 @@ func (r *Relay) debounceSessions() {
 	r.sessionIDsToSessionStates.All(func(sessionId requestID, sessionState *SessionState) {
 		// Kick the session if we haven't received any recent messages from it, including ping responses.
 		if time.Since(sessionState.lastSeenAt) > sessionKickTimeout {
-			r.metric.emit("sessions.kick", 1)
+			r.metric.counterAdd("sessions_kick", 1)
 			logS(sessionId, "relay.debounceSessions.kick")
 			op := &StopOp{sessionID: sessionId}
 			r.sendSessionOp(sessionState, op)
@@ -3152,7 +3144,7 @@ func (r *Relay) debounceSessions() {
 		seqPair := r.keyCardIDsToKeyCardSeqs.MustGet(sessionState.keyCardID)
 		r.assertCursors(sessionId, seqPair, sessionState)
 
-		// Calculate the new user seq up to which the device has acked all pushes.
+		// Calculate the new keyCard seq up to which the device has acked all pushes.
 		// Slice the buffer to drop such entries as they have completed their lifecycle.
 		// Do this all first to trim down the buffer before reading more, if possible.
 		var (
@@ -3175,9 +3167,9 @@ func (r *Relay) debounceSessions() {
 		if i != 0 {
 			sessionState.buffer = sessionState.buffer[i:]
 			sessionState.nextPushIndex -= i
-			logS(sessionId, "relay.debounceSessions.advanceStoreSeq reason=entries from=%d to=%d", advancedFrom, advancedTo)
+			logS(sessionId, "relay.debounceSessions.advanceKCSeq reason=entries from=%d to=%d", advancedFrom, advancedTo)
+			r.assertCursors(sessionId, seqPair, sessionState)
 		}
-		r.assertCursors(sessionId, seqPair, sessionState)
 
 		// Check if a sync status is needed, and if so query and send it.
 		// Use the boolean to ensure we always send an initial sync status for the session,
@@ -3186,13 +3178,12 @@ func (r *Relay) debounceSessions() {
 		if !sessionState.initialStatus || sessionState.lastStatusedKCSeq < seqPair.lastWrittenKCSeq {
 			syncStatusStart := now()
 			op := &SyncStatusOp{sessionID: sessionId}
-			// Index: keyCardEvents(keyCardId, keyCardSeq) -> events(createdByStoreId, storeSeq)
-			// TODO: fix count (see test.sql)
+			// Index: keyCardEvents(keyCardId, serverSeq) -> events(createdByStoreId, serverSeq)
 			query := `select count(*) from keyCardEvents kce, events e
-where e.createdByStoreId = $1
-  and kce.eventStoreSeq = e.storeSeq
+where kce.serverSeq = e.serverSeq
+  and e.createdByStoreId = $1
   and kce.keyCardSeq > $2
-  and kce.keyCardId != $3`
+  and e.createdByKeyCardId != $3`
 			err := r.connPool.QueryRow(ctx, query, sessionState.storeID, sessionState.lastPushedKCSeq, sessionState.keyCardID).
 				Scan(&op.unpushedEvents)
 			if err != pgx.ErrNoRows {
@@ -3207,8 +3198,8 @@ where e.createdByStoreId = $1
 			}
 			// TODO: maybe we should consider making this log line dynamic and just print the types where it's >0 ?
 			logS(sessionId, "relay.debounceSessions.syncStatus initialStatus=%t unpushedEvents=%d elapsed=%d", sessionState.initialStatus, op.unpushedEvents, took(syncStatusStart))
+			r.assertCursors(sessionId, seqPair, sessionState)
 		}
-		r.assertCursors(sessionId, seqPair, sessionState)
 
 		// Check if more buffering is needed, and if so fill buffer.
 		writesNotBuffered := sessionState.lastBufferedKCSeq < seqPair.lastWrittenKCSeq
@@ -3222,13 +3213,13 @@ where e.createdByStoreId = $1
 			readStart := now()
 			reads := 0
 			// Index: events(storeId, storeSeq)
-			query := `select kce.keycardseq, e.storeSeq, e.eventId, e.createdByKeyCardId, e.createdByStoreId, e.createdAt, e.encoded
+			query := `select kce.keycardseq, e.eventId, e.encoded
 from events e, keyCardEvents kce
-where kce.keyCardSeq > $2
-    and kce.eventStoreSeq = e.storeSeq
+where kce.serverSeq = e.serverSeq
+    and e.createdByStoreId = $1
+    and kce.keyCardSeq > $2
     and kce.keyCardId = $3
 	and e.createdByKeyCardId != $3
-    and e.createdByStoreId = $1
 order by kce.keyCardSeq asc limit $4`
 			rows, err := r.connPool.Query(ctx, query, sessionState.storeID, sessionState.lastPushedKCSeq, sessionState.keyCardID, readsAllowed)
 			check(err)
@@ -3238,7 +3229,7 @@ order by kce.keyCardSeq asc limit $4`
 					eventState = &EventState{}
 					encoded    []byte
 				)
-				err := rows.Scan(&eventState.kcSeq, &eventState.storeSeq, &eventState.eventID, &eventState.created.byDeviceID, &eventState.created.byStoreID, &eventState.created.at, &encoded)
+				err := rows.Scan(&eventState.kcSeq, &eventState.eventID, &encoded)
 				check(err)
 				reads++
 				// log("relay.debounceSessions.debug event=%x", eventState.eventID)
@@ -3248,8 +3239,9 @@ order by kce.keyCardSeq asc limit $4`
 				assert(eventState.kcSeq > sessionState.lastBufferedKCSeq)
 				sessionState.lastBufferedKCSeq = eventState.kcSeq
 
-				// TODO: would prever to not craft this manually
+				// re-create pb object from encoded database data
 				eventState.encodedEvent = &anypb.Any{
+					// TODO: would prever to not craft this manually
 					TypeUrl: "type.googleapis.com/market.mass.StoreEvent",
 					Value:   encoded,
 				}
@@ -3376,8 +3368,8 @@ func (r *Relay) debounceEventPropagations() {
 			for _, kc := range fanOutKeyCards {
 				if !kc.isGuest || e.createdByKeyCardID.Equal(kc.id) {
 					keyCardEvents = append(keyCardEvents, &KeyCardEvent{
-						keyCardId:     kc.id,
-						eventStoreSeq: e.storeSeq,
+						keyCardId: kc.id,
+						serverSeq: e.serverSeq,
 					})
 				}
 			}
@@ -3390,8 +3382,8 @@ func (r *Relay) debounceEventPropagations() {
 			// first user
 			if len(fanOutKeyCards) == 0 {
 				keyCardEvents = append(keyCardEvents, &KeyCardEvent{
-					keyCardId:     e.createdByKeyCardID,
-					eventStoreSeq: e.storeSeq,
+					keyCardId: e.createdByKeyCardID,
+					serverSeq: e.serverSeq,
 				})
 			}
 			fallthrough
@@ -3408,8 +3400,8 @@ func (r *Relay) debounceEventPropagations() {
 		case eventTypeUpdateTag:
 			for _, kc := range fanOutKeyCards {
 				keyCardEvents = append(keyCardEvents, &KeyCardEvent{
-					keyCardId:     kc.id,
-					eventStoreSeq: e.storeSeq,
+					keyCardId: kc.id,
+					serverSeq: e.serverSeq,
 				})
 			}
 		default:
@@ -3418,7 +3410,7 @@ func (r *Relay) debounceEventPropagations() {
 	}
 	for _, kce := range keyCardEvents {
 		kce.keyCardId.assert()
-		assert(kce.eventStoreSeq != 0)
+		assert(kce.serverSeq != 0)
 		assert(kce.keyCardSeq == 0)
 	}
 	log("relay.debounceEventPropagations.derive keyCardEvents=%d took=%d", len(keyCardEvents), took(deriveStart))
@@ -3442,9 +3434,9 @@ func (r *Relay) debounceEventPropagations() {
 	insertStart := now()
 	keyCardEventRows := make([][]any, len(keyCardEvents))
 	for i, ue := range keyCardEvents {
-		keyCardEventRows[i] = []interface{}{ue.keyCardId, ue.keyCardSeq, ue.eventStoreSeq}
+		keyCardEventRows[i] = []interface{}{ue.keyCardId, ue.keyCardSeq, ue.serverSeq}
 	}
-	insertedRows, _ := r.bulkInsert("keyCardEvents", []string{"keyCardId", "keyCardSeq", "eventStoreSeq"}, keyCardEventRows)
+	insertedRows, _ := r.bulkInsert("keyCardEvents", []string{"keyCardId", "keyCardSeq", "serverSeq"}, keyCardEventRows)
 	for _, row := range insertedRows {
 		kcID := row[0].(requestID)
 		kcSeq := row[1].(uint64)
