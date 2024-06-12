@@ -180,7 +180,7 @@ func (c ethClient) getClient(ctx context.Context) (*ethclient.Client, error) {
 
 	randomIndex := mrand.Intn(len(c.rpcUrls))
 	randomRPCURL := c.rpcUrls[randomIndex]
-	log("ethClient.getClient rpc=%s", randomRPCURL)
+	debug("ethClient.getClient rpc=%s", randomRPCURL)
 
 	gethRPC, err := rpc.DialOptions(ctx,
 		randomRPCURL,

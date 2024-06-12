@@ -22,6 +22,7 @@ import (
 var (
 	isCIEnv  = os.Getenv("CI") != ""
 	isDevEnv = os.Getenv("MASS_ENV") == "dev"
+	isDebug  = os.Getenv("DEBUG") != ""
 )
 
 func logWrite(line string) {
@@ -30,6 +31,13 @@ func logWrite(line string) {
 		err := os.Stdout.Sync()
 		check(err)
 	}
+}
+
+func debug(msg string, args ...interface{}) {
+	if !isDebug {
+		return
+	}
+	log(msg, args...)
 }
 
 func log(msg string, args ...interface{}) {

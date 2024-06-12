@@ -1518,7 +1518,7 @@ func (r *Relay) bulkInsert(table string, columns []string, rows [][]interface{})
 	if r.syncTx == nil {
 		check(tx.Commit(ctx))
 	}
-	log("relay.bulkInsert table=%s columns=%d rows=%d insertedRows=%d conflictingRows=%d elapsed=%d", table, len(columns), len(rows), len(insertedRows), len(conflictingRows), took(start))
+	debug("relay.bulkInsert table=%s columns=%d rows=%d insertedRows=%d conflictingRows=%d elapsed=%d", table, len(columns), len(rows), len(insertedRows), len(conflictingRows), took(start))
 	return insertedRows, conflictingRows
 }
 
@@ -2988,7 +2988,6 @@ where createdByStoreId = $1
 order by serverSeq`
 	evtRows, err := r.connPool.Query(ctx, existingStoreEventsQuery, op.storeID)
 	check(err)
-	// TODO: check for missing closes
 	defer evtRows.Close()
 
 	var kcEvents []KeyCardEvent
@@ -3196,7 +3195,6 @@ where kce.serverSeq = e.serverSeq
 				sessionState.lastBufferedKCSeq = sessionState.lastStatusedKCSeq
 				sessionState.lastPushedKCSeq = sessionState.lastStatusedKCSeq
 			}
-			// TODO: maybe we should consider making this log line dynamic and just print the types where it's >0 ?
 			logS(sessionId, "relay.debounceSessions.syncStatus initialStatus=%t unpushedEvents=%d elapsed=%d", sessionState.initialStatus, op.unpushedEvents, took(syncStatusStart))
 			r.assertCursors(sessionId, seqPair, sessionState)
 		}
@@ -3340,12 +3338,12 @@ func (r *Relay) debounceEventPropagations() {
 	if len(eventIds) == 0 {
 		return
 	}
-	log("relay.debounceEventPropagations.list events=%d took=%d", len(eventIds), took(start))
+	debug("relay.debounceEventPropagations.list events=%d took=%d", len(eventIds), took(start))
 
 	// Read in event data for listed event IDs.
 	readStart := now()
 	events := r.readEvents(`eventId = any($1)`, eventIds)
-	log("relay.debounceEventPropagations.read took=%d", took(readStart))
+	debug("relay.debounceEventPropagations.read took=%d", took(readStart))
 
 	// Compute new keyCardEvent tuples propagating for all listed events.
 	deriveStart := now()
@@ -3413,7 +3411,7 @@ func (r *Relay) debounceEventPropagations() {
 		assert(kce.serverSeq != 0)
 		assert(kce.keyCardSeq == 0)
 	}
-	log("relay.debounceEventPropagations.derive keyCardEvents=%d took=%d", len(keyCardEvents), took(deriveStart))
+	debug("relay.debounceEventPropagations.derive keyCardEvents=%d took=%d", len(keyCardEvents), took(deriveStart))
 
 	// Hydrate users in preparation for enriching derived keyCardEvents with userSeqs.
 	// Then enrich derived keyCardEvents with userSeqs, in order they were emitted.
@@ -3428,7 +3426,7 @@ func (r *Relay) debounceEventPropagations() {
 		ue.keyCardSeq = seqPair.lastUsedKCSeq + 1
 		seqPair.lastUsedKCSeq = ue.keyCardSeq
 	}
-	log("relay.debounceEventPropagations.enrich took=%d", took(enrichStart))
+	debug("relay.debounceEventPropagations.enrich took=%d", took(enrichStart))
 
 	// Insert derived and enriched keyCardEvents.
 	insertStart := now()
@@ -3445,16 +3443,16 @@ func (r *Relay) debounceEventPropagations() {
 		assert(kcSeq <= seqPair.lastUsedKCSeq)
 		seqPair.lastWrittenKCSeq = kcSeq
 	}
-	log("relay.debounceEventPropagations.insert inserted=%d took=%d", len(insertedRows), took(insertStart))
+	debug("relay.debounceEventPropagations.insert inserted=%d took=%d", len(insertedRows), took(insertStart))
 
 	// Delete from eventPropagations now that we've completed these propagations.
 	deleteStart := now()
 	query = `delete from eventPropagations ep where eventId = any($1)`
 	_, err = r.connPool.Exec(ctx, query, eventIds)
 	check(err)
-	log("relay.debounceEventPropagations.delete took=%d", took(deleteStart))
+	debug("relay.debounceEventPropagations.delete took=%d", took(deleteStart))
 
-	log("relay.debounceEventPropagations.finish took=%d", took(start))
+	debug("relay.debounceEventPropagations.finish took=%d", took(start))
 }
 
 // PaymentWaiter is a struct that holds the state of a order that is waiting for payment.
@@ -3482,7 +3480,7 @@ var (
 )
 
 func (r *Relay) watchEthereumPayments() error {
-	log("relay.watchEthereumPayments.start")
+	debug("relay.watchEthereumPayments.start")
 
 	var (
 		start = now()
@@ -3525,11 +3523,11 @@ func (r *Relay) watchEthereumPayments() error {
 	check(rows.Err())
 
 	if len(waiters) == 0 {
-		log("relay.watchEthereumPayments.noOpenPayments took=%d", took(start))
+		debug("relay.watchEthereumPayments.noOpenPayments took=%d", took(start))
 		return nil
 	}
 
-	log("relay.watchEthereumPayments.dbRead took=%d waiters=%d lowestLastBlock=%s", took(start), len(waiters), lowestLastBlock)
+	debug("relay.watchEthereumPayments.dbRead took=%d waiters=%d lowestLastBlock=%s", took(start), len(waiters), lowestLastBlock)
 
 	// make geth client
 	gethClient, err := r.ethClient.getClient(ctx)
@@ -3546,13 +3544,12 @@ func (r *Relay) watchEthereumPayments() error {
 	for {
 		if currentBlockNo.Cmp(lowestLastBlock) == -1 {
 			// nothing to do
-			log("relay.watchEthereumPayments.noNewBlocks current=%d", currentBlockNoInt)
+			debug("relay.watchEthereumPayments.noNewBlocks current=%d", currentBlockNoInt)
 			break
 		}
 		// check each block for transactions
 		block, err := gethClient.BlockByNumber(ctx, lowestLastBlock)
 		if err != nil {
-
 			return fmt.Errorf("relay.watchEthereumPayments.failedToGetBlock block=%s err=%s", lowestLastBlock, err)
 		}
 
@@ -3563,7 +3560,7 @@ func (r *Relay) watchEthereumPayments() error {
 			}
 			waiter, has := waiters[*to]
 			if has {
-				log("relay.watchEthereumPayments.checkTx waiter.lastBlockNo=%s checkingBlock=%s tx=%s to=%s", waiter.lastBlockNo.String(), block.Number().String(), tx.Hash().String(), tx.To().String())
+				debug("relay.watchEthereumPayments.checkTx waiter.lastBlockNo=%s checkingBlock=%s tx=%s to=%s", waiter.lastBlockNo.String(), block.Number().String(), tx.Hash().String(), tx.To().String())
 				orderID := waiter.orderID
 				// order, has := r.ordersByOrderID.get(orderID)
 				assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
@@ -3606,14 +3603,14 @@ func (r *Relay) watchEthereumPayments() error {
 			orderID := waiter.orderID
 			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, orderID)
 			check(err)
-			log("relay.watchEthereumPayments.advance orderId=%x newLastBlock=%s", orderID, waiter.lastBlockNo.String())
+			debug("relay.watchEthereumPayments.advance orderId=%x newLastBlock=%s", orderID, waiter.lastBlockNo.String())
 		}
 		// increment iterator
 		lowestLastBlock.Add(lowestLastBlock, bigOne)
 	}
 
 	stillWaiting := len(waiters)
-	log("relay.watchEthereumPayments.finish took=%d openWaiters=%d", took(start), stillWaiting)
+	debug("relay.watchEthereumPayments.finish took=%d openWaiters=%d", took(start), stillWaiting)
 	r.metric.emit("relay_payments_eth_open", uint64(stillWaiting))
 	return nil
 }
@@ -3624,7 +3621,7 @@ var (
 )
 
 func (r *Relay) watchErc20Payments() error {
-	log("relay.watchErc20Payments.start")
+	debug("relay.watchErc20Payments.start")
 
 	var (
 		start = now()
@@ -3638,12 +3635,6 @@ func (r *Relay) watchErc20Payments() error {
 
 	ctx, cancel := context.WithDeadline(context.Background(), start.Add(watcherTimeout))
 	defer cancel()
-
-	gethClient, err := r.ethClient.getClient(ctx)
-	if err != nil {
-		return err
-	}
-	defer gethClient.Close()
 
 	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr
 		FROM payments
@@ -3678,9 +3669,15 @@ func (r *Relay) watchErc20Payments() error {
 	check(rows.Err())
 
 	if len(waiters) == 0 {
-		log("relay.watchErc20Payments.noOpenPayments took=%d", took(start))
+		debug("relay.watchErc20Payments.noOpenPayments took=%d", took(start))
 		return nil
 	}
+
+	gethClient, err := r.ethClient.getClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer gethClient.Close()
 
 	// Get the latest block number.
 	currentBlockNoInt, err := gethClient.BlockNumber(ctx)
@@ -3688,7 +3685,7 @@ func (r *Relay) watchErc20Payments() error {
 		return fmt.Errorf("relay.watchErc20Payments.blockNumber err=%s", err)
 	}
 
-	log("relay.watchErc20Payments.starting currentBlock=%d", currentBlockNoInt)
+	debug("relay.watchErc20Payments.starting currentBlock=%d", currentBlockNoInt)
 	currentBlockNo := big.NewInt(int64(currentBlockNoInt))
 
 	// turn set into a list
@@ -3721,8 +3718,8 @@ func (r *Relay) watchErc20Payments() error {
 	// iterate over all matching logs of events from that erc20 contract with the transfer signature
 	var lastBlockNo uint64
 	for _, vLog := range logs {
-		// log("relay.watchErc20Payments.checking block=%d", vLog.BlockNumber)
-		// log("relay.watchErc20Payments.checking topics=%#v", vLog.Topics[1:])
+		// debug("relay.watchErc20Payments.checking block=%d", vLog.BlockNumber)
+		// debug("relay.watchErc20Payments.checking topics=%#v", vLog.Topics[1:])
 		fromHash := vLog.Topics[1]
 		toHash := vLog.Topics[2]
 
@@ -3742,7 +3739,7 @@ func (r *Relay) watchErc20Payments() error {
 
 			inTx, ok := evts[0].(*big.Int)
 			assertWithMessage(ok, fmt.Sprintf("unexpected unpack result for field 0 - type=%T", evts[0]))
-			log("relay.watchErc20Payments.foundTransfer orderId=%s from=%s to=%s amount=%s", orderID, fromHash.Hex(), toHash.Hex(), inTx.String())
+			debug("relay.watchErc20Payments.foundTransfer orderId=%s from=%s to=%s amount=%s", orderID, fromHash.Hex(), toHash.Hex(), inTx.String())
 
 			waiter.coinsPayed.Add(&waiter.coinsPayed.Int, inTx)
 			if waiter.coinsPayed.Cmp(&waiter.coinsTotal.Int) != -1 {
@@ -3784,17 +3781,17 @@ func (r *Relay) watchErc20Payments() error {
 			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = $2 WHERE orderId = $1;`
 			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, waiter.orderID, currentBlockNo.String())
 			check(err)
-			log("relay.watchErc20Payments.advance orderId=%x newLastBlock=%s", waiter.orderID, waiter.lastBlockNo.String())
+			debug("relay.watchErc20Payments.advance orderId=%x newLastBlock=%s", waiter.orderID, waiter.lastBlockNo.String())
 		}
 	}
 	stillWaiting := len(waiters)
-	log("relay.watchErc20Payments.finish took=%d openWaiters=%d", took(start), stillWaiting)
+	debug("relay.watchErc20Payments.finish took=%d openWaiters=%d", took(start), stillWaiting)
 	r.metric.emit("relay_payments_erc20_open", uint64(stillWaiting))
 	return nil
 }
 
 func (r *Relay) watchPaymentMade() error {
-	log("relay.watchPaymentMade.start")
+	debug("relay.watchPaymentMade.start")
 
 	var (
 		start = now()
@@ -3807,12 +3804,6 @@ func (r *Relay) watchPaymentMade() error {
 
 	ctx, cancel := context.WithDeadline(context.Background(), start.Add(watcherTimeout))
 	defer cancel()
-
-	gethClient, err := r.ethClient.getClient(ctx)
-	if err != nil {
-		return err
-	}
-	defer gethClient.Close()
 
 	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, paymentId, lastBlockNo
 		FROM payments
@@ -3835,15 +3826,21 @@ func (r *Relay) watchPaymentMade() error {
 			lowestLastBlock = &waiter.lastBlockNo.Int
 		}
 		pid := common.Hash(waiter.paymentId.Bytes())
-		//log("relay.watchPaymentMade.want pid=%s", pid.Hex())
+		//debug("relay.watchPaymentMade.want pid=%s", pid.Hex())
 		waiters[pid] = waiter
 	}
 	check(rows.Err())
 
 	if len(waiters) == 0 {
-		log("relay.watchPaymentMade.noOpenPayments took=%d", took(start))
+		debug("relay.watchPaymentMade.noOpenPayments took=%d", took(start))
 		return nil
 	}
+
+	gethClient, err := r.ethClient.getClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer gethClient.Close()
 
 	// Get the latest block number.
 	currentBlockNoInt, err := gethClient.BlockNumber(ctx)
@@ -3851,7 +3848,7 @@ func (r *Relay) watchPaymentMade() error {
 		return fmt.Errorf("relay.watchPaymentMade.blockNumber err=%s", err)
 	}
 
-	log("relay.watchPaymentMade.starting currentBlock=%d", currentBlockNoInt)
+	debug("relay.watchPaymentMade.starting currentBlock=%d", currentBlockNoInt)
 	currentBlockNo := big.NewInt(int64(currentBlockNoInt))
 
 	qry := ethereum.FilterQuery{
@@ -3865,7 +3862,7 @@ func (r *Relay) watchPaymentMade() error {
 	logs, err := gethClient.FilterLogs(ctx, qry)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			log("relay.watchPaymentMade.noNewBlocks took=%d", took(start))
+			debug("relay.watchPaymentMade.noNewBlocks took=%d", took(start))
 			return nil // possibly no new block, dont try again immediatly
 		}
 		return err
@@ -3874,14 +3871,14 @@ func (r *Relay) watchPaymentMade() error {
 	// iterate over all matching logs of events from that erc20 contract with the transfer signature
 	var lastBlockNo uint64
 	for _, vLog := range logs {
-		//log("relay.watchPaymentMade.checking block=%d", vLog.BlockNumber)
+		//debug("relay.watchPaymentMade.checking block=%d", vLog.BlockNumber)
 
 		var paymentIdHash = common.Hash(vLog.Topics[1])
-		//log("relay.watchPaymentMade.seen pid=%s", paymentIdHash.Hex())
+		//debug("relay.watchPaymentMade.seen pid=%s", paymentIdHash.Hex())
 
 		if waiter, has := waiters[paymentIdHash]; has {
 			orderID := waiter.orderID
-			//log("relay.watchPaymentMade.found cartId=%s txHash=%x", orderID, vLog.TxHash)
+			//debug("relay.watchPaymentMade.found cartId=%s txHash=%x", orderID, vLog.TxHash)
 
 			_, has := r.ordersByOrderID.get(orderID)
 			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
@@ -3912,18 +3909,18 @@ func (r *Relay) watchPaymentMade() error {
 			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = $2 WHERE cartId = $1;`
 			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, waiter.orderID, currentBlockNo.String())
 			check(err)
-			log("relay.watchPaymentMade.advance cartId=%x newLastBlock=%s", waiter.orderID, waiter.lastBlockNo.String())
+			debug("relay.watchPaymentMade.advance cartId=%x newLastBlock=%s", waiter.orderID, waiter.lastBlockNo.String())
 		}
 	}
 	stillWaiting := len(waiters)
-	log("relay.watchPaymentMade.finish elapsed=%d openWaiters=%d", took(start), stillWaiting)
+	debug("relay.watchPaymentMade.finish elapsed=%d openWaiters=%d", took(start), stillWaiting)
 	r.metric.emit("relay_payments_open", uint64(stillWaiting))
 	return nil
 }
 
 func (r *Relay) memoryStats() {
 	start := now()
-	log("relay.memoryStats.start")
+	debug("relay.memoryStats.start")
 
 	// Shared between old and sharing worlds.
 	sessionCount := r.sessionIDsToSessionStates.Size()
@@ -3952,7 +3949,7 @@ func (r *Relay) memoryStats() {
 
 	memoryStatsTook := took(start)
 	r.metric.emit("relay.memoryStats.took", uint64(memoryStatsTook))
-	log("relay.memoryStats.finish took=%d", memoryStatsTook)
+	debug("relay.memoryStats.finish took=%d", memoryStatsTook)
 }
 
 func newPool() *pgxpool.Pool {
