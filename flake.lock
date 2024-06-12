@@ -13,15 +13,16 @@
         "solady": "solady"
       },
       "locked": {
-        "lastModified": 1717502262,
-        "narHash": "sha256-mfJmZ0kKtb/T6O9WuYZqIcJySCXhuxCqbSiQvPEdc/o=",
+        "lastModified": 1718191708,
+        "narHash": "sha256-sRvYPYSiMlBEU0GRQF6WCDbaPRMc2Hzd56n2iW2/mmw=",
         "owner": "masslbs",
         "repo": "contracts",
-        "rev": "c2efd6ad09570392e4d30595f0e0120384dbadfb",
+        "rev": "39f8ce3767feded63a3a86077bed34f9784e5b22",
         "type": "github"
       },
       "original": {
         "owner": "masslbs",
+        "ref": "rename",
         "repo": "contracts",
         "type": "github"
       }
@@ -112,11 +113,11 @@
     "forge-std": {
       "flake": false,
       "locked": {
-        "lastModified": 1715903882,
-        "narHash": "sha256-Uqr0ZwCnQL9ShWxIgG/ci/5ukGyuqt2n+C0GFKlJiho=",
+        "lastModified": 1717836446,
+        "narHash": "sha256-hBByo2OoIYh3nUkCBDJRPFKvaMkjAO+Wkq6belAW0T0=",
         "owner": "foundry-rs",
         "repo": "forge-std",
-        "rev": "52715a217dc51d0de15877878ab8213f6cbbbab5",
+        "rev": "6e05729b76f1ae0d437e74951aef1ca987788ab3",
         "type": "github"
       },
       "original": {
@@ -131,17 +132,16 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1714727549,
-        "narHash": "sha256-CWXRTxxcgMfQubJugpeg3yVWIfm70MYTtgaKWKgD60U=",
+        "lastModified": 1718010606,
+        "narHash": "sha256-DKMbFQBbkTghIGHO6pL/nRs2/QHttm4AVG+gL9bFbOc=",
         "owner": "shazow",
         "repo": "foundry.nix",
-        "rev": "47cf189ec395eda4b3e0623179d1075c8027ca97",
+        "rev": "1d68c63c217de6fee495275f17d6dc9e220d2499",
         "type": "github"
       },
       "original": {
         "owner": "shazow",
         "repo": "foundry.nix",
-        "rev": "47cf189ec395eda4b3e0623179d1075c8027ca97",
         "type": "github"
       }
     },
@@ -233,11 +233,11 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1717530100,
-        "narHash": "sha256-b4Dn+PnrZoVZ/BoR9JN2fTxXxplJrAsdSUIePf4Cacs=",
+        "lastModified": 1718060059,
+        "narHash": "sha256-9XKFni8VMXo81RTq9XygCyaO3I/7UKpwIlM/yn0MdcM=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "a2e1d0414259a144ebdc048408a807e69e0565af",
+        "rev": "a3c8d64ba846725f040582b2d3b875466d2115bd",
         "type": "github"
       },
       "original": {
@@ -313,16 +313,16 @@
     "schema": {
       "flake": false,
       "locked": {
-        "lastModified": 1717772469,
-        "narHash": "sha256-ruNFbHd1S8LlomG8X3s4hgHyNpsuSuPxZ1Ai0rG5FQA=",
+        "lastModified": 1718190745,
+        "narHash": "sha256-hEZJgBgBz9+20m566GSXhYLUmICVo6+O1zAYxtse/m4=",
         "owner": "masslbs",
         "repo": "network-schema",
-        "rev": "acc60bbe41693018700efca8dfe97ceeabb9fca3",
+        "rev": "e01b832f8fc10dbcd91d87288052157c02b7488f",
         "type": "github"
       },
       "original": {
         "owner": "masslbs",
-        "ref": "v2/optional-fields",
+        "ref": "wip/v2",
         "repo": "network-schema",
         "type": "github"
       }
@@ -330,11 +330,11 @@
     "solady": {
       "flake": false,
       "locked": {
-        "lastModified": 1717493279,
-        "narHash": "sha256-mFKKe6CrYOT69H7LypN/MrMfQLuA9rv3sNSMABQx0us=",
+        "lastModified": 1717740645,
+        "narHash": "sha256-EcHZb25oUArIKg2k8IxmzmGbeYqfJPjZgJ51qthAqyg=",
         "owner": "Vectorized",
         "repo": "solady",
-        "rev": "54eb8737224ba015e5591c4c8e97c78cdf8f0e0f",
+        "rev": "29d61c504425519c6deddc3e12c2e039ad43e8e3",
         "type": "github"
       },
       "original": {

@@ -40,7 +40,7 @@ package main
 
 import "fmt"
 
-func (evt *StoreEvent) typeAndTypedDataMap() (string, map[string]any) {
+func (evt *ShopEvent) typeAndTypedDataMap() (string, map[string]any) {
 	var unwrapped typedDataMaper
 	var name string
 	switch union := evt.Union.(type) {
@@ -69,7 +69,7 @@ func (evt *StoreEvent) typeAndTypedDataMap() (string, map[string]any) {
 func GetAllStructs() map[string]string {
 	fset := token.NewFileSet()
 
-	f, err := parser.ParseFile(fset, "gen_network_store_events.pb.go", nil, parser.SkipObjectResolution)
+	f, err := parser.ParseFile(fset, "gen_network_shop_events.pb.go", nil, parser.SkipObjectResolution)
 	check(err)
 
 	var sf eventTypeFinder
@@ -92,8 +92,8 @@ func (sf eventTypeFinder) Visit(n ast.Node) ast.Visitor {
 			for _, spec := range tv.Specs {
 				spec := spec.(*ast.TypeSpec)
 				typeName := spec.Name.Name
-				if strings.HasPrefix(typeName, "StoreEvent_") {
-					sf.structs[typeName] = strings.TrimPrefix(typeName, "StoreEvent_")
+				if strings.HasPrefix(typeName, "ShopEvent_") {
+					sf.structs[typeName] = strings.TrimPrefix(typeName, "ShopEvent_")
 				}
 			}
 		}

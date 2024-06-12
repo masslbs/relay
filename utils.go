@@ -160,6 +160,10 @@ func took(t time.Time) int64 {
 	return time.Since(t).Milliseconds()
 }
 
+func tookF(t time.Time) float64 {
+	return float64(time.Since(t).Milliseconds())
+}
+
 // ReusableTimer is a wrapper around time.Timer that allows for reusing the timer
 type ReusableTimer struct {
 	*time.Timer

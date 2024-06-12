@@ -39,11 +39,11 @@ func TestVerifyTestdata(t *testing.T) {
 
 	verifier := newEthClient()
 	verifier.chainID = uint(vect.Signatures.ChainID)
-	verifier.contractAddresses.StoreRegistry = common.Address(vect.Signatures.ContractAddress)
+	verifier.contractAddresses.ShopRegistry = common.Address(vect.Signatures.ContractAddress)
 
 	for i, vectEvt := range vect.Events {
 		t.Log("event:", i)
-		var evt StoreEvent
+		var evt ShopEvent
 		err = proto.Unmarshal(vectEvt.Encoded, &evt)
 		r.NoError(err)
 		t.Logf("type: %T", evt.Union)

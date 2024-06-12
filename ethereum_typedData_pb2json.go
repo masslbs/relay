@@ -20,16 +20,16 @@ func (evt *NewKeyCard) typedDataMap() map[string]any {
 	}
 }
 
-func (evt *StoreManifest) typedDataMap() map[string]any {
+func (evt *ShopManifest) typedDataMap() map[string]any {
 	return map[string]any{
 		"event_id":         evt.EventId,
-		"store_token_id":   evt.StoreTokenId,
+		"shop_token_id":    evt.ShopTokenId,
 		"domain":           evt.Domain,
 		"published_tag_id": evt.PublishedTagId,
 	}
 }
 
-func (evt *UpdateStoreManifest) typedDataMap() map[string]any {
+func (evt *UpdateShopManifest) typedDataMap() map[string]any {
 	m := map[string]any{
 		"event_id": evt.EventId,
 	}

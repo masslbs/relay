@@ -32,22 +32,21 @@ rm -r network-schema/
 
 sed -i 's/ErrorCodes_ERROR_CODES_/ErrorCodes_/' gen_network_error.pb.go
 
-
-
 cp $MASS_SCHEMA/typedData.json gen_network_typedData.json
 go run generate_typedData_event_helper.go $SCHEMA_VERSION $SCHEMA_COMMIT_HASH > gen_typedData_event_helper.go
 
 go run generate_types.go $SCHEMA_VERSION $SCHEMA_COMMIT_HASH > gen_types.go
 go run generate_constants.go $SCHEMA_VERSION $SCHEMA_COMMIT_HASH > gen_constants.go
+
 # smart contract wrapper
 abigen --pkg main --type ERC20 --out gen_erc20.go --abi $MASS_CONTRACTS/abi/ERC20.json
 abigen --pkg main --type RegRelay --out gen_registry_relay.go --abi $MASS_CONTRACTS/abi/RelayReg.json
-abigen --pkg main --type RegStore --out gen_registry_store.go --abi  $MASS_CONTRACTS/abi/StoreReg.json
+abigen --pkg main --type RegShop --out gen_registry_shop.go --abi  $MASS_CONTRACTS/abi/ShopReg.json
 #abigen --pkg main --type Payments --out gen_payments.go --abi $MASS_CONTRACTS/abi/Payments.json
 abigen --pkg main --type PaymentsByAddress --out gen_payments_by_address.go --abi $MASS_CONTRACTS/abi/PaymentsByAddress.json
 sed -i "1i // Generated from abi/ERC20.json - git at $CONTRACTS_COMMIT_HASH\n" gen_erc20.go
 sed -i "1i // Generated from abi/RelayReg.json - git at $CONTRACTS_COMMIT_HASH\n" gen_registry_relay.go
-sed -i "1i // Generated from abi/StoreReg.json - git at $CONTRACTS_COMMIT_HASH\n" gen_registry_store.go
+sed -i "1i // Generated from abi/ShopReg.json - git at $CONTRACTS_COMMIT_HASH\n" gen_registry_shop.go
 #sed -i "1i // Generated from abi/Payments.json - git at $CONTRACTS_COMMIT_HASH\n" gen_payments.go
 sed -i "1i // Generated from abi/PaymentsByAddress.json - git at $CONTRACTS_COMMIT_HASH\n" gen_payments_by_address.go
 

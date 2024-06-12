@@ -13,10 +13,10 @@
     gomod2nix.inputs.flake-utils.follows = "flake-utils";
     pre-commit-hooks.url = "github:cachix/pre-commit-hooks.nix";
 
-    contracts.url = "github:masslbs/contracts";
+    contracts.url = "github:masslbs/contracts/rename";
     contracts.inputs.nixpkgs.follows = "nixpkgs";
     schema = {
-      url = "github:masslbs/network-schema/v2/optional-fields";
+      url = "github:masslbs/network-schema/wip/v2";
       flake = false;
     };
   };

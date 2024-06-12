@@ -40,7 +40,7 @@ func (c ethClient) verifyChallengeResponse(publicKey, challange, signature []byt
 			Name:              "MassMarket",
 			Version:           "1",
 			ChainId:           math.NewHexOrDecimal256(int64(c.chainID)),
-			VerifyingContract: c.contractAddresses.StoreRegistry.Hex(),
+			VerifyingContract: c.contractAddresses.ShopRegistry.Hex(),
 		},
 		Message: map[string]any{"challenge": hex.EncodeToString(challange)},
 	}
@@ -92,7 +92,7 @@ func (c ethClient) verifyKeyCardEnroll(keyCardPublicKey, signature []byte) (comm
 			Name:              "MassMarket",
 			Version:           "1",
 			ChainId:           math.NewHexOrDecimal256(int64(c.chainID)),
-			VerifyingContract: c.contractAddresses.StoreRegistry.Hex(),
+			VerifyingContract: c.contractAddresses.ShopRegistry.Hex(),
 		},
 		Message: map[string]any{
 			"keyCard": hex.EncodeToString(keyCardPublicKey),
@@ -170,7 +170,7 @@ func parseEventToTypedData() {
 	eventToTypedData = cleanedUp
 }
 
-func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
+func (c ethClient) eventHash(evt *ShopEvent) ([]byte, error) {
 	parseEventToTypedDataOnce.Do(parseEventToTypedData)
 
 	typeName, message := evt.typeAndTypedDataMap()
@@ -188,7 +188,7 @@ func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
 	// these two types follow the 'field=x oneof value' pattern
 	// for these we ned to remove the fields from the spec that are not set
 	// since we already omit the values from the message in TypeAndTypedDataMap()
-	if um := evt.GetUpdateStoreManifest(); um != nil {
+	if um := evt.GetUpdateShopManifest(); um != nil {
 		usedTypeSpec = make([]apitypes.Type, 1)
 		copy(usedTypeSpec[:1], tdTypeSpec[:1])
 		if d := um.Domain; d != nil {
@@ -290,7 +290,7 @@ func (c ethClient) eventHash(evt *StoreEvent) ([]byte, error) {
 			Name:              "MassMarket",
 			Version:           "1",
 			ChainId:           math.NewHexOrDecimal256(int64(c.chainID)),
-			VerifyingContract: c.contractAddresses.StoreRegistry.Hex(),
+			VerifyingContract: c.contractAddresses.ShopRegistry.Hex(),
 		},
 		Message: message,
 	}
@@ -318,7 +318,7 @@ func (uo *UpdateOrder) schemaFieldName() string {
 	panic("unreachable")
 }
 
-func (c ethClient) eventVerify(evt *StoreEvent, publicKey []byte) error {
+func (c ethClient) eventVerify(evt *ShopEvent, publicKey []byte) error {
 	assert(evt != nil)
 	sighash, err := c.eventHash(evt)
 	if err != nil {
@@ -349,7 +349,7 @@ func (c ethClient) eventVerify(evt *StoreEvent, publicKey []byte) error {
 	return nil
 }
 
-func (c ethClient) eventSign(evt *StoreEvent) error {
+func (c ethClient) eventSign(evt *ShopEvent) error {
 	sighash, err := c.eventHash(evt)
 	if err != nil {
 		return err

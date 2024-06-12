@@ -1,11 +1,11 @@
 {
-  "StoreManifest": [
+  "ShopManifest": [
     {
       "name": "event_id",
       "type": "bytes32"
     },
     {
-      "name": "store_token_id",
+      "name": "shop_token_id",
       "type": "bytes32"
     },
     {
@@ -17,7 +17,7 @@
       "type": "bytes32"
     }
   ],
-  "UpdateStoreManifest": [
+  "UpdateShopManifest": [
     {
       "name": "event_id",
       "type": "bytes32"

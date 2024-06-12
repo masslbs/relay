@@ -45,7 +45,7 @@ type ethClient struct {
 
 	contractAddresses struct {
 		Payments      common.Address `json:"Payments"`
-		StoreRegistry common.Address `json:"StoreReg"`
+		ShopRegistry  common.Address `json:"ShopReg"`
 		RelayRegistry common.Address `json:"RelayReg"`
 	}
 	secret *ecdsa.PrivateKey
@@ -118,7 +118,7 @@ func newEthClient() *ethClient {
 	err = json.Unmarshal(addrData, &c.contractAddresses)
 	check(err)
 
-	log("ethClient.newEthClient storeRegAddr=%s", c.contractAddresses.StoreRegistry.Hex())
+	log("ethClient.newEthClient shopRegAddr=%s", c.contractAddresses.ShopRegistry.Hex())
 	log("ethClient.newEthClient relayRegAddr=%s", c.contractAddresses.RelayRegistry.Hex())
 	log("ethClient.newEthClient paymentsAddr=%s", c.contractAddresses.Payments.Hex())
 
@@ -206,15 +206,15 @@ func (c ethClient) newRelayReg(ctx context.Context) (*RegRelay, *ethclient.Clien
 	return reg, client, nil
 }
 
-func (c ethClient) newStoreReg(ctx context.Context) (*RegStore, *ethclient.Client, error) {
+func (c ethClient) newShopReg(ctx context.Context) (*RegShop, *ethclient.Client, error) {
 	client, err := c.getClient(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	reg, err := NewRegStore(c.contractAddresses.StoreRegistry, client)
+	reg, err := NewRegShop(c.contractAddresses.ShopRegistry, client)
 	if err != nil {
-		return nil, nil, fmt.Errorf("ethClient.newStoreReg: creating store registry failed: %w", err)
+		return nil, nil, fmt.Errorf("ethClient.newShopReg: creating shop registry failed: %w", err)
 	}
 
 	return reg, client, nil
@@ -298,13 +298,13 @@ func (c ethClient) hasBalance(ctx context.Context, addr common.Address) bool {
 }
 
 /*
-func (c ethClient) readRootHashForStore(ctx context.Context, storeID string) {
-	storeReg, gethc, err := c.newStoreReg(ctx)
+func (c ethClient) readRootHashForShop(ctx context.Context, shopID string) {
+	shopReg, gethc, err := c.newShopReg(ctx)
 
-	storeIDInt := new(big.Int)
-	_, ok := storeIDInt.SetString(strings.TrimPrefix(storeID, "0x"), 16)
+	shopIDInt := new(big.Int)
+	_, ok := shopIDInt.SetString(strings.TrimPrefix(shopID, "0x"), 16)
 	if !ok {
-		panic("Error parsing store ID")
+		panic("Error parsing shop ID")
 	}
 
 	callOpts := &bind.CallOpts{
@@ -313,14 +313,14 @@ func (c ethClient) readRootHashForStore(ctx context.Context, storeID string) {
 		Context: ctx,
 	}
 
-	rootHash, err := c.stores.RootHashes(callOpts, storeIDInt)
+	rootHash, err := c.shops.RootHashes(callOpts, shopIDInt)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error getting root hash: ", err)
 		return
 	}
 	fmt.Println("Current Root Hash: ", hex.EncodeToString(rootHash[:]))
 
-	relayCount, err := c.stores.GetRelayCount(callOpts, storeIDInt)
+	relayCount, err := c.shops.GetRelayCount(callOpts, shopIDInt)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error getting relay count: ", err)
 		return
@@ -335,14 +335,14 @@ func (c ethClient) updateRootHash(_ requestID, newRootHash []byte) error {
 	}
 
 	// TODO: query me
-	var storeBigIntID big.Int
+	var shopBigIntID big.Int
 
 	ctx := context.Background()
 	callOpts, err := c.makeTxOpts(ctx)
 	if err != nil {
 		return err
 	}
-	tx, err := c.stores.UpdateRootHash(callOpts, &storeBigIntID, [32]byte(newRootHash))
+	tx, err := c.shops.UpdateRootHash(callOpts, &shopBigIntID, [32]byte(newRootHash))
 	if err != nil {
 		return fmt.Errorf("creating transaction failed: %w", err)
 	}
