@@ -22,10 +22,13 @@ func (evt *NewKeyCard) typedDataMap() map[string]any {
 
 func (evt *ShopManifest) typedDataMap() map[string]any {
 	return map[string]any{
-		"event_id":         evt.EventId,
-		"shop_token_id":    evt.ShopTokenId,
-		"domain":           evt.Domain,
-		"published_tag_id": evt.PublishedTagId,
+		"event_id":            evt.EventId,
+		"shop_token_id":       evt.ShopTokenId,
+		"domain":              evt.Domain,
+		"published_tag_id":    evt.PublishedTagId,
+		"name":                evt.Name,
+		"description":         evt.Description,
+		"profile_picture_url": evt.ProfilePictureUrl,
 	}
 }
 
@@ -33,8 +36,17 @@ func (evt *UpdateShopManifest) typedDataMap() map[string]any {
 	m := map[string]any{
 		"event_id": evt.EventId,
 	}
+	if n := evt.Name; n != nil {
+		m["name"] = *n
+	}
 	if d := evt.Domain; d != nil {
 		m["domain"] = *d
+	}
+	if d := evt.Description; d != nil {
+		m["description"] = *d
+	}
+	if i := evt.ProfilePictureUrl; i != nil {
+		m["profile_picture_url"] = *i
 	}
 	if pt := evt.PublishedTagId; len(pt) > 0 {
 		m["published_tag_id"] = pt

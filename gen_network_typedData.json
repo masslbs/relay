@@ -15,6 +15,18 @@
     {
       "name": "published_tag_id",
       "type": "bytes32"
+    },
+    {
+      "name": "name",
+      "type": "string"
+    },
+    {
+      "name": "description",
+      "type": "string"
+    },
+    {
+      "name": "profile_picture_url",
+      "type": "string"
     }
   ],
   "UpdateShopManifest": [
@@ -37,6 +49,18 @@
     {
       "name": "remove_erc20_addr",
       "type": "address"
+    },
+    {
+      "name": "name",
+      "type": "string"
+    },
+    {
+      "name": "description",
+      "type": "string"
+    },
+    {
+      "name": "profile_picture_url",
+      "type": "string"
     }
   ],
   "CreateItem": [

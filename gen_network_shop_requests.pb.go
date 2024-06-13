@@ -1,4 +1,4 @@
-// Generated from /nix/store/k4af600hg2539mmd2gwkza9j3ami4jp9-source/network-schema/shop_requests.proto at version v2 (e01b832f8fc10dbcd91d87288052157c02b7488f)
+// Generated from /nix/store/6l4gy52x3c8rj7jvi6yb0rrzlwjyfv5c-source/network-schema/shop_requests.proto at version v2 (ab901ccb68aec0af4acbfbd2c8a468d365b618e2)
 
 // SPDX-FileCopyrightText: 2024 Mass Labs
 //

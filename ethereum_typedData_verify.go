@@ -197,6 +197,25 @@ func (c ethClient) eventHash(evt *ShopEvent) ([]byte, error) {
 				Type: "string",
 			})
 		}
+		if n := um.Name; n != nil {
+			usedTypeSpec = append(usedTypeSpec, apitypes.Type{
+				Name: "name",
+				Type: "string",
+			})
+
+		}
+		if d := um.Description; d != nil {
+			usedTypeSpec = append(usedTypeSpec, apitypes.Type{
+				Name: "description",
+				Type: "string",
+			})
+		}
+		if p := um.ProfilePictureUrl; p != nil {
+			usedTypeSpec = append(usedTypeSpec, apitypes.Type{
+				Name: "profile_picture_url",
+				Type: "string",
+			})
+		}
 		if pt := um.PublishedTagId; len(pt) > 0 {
 			usedTypeSpec = append(usedTypeSpec, apitypes.Type{
 				Name: "published_tag_id",
