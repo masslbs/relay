@@ -665,6 +665,18 @@ func validateShopManifest(_ uint, event *ShopManifest) *Error {
 func validateUpdateShopManifest(_ uint, event *UpdateShopManifest) *Error {
 	errs := []*Error{validateEventID(event.EventId, "event_id")}
 	hasOpt := false
+	if str := event.Name; str != nil {
+		errs = append(errs, validateString(*str, "name", 100))
+		hasOpt = true
+	}
+	if str := event.Description; str != nil {
+		errs = append(errs, validateString(*str, "description", 1024))
+		hasOpt = true
+	}
+	if str := event.ProfilePictureUrl; str != nil {
+		errs = append(errs, validateURL(*str, "profile_picture_url"))
+		hasOpt = true
+	}
 	if d := event.Domain; d != nil {
 		errs = append(errs, validateURL(*d, "domain"))
 		hasOpt = true
