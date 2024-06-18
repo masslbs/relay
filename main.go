@@ -1075,18 +1075,20 @@ type cachedShopCurrency struct {
 }
 type cachedCurrenciesMap map[cachedShopCurrency]struct{}
 
+type cachedShopPayee struct {
+	cachedShopCurrency
+	isEndpoint bool
+}
+
 // CachedShopManifest is latest reduction of a ShopManifest.
 // It combines the intial ShopManifest and all UpdateShopManifests
 type CachedShopManifest struct {
 	CachedMetadata
 
-	shopTokenID    []byte
-	domain         string
-	publishedTagID eventID
-	payee          struct {
-		cachedShopCurrency
-		isEndpoint bool
-	}
+	shopTokenID        []byte
+	domain             string
+	publishedTagID     eventID
+	payee              *cachedShopPayee
 	acceptedCurrencies cachedCurrenciesMap
 
 	validKeyCardPublicKeys requestIDSlice
@@ -1168,6 +1170,9 @@ func (current *CachedShopManifest) update(union *ShopEvent, meta CachedMetadata)
 			delete(current.acceptedCurrencies, c)
 		}
 		if p := um.UpdatePayee; p != nil {
+			if current.payee == nil {
+				current.payee = &cachedShopPayee{}
+			}
 			current.payee.Addr = common.Address(p.Addr)
 			current.payee.ChainID = p.Chain
 			current.payee.isEndpoint = p.CallAsContract
@@ -2821,16 +2826,15 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	// if there is an escrow address use it for payee
 	payeeAddress := ownerAddr
 	isEndpoint := false
-	/* TODO: configure payout endpoint
-	isEndpoint := ea != nil
-		if isEndpoint {
-			isEndpoint = true
-		    payeeAddress = common.Address(ea)
-		}
-	*/
+	chainId := new(big.Int).SetInt64(int64(r.ethClient.chainID))
+	if shop.payee != nil {
+		isEndpoint = shop.payee.isEndpoint
+		payeeAddress = shop.payee.Addr
+		chainId.SetUint64(shop.payee.ChainID)
+	}
 
 	var pr = PaymentRequest{}
-	pr.ChainId = new(big.Int).SetInt64(int64(r.ethClient.chainID))
+	pr.ChainId = chainId
 	pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
 	pr.Order = receiptHash
 	pr.Currency = erc20TokenAddr
