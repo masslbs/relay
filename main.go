@@ -687,15 +687,23 @@ func validateUpdateShopManifest(_ uint, event *UpdateShopManifest) *Error {
 	if add := event.AddAcceptedCurrency; add != nil {
 		// TODO: validate chain ids?
 		//		errs = append(errs, validate
-		errs = append(errs, validateEthAddressBytes(add.Addr, "add_accepted_currencty.addr"))
+		errs = append(errs, validateEthAddressBytes(add.TokenAddr, "add_accepted_currencty.addr"))
 		hasOpt = true
 	}
 	if remove := event.RemoveAcceptedCurrency; remove != nil {
-		errs = append(errs, validateEthAddressBytes(remove.Addr, "remove_accepted_currencty.addr"))
+		errs = append(errs, validateEthAddressBytes(remove.TokenAddr, "remove_accepted_currencty.addr"))
 		hasOpt = true
 	}
-	if base := event.UpdatePayee; base != nil {
-		errs = append(errs, validateEthAddressBytes(base.Addr, "update_payee.addr"))
+	if base := event.SetBaseCurrency; base != nil {
+		errs = append(errs, validateEthAddressBytes(base.TokenAddr, "set_base_currencty.addr"))
+		hasOpt = true
+	}
+	if base := event.AddPayee; base != nil {
+		errs = append(errs, validateEthAddressBytes(base.Addr, "add_payee.addr"))
+		hasOpt = true
+	}
+	if base := event.RemovePayee; base != nil {
+		errs = append(errs, validateEthAddressBytes(base.Addr, "remove_payee.addr"))
 		hasOpt = true
 	}
 	if !hasOpt {
@@ -905,8 +913,8 @@ func (im *CommitItemsToOrderRequest) validate(version uint) *Error {
 	errs := []*Error{
 		validateEventID(im.OrderId, "order_id"),
 	}
-	if erc20 := im.GetErc20Addr(); erc20 != nil {
-		errs = append(errs, validateEthAddressBytes(erc20, "erc20_addr"))
+	if curr := im.Currency; curr != nil {
+		errs = append(errs, validateEthAddressBytes(curr.TokenAddr, "currency.token_addr"))
 	}
 	return coalesce(errs...)
 }
@@ -1088,8 +1096,9 @@ type CachedShopManifest struct {
 	shopTokenID        []byte
 	domain             string
 	publishedTagID     eventID
-	payee              *cachedShopPayee
+	payees             map[string]cachedShopPayee
 	acceptedCurrencies cachedCurrenciesMap
+	baseCurrency       *cachedShopCurrency
 
 	validKeyCardPublicKeys requestIDSlice
 	validKeyCardIDs        *MapRequestIDs[keyCardIdWithGuest]
@@ -1138,6 +1147,7 @@ where shopId = $1 and unlinkedAt is null and cardPublicKey = $2`
 func (current *CachedShopManifest) update(union *ShopEvent, meta CachedMetadata) {
 	current.init.Do(func() {
 		current.acceptedCurrencies = make(cachedCurrenciesMap)
+		current.payees = make(map[string]cachedShopPayee)
 		current.validKeyCardIDs = NewMapRequestIDs[keyCardIdWithGuest]()
 	})
 	switch union.Union.(type) {
@@ -1157,25 +1167,35 @@ func (current *CachedShopManifest) update(union *ShopEvent, meta CachedMetadata)
 		}
 		if add := um.AddAcceptedCurrency; add != nil {
 			c := cachedShopCurrency{
-				common.Address(add.Addr),
-				add.Chain,
+				common.Address(add.TokenAddr),
+				add.ChainId,
 			}
 			current.acceptedCurrencies[c] = struct{}{}
 		}
 		if rm := um.RemoveAcceptedCurrency; rm != nil {
 			c := cachedShopCurrency{
-				common.Address(rm.Addr),
-				rm.Chain,
+				common.Address(rm.TokenAddr),
+				rm.ChainId,
 			}
 			delete(current.acceptedCurrencies, c)
 		}
-		if p := um.UpdatePayee; p != nil {
-			if current.payee == nil {
-				current.payee = &cachedShopPayee{}
+		if bc := um.SetBaseCurrency; bc != nil {
+			current.baseCurrency = &cachedShopCurrency{
+				Addr:    common.Address(bc.TokenAddr),
+				ChainID: bc.ChainId,
 			}
-			current.payee.Addr = common.Address(p.Addr)
-			current.payee.ChainID = p.Chain
-			current.payee.isEndpoint = p.CallAsContract
+		}
+		if p := um.AddPayee; p != nil {
+			_, taken := current.payees[p.Name]
+			assert(!taken)
+			payee := cachedShopPayee{}
+			payee.Addr = common.Address(p.Addr)
+			payee.ChainID = p.ChainId
+			payee.isEndpoint = p.CallAsContract
+			current.payees[p.Name] = payee
+		}
+		if p := um.RemovePayee; p != nil {
+			delete(current.payees, p.Name)
 		}
 	case *ShopEvent_NewKeyCard:
 		nkc := union.GetNewKeyCard()
@@ -2358,8 +2378,29 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 		if sess.keyCardOfAGuest {
 			return notFoundError
 		}
+		if p := tv.UpdateShopManifest.AddPayee; p != nil {
+			for name, payee := range manifest.payees {
+				if bytes.Equal(payee.Addr[:], p.Addr) && payee.ChainID == p.ChainId {
+					return &Error{Code: ErrorCodes_INVALID, Message: "conflicting payee: " + name}
+				}
+			}
+		}
+		if p := tv.UpdateShopManifest.RemovePayee; p != nil {
+			if _, has := manifest.payees[p.Name]; !has {
+				return notFoundError
+			}
+		}
 		// this feels like a pre-op validation step but we dont have access to the relay there
 		if add := tv.UpdateShopManifest.AddAcceptedCurrency; add != nil {
+			// check if already assigned
+			c := cachedShopCurrency{
+				common.Address(add.TokenAddr),
+				add.ChainId,
+			}
+			if _, has := manifest.acceptedCurrencies[c]; has {
+				return &Error{Code: ErrorCodes_INVALID, Message: "currency already in use"}
+			}
+			// validate existance of contract
 			callOpts := &bind.CallOpts{
 				Pending: false,
 				From:    r.ethClient.wallet,
@@ -2377,7 +2418,7 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 			}
 			defer gethClient.Close()
 
-			tokenCaller, err := NewERC20Caller(common.Address(add.Addr), gethClient)
+			tokenCaller, err := NewERC20Caller(common.Address(add.TokenAddr), gethClient)
 			if err != nil {
 				log("relay.validateWrite.newERC20Caller err=%s", err)
 				return &Error{Code: ErrorCodes_INVALID, Message: "failed to create token caller"}
@@ -2571,6 +2612,11 @@ func (op *EventPushOp) process(r *Relay) {
 
 const DefaultPaymentTTL = 60 * 60 * 24
 
+var (
+	// TODO: defined in geth?
+	ZeroAddress common.Address
+)
+
 func (op *CommitItemsToOrderOp) process(r *Relay) {
 	ctx := context.Background()
 	sessionID := op.sessionID
@@ -2723,7 +2769,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 		receiptHash [32]byte
 
-		usignErc20     = len(op.im.Erc20Addr) == 20
+		usignErc20     = bytes.Equal(ZeroAddress[:], op.im.Currency.TokenAddr)
 		erc20TokenAddr common.Address
 	)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -2745,9 +2791,9 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 	inBaseTokens := new(apd.Decimal)
 	if usignErc20 {
-		erc20TokenAddr = common.Address(op.im.Erc20Addr)
+		erc20TokenAddr = common.Address(op.im.Currency.TokenAddr)
 		var has bool
-		_, has = shop.acceptedCurrencies[cachedShopCurrency{erc20TokenAddr, op.im.ChainId}]
+		_, has = shop.acceptedCurrencies[cachedShopCurrency{erc20TokenAddr, op.im.Currency.ChainId}]
 		if !has {
 			logSR("relay.commitOrderOp.noSuchAcceptedErc20s addr=%s", sessionID, requestID, erc20TokenAddr.Hex())
 			op.err = &Error{Code: ErrorCodes_INVALID, Message: "erc20 not accepted"}
@@ -2823,24 +2869,21 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		return
 	}
 
-	// if there is an escrow address use it for payee
-	payeeAddress := ownerAddr
-	isEndpoint := false
-	chainId := new(big.Int).SetInt64(int64(r.ethClient.chainID))
-	if shop.payee != nil {
-		isEndpoint = shop.payee.isEndpoint
-		payeeAddress = shop.payee.Addr
-		chainId.SetUint64(shop.payee.ChainID)
+	payee, has := shop.payees[op.im.PayeeName]
+	if !has {
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "no such payee"}
+		r.sendSessionOp(sessionState, op)
+		return
 	}
 
 	var pr = PaymentRequest{}
-	pr.ChainId = chainId
+	pr.ChainId = new(big.Int).SetUint64(payee.ChainID)
 	pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
 	pr.Order = receiptHash
 	pr.Currency = erc20TokenAddr
 	pr.Amount = bigTotal
-	pr.PayeeAddress = payeeAddress
-	pr.IsPaymentEndpoint = isEndpoint
+	pr.PayeeAddress = payee.Addr
+	pr.IsPaymentEndpoint = payee.isEndpoint
 	pr.ShopId = bigShopTokenID
 	// TODO: calculate signature
 	pr.ShopSignature = bytes.Repeat([]byte{0}, 64)
@@ -2886,8 +2929,8 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	fin.OrderHash = receiptHash[:]
 	fin.CurrencyAddr = erc20TokenAddr[:]
 	fin.TotalInCrypto = bigTotal.String()
-	fin.PayeeAddr = payeeAddress[:]
-	fin.IsPaymentEndpoint = isEndpoint
+	fin.PayeeAddr = payee.Addr[:]
+	fin.IsPaymentEndpoint = payee.isEndpoint
 	fin.ShopSignature = pr.ShopSignature
 
 	update := &UpdateOrder{

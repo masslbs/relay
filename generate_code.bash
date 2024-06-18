@@ -21,6 +21,7 @@ for input in network-schema/*.proto; do
   protoc \
     -I=network-schema \
     --go_out=paths=source_relative:. \
+    --go_opt="Mshop.proto=github.com/masslbs/network-schema;main" \
     --go_opt="Merror.proto=github.com/masslbs/network-schema;main" \
     --go_opt="M$(basename $input)=github.com/masslbs/network-schema;main" \
     $input

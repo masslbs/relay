@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from network-schema. Files: constants.txt at version v2 (7825d80c3dbf91c1af4a5740bfa3a34ed2ff1f1d)
+// Generated from network-schema. Files: constants.txt at version v2 (70b21528139248d7f10f266a048a1aaf1a704db5)
 //lint:file-ignore U1000 Ignore all unused code, it's generated
 
 package main
