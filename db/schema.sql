@@ -41,8 +41,10 @@ create table events (
     createdByNetworkSchemaVersion bigint not null,
     serverSeq bigint not null,
     encoded bytea not null,
+    signature bytea not null,
     referenceId bytea
 );
+alter table events add constraint eventsSignatures check (octet_length(signature) = 65);
 alter table events add constraint eventsId check (octet_length(eventId) = 32);
 -- TODO: cap size of encoded column
 alter table events add constraint eventsCheckReferenceIdForCreateItem check (

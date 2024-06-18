@@ -14,12 +14,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
 
-func TestVerifyTestdata(t *testing.T) {
+func TestVerifyEventVectors(t *testing.T) {
 	r := require.New(t)
 	// TODO: clean up package global assert()
 	//a := assert.New(t)
@@ -37,10 +37,6 @@ func TestVerifyTestdata(t *testing.T) {
 	r.NoError(err)
 	t.Log("events:", len(vect.Events))
 
-	verifier := newEthClient()
-	verifier.chainID = uint(vect.Signatures.ChainID)
-	verifier.contractAddresses.ShopRegistry = common.Address(vect.Signatures.ContractAddress)
-
 	for i, vectEvt := range vect.Events {
 		t.Log("event:", i)
 		var evt ShopEvent
@@ -48,8 +44,7 @@ func TestVerifyTestdata(t *testing.T) {
 		r.NoError(err)
 		t.Logf("type: %T", evt.Union)
 
-		hash, err := verifier.eventHash(&evt)
-		r.NoError(err)
+		hash := accounts.TextHash(vectEvt.Encoded)
 
 		r.Equal(true, bytes.Equal(vectEvt.Hash, hash))
 	}
