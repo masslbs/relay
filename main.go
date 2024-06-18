@@ -686,7 +686,6 @@ func validateUpdateShopManifest(_ uint, event *UpdateShopManifest) *Error {
 	}
 	if add := event.AddAcceptedCurrency; add != nil {
 		// TODO: validate chain ids?
-		//		errs = append(errs, validate
 		errs = append(errs, validateEthAddressBytes(add.TokenAddr, "add_accepted_currencty.addr"))
 		hasOpt = true
 	}
@@ -699,7 +698,10 @@ func validateUpdateShopManifest(_ uint, event *UpdateShopManifest) *Error {
 		hasOpt = true
 	}
 	if base := event.AddPayee; base != nil {
-		errs = append(errs, validateEthAddressBytes(base.Addr, "add_payee.addr"))
+		errs = append(errs,
+			validateString(base.Name, "add_payee.name", 128),
+			validateEthAddressBytes(base.Addr, "add_payee.addr"),
+		)
 		hasOpt = true
 	}
 	if base := event.RemovePayee; base != nil {
@@ -2400,49 +2402,51 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 			if _, has := manifest.acceptedCurrencies[c]; has {
 				return &Error{Code: ErrorCodes_INVALID, Message: "currency already in use"}
 			}
-			// validate existance of contract
-			callOpts := &bind.CallOpts{
-				Pending: false,
-				From:    r.ethClient.wallet,
-				Context: context.Background(),
-			}
+			if !bytes.Equal(ZeroAddress[:], add.TokenAddr) {
+				// validate existance of contract
+				callOpts := &bind.CallOpts{
+					Pending: false,
+					From:    r.ethClient.wallet,
+					Context: context.Background(),
+				}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-			defer cancel()
+				ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+				defer cancel()
 
-			// TODO: pass chainID
-			gethClient, err := r.ethClient.getClient(ctx)
-			if err != nil {
-				log("relay.validateWrite.failedToGetClient err=%s", err)
-				return &Error{Code: ErrorCodes_INVALID, Message: "internal server error"}
-			}
-			defer gethClient.Close()
+				// TODO: pass chainID
+				gethClient, err := r.ethClient.getClient(ctx)
+				if err != nil {
+					log("relay.validateWrite.failedToGetClient err=%s", err)
+					return &Error{Code: ErrorCodes_INVALID, Message: "internal server error"}
+				}
+				defer gethClient.Close()
 
-			tokenCaller, err := NewERC20Caller(common.Address(add.TokenAddr), gethClient)
-			if err != nil {
-				log("relay.validateWrite.newERC20Caller err=%s", err)
-				return &Error{Code: ErrorCodes_INVALID, Message: "failed to create token caller"}
-			}
-			decimalCount, err := tokenCaller.Decimals(callOpts)
-			if err != nil {
-				return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token decimals: %s", err)}
-			}
-			if decimalCount < 1 || decimalCount > 18 {
-				return &Error{Code: ErrorCodes_INVALID, Message: "invalid token decimals"}
-			}
-			symbol, err := tokenCaller.Symbol(callOpts)
-			if err != nil {
-				return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token symbol: %s", err)}
-			}
-			if symbol == "" {
-				return &Error{Code: ErrorCodes_INVALID, Message: "invalid token symbol"}
-			}
-			tokenName, err := tokenCaller.Name(callOpts)
-			if err != nil {
-				return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token name: %s", err)}
-			}
-			if tokenName == "" {
-				return &Error{Code: ErrorCodes_INVALID, Message: "invalid token name"}
+				tokenCaller, err := NewERC20Caller(common.Address(add.TokenAddr), gethClient)
+				if err != nil {
+					log("relay.validateWrite.newERC20Caller err=%s", err)
+					return &Error{Code: ErrorCodes_INVALID, Message: "failed to create token caller"}
+				}
+				decimalCount, err := tokenCaller.Decimals(callOpts)
+				if err != nil {
+					return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token decimals: %s", err)}
+				}
+				if decimalCount < 1 || decimalCount > 18 {
+					return &Error{Code: ErrorCodes_INVALID, Message: "invalid token decimals"}
+				}
+				symbol, err := tokenCaller.Symbol(callOpts)
+				if err != nil {
+					return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token symbol: %s", err)}
+				}
+				if symbol == "" {
+					return &Error{Code: ErrorCodes_INVALID, Message: "invalid token symbol"}
+				}
+				tokenName, err := tokenCaller.Name(callOpts)
+				if err != nil {
+					return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token name: %s", err)}
+				}
+				if tokenName == "" {
+					return &Error{Code: ErrorCodes_INVALID, Message: "invalid token name"}
+				}
 			}
 		}
 	case *ShopEvent_CreateItem:
@@ -2769,7 +2773,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 		receiptHash [32]byte
 
-		usignErc20     = bytes.Equal(ZeroAddress[:], op.im.Currency.TokenAddr)
+		usignErc20     = !bytes.Equal(ZeroAddress[:], op.im.Currency.TokenAddr)
 		erc20TokenAddr common.Address
 	)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -2840,7 +2844,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	// owner
 	shopReg, err := NewRegShopCaller(r.ethClient.contractAddresses.ShopRegistry, gethClient)
 	if err != nil {
-		logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
+		logSR("relay.commitOrderOp.shopRegistrySetupFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to create shop registry caller"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2848,7 +2852,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 	ownerAddr, err := shopReg.OwnerOf(callOpts, bigShopTokenID)
 	if err != nil {
-		logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
+		logSR("relay.commitOrderOp.shopOwnerOfFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get shop owner"}
 		r.sendSessionOp(sessionState, op)
 		return
