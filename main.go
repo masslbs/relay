@@ -2681,6 +2681,18 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		return
 	}
 
+	chosenCurrency := cachedShopCurrency{
+		common.Address(op.im.Currency.TokenAddr),
+		op.im.Currency.ChainId,
+	}
+	_, has = shop.acceptedCurrencies[chosenCurrency]
+	if !has {
+		logSR("relay.commitOrderOp.noSuchAcceptedCurrency addr=%s chain_id=%d", sessionID, requestID, chosenCurrency.Addr.Hex(), chosenCurrency.ChainID)
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "erc20 not accepted"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
 	// get all other orders that haven't been paid yet
 	otherOrderRows, err := r.connPool.Query(ctx, `select orderId from payments where
 	createdByShopId = $1 and
@@ -2773,8 +2785,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 		receiptHash [32]byte
 
-		usignErc20     = !bytes.Equal(ZeroAddress[:], op.im.Currency.TokenAddr)
-		erc20TokenAddr common.Address
+		usignErc20 = !bytes.Equal(ZeroAddress[:], chosenCurrency.Addr[:])
 	)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -2795,20 +2806,11 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 	inBaseTokens := new(apd.Decimal)
 	if usignErc20 {
-		erc20TokenAddr = common.Address(op.im.Currency.TokenAddr)
-		var has bool
-		_, has = shop.acceptedCurrencies[cachedShopCurrency{erc20TokenAddr, op.im.Currency.ChainId}]
-		if !has {
-			logSR("relay.commitOrderOp.noSuchAcceptedErc20s addr=%s", sessionID, requestID, erc20TokenAddr.Hex())
-			op.err = &Error{Code: ErrorCodes_INVALID, Message: "erc20 not accepted"}
-			r.sendSessionOp(sessionState, op)
-			return
-		}
-		inErc20 := r.prices.FromFiatToERC20(fiatTotal, erc20TokenAddr)
+		inErc20 := r.prices.FromFiatToERC20(fiatTotal, chosenCurrency.Addr)
 
 		// get decimals count of this contract
 		// TODO: since this is a contract constant we could cache it when adding the token
-		tokenCaller, err := NewERC20Caller(erc20TokenAddr, gethClient)
+		tokenCaller, err := NewERC20Caller(chosenCurrency.Addr, gethClient)
 		if err != nil {
 			logSR("relay.commitOrderOp.failedToCreateERC20Caller err=%s", sessionID, requestID, err.Error())
 			op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to create erc20 caller"}
@@ -2880,11 +2882,17 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		return
 	}
 
+	if payee.ChainID != chosenCurrency.ChainID {
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "payee and chosenCurrency chain_id mismatch"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
 	var pr = PaymentRequest{}
 	pr.ChainId = new(big.Int).SetUint64(payee.ChainID)
 	pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
 	pr.Order = receiptHash
-	pr.Currency = erc20TokenAddr
+	pr.Currency = chosenCurrency.Addr
 	pr.Amount = bigTotal
 	pr.PayeeAddress = payee.Addr
 	pr.IsPaymentEndpoint = payee.isEndpoint
@@ -2895,7 +2903,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	// get paymentId and create fallback address
 	paymentsContract, err := NewPaymentsByAddressCaller(r.ethClient.contractAddresses.Payments, gethClient)
 	if err != nil {
-		logSR("relay.commitCartOp.newPaymentsByAddressFailed err=%s", sessionID, requestID, err.Error())
+		logSR("relay.commitOrderOp.newPaymentsByAddressFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "contract interaction error"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2903,7 +2911,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 	paymentId, err := paymentsContract.GetPaymentId(callOpts, pr)
 	if err != nil {
-		logSR("relay.commitCartOp.getPaymentIdFailed err=%s", sessionID, requestID, err.Error())
+		logSR("relay.commitOrderOp.getPaymentIdFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to paymentId"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2916,7 +2924,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		return
 	}
 
-	log("relay.commitCartOp.paymentRequest id=%s addr=%x total=%s currentBlock=%d", paymentId.Text(16), purchaseAddr, bigTotal.String(), blockNo)
+	log("relay.commitOrderOp.paymentRequest id=%s addr=%x total=%s currentBlock=%d", paymentId.Text(16), purchaseAddr, bigTotal.String(), blockNo)
 
 	// mark order as finalized by creating the event and updating payments table
 	var (
@@ -2931,7 +2939,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 	fin.Ttl = pr.Ttl.String()
 	fin.OrderHash = receiptHash[:]
-	fin.CurrencyAddr = erc20TokenAddr[:]
+	fin.CurrencyAddr = chosenCurrency.Addr[:]
 	fin.TotalInCrypto = bigTotal.String()
 	fin.PayeeAddr = payee.Addr[:]
 	fin.IsPaymentEndpoint = payee.isEndpoint
@@ -2955,7 +2963,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	w.paymentId = SQLStringBigInt{*paymentId}
 
 	if usignErc20 {
-		w.erc20TokenAddr = &erc20TokenAddr
+		w.erc20TokenAddr = &chosenCurrency.Addr
 	}
 
 	cfMetadata := newMetadata(relayKeyCardID, sessionState.shopID, currentRelayVersion)
