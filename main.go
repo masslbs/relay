@@ -2940,7 +2940,9 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	fin.Ttl = pr.Ttl.String()
 	fin.OrderHash = receiptHash[:]
 	fin.CurrencyAddr = chosenCurrency.Addr[:]
-	fin.TotalInCrypto = bigTotal.String()
+	var uint256 = make([]byte, 32)
+	bigTotal.FillBytes(uint256)
+	fin.TotalInCrypto = uint256
 	fin.PayeeAddr = payee.Addr[:]
 	fin.IsPaymentEndpoint = payee.isEndpoint
 	fin.ShopSignature = pr.ShopSignature

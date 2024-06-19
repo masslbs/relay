@@ -314,11 +314,11 @@
     "schema": {
       "flake": false,
       "locked": {
-        "lastModified": 1718718270,
-        "narHash": "sha256-4PPL8VjbIEODA1f+eFOEO5pIwJxqAxAC0Eu0cVQpcGc=",
+        "lastModified": 1718799935,
+        "narHash": "sha256-O/jWZ59XmccO/L7aBj9Yy2KYa6d1XfvrfdcLPVj+qO0=",
         "owner": "masslbs",
         "repo": "network-schema",
-        "rev": "70b21528139248d7f10f266a048a1aaf1a704db5",
+        "rev": "7add0e4a0f4842870b3fb38386705a946292d017",
         "type": "github"
       },
       "original": {

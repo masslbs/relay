@@ -1,4 +1,4 @@
-// Generated from /nix/store/jgp6swi77v44y79943d50yv2jjp33qz3-source/network-schema/shop_events.proto at version v2 (70b21528139248d7f10f266a048a1aaf1a704db5)
+// Generated from /nix/store/psdz2f6ch6ck8ykizjpad501c4rhd3m8-source/network-schema/shop_events.proto at version v2 (7add0e4a0f4842870b3fb38386705a946292d017)
 
 // SPDX-FileCopyrightText: 2024 Mass Labs
 //
@@ -1230,7 +1230,7 @@ type UpdateOrder_ItemsFinalized struct {
 	Ttl               string `protobuf:"bytes,5,opt,name=ttl,proto3" json:"ttl,omitempty"`
 	OrderHash         []byte `protobuf:"bytes,6,opt,name=order_hash,json=orderHash,proto3" json:"order_hash,omitempty"`
 	CurrencyAddr      []byte `protobuf:"bytes,7,opt,name=currency_addr,json=currencyAddr,proto3" json:"currency_addr,omitempty"`
-	TotalInCrypto     string `protobuf:"bytes,8,opt,name=total_in_crypto,json=totalInCrypto,proto3" json:"total_in_crypto,omitempty"` // "amount" (bigint as string)
+	TotalInCrypto     []byte `protobuf:"bytes,8,opt,name=total_in_crypto,json=totalInCrypto,proto3" json:"total_in_crypto,omitempty"` // big-endian uint256
 	PayeeAddr         []byte `protobuf:"bytes,9,opt,name=payee_addr,json=payeeAddr,proto3" json:"payee_addr,omitempty"`
 	IsPaymentEndpoint bool   `protobuf:"varint,10,opt,name=is_payment_endpoint,json=isPaymentEndpoint,proto3" json:"is_payment_endpoint,omitempty"`
 	ShopSignature     []byte `protobuf:"bytes,11,opt,name=shop_signature,json=shopSignature,proto3" json:"shop_signature,omitempty"` // end of PaymentRequest data
@@ -1317,11 +1317,11 @@ func (x *UpdateOrder_ItemsFinalized) GetCurrencyAddr() []byte {
 	return nil
 }
 
-func (x *UpdateOrder_ItemsFinalized) GetTotalInCrypto() string {
+func (x *UpdateOrder_ItemsFinalized) GetTotalInCrypto() []byte {
 	if x != nil {
 		return x.TotalInCrypto
 	}
-	return ""
+	return nil
 }
 
 func (x *UpdateOrder_ItemsFinalized) GetPayeeAddr() []byte {
@@ -1570,7 +1570,7 @@ var file_shop_events_proto_rawDesc = []byte{
 	0x72, 0x72, 0x65, 0x6e, 0x63, 0x79, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x18, 0x07, 0x20, 0x01, 0x28,
 	0x0c, 0x52, 0x0c, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x63, 0x79, 0x41, 0x64, 0x64, 0x72, 0x12,
 	0x26, 0x0a, 0x0f, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x5f, 0x69, 0x6e, 0x5f, 0x63, 0x72, 0x79, 0x70,
-	0x74, 0x6f, 0x18, 0x08, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x49,
+	0x74, 0x6f, 0x18, 0x08, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0d, 0x74, 0x6f, 0x74, 0x61, 0x6c, 0x49,
 	0x6e, 0x43, 0x72, 0x79, 0x70, 0x74, 0x6f, 0x12, 0x1d, 0x0a, 0x0a, 0x70, 0x61, 0x79, 0x65, 0x65,
 	0x5f, 0x61, 0x64, 0x64, 0x72, 0x18, 0x09, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x70, 0x61, 0x79,
 	0x65, 0x65, 0x41, 0x64, 0x64, 0x72, 0x12, 0x2e, 0x0a, 0x13, 0x69, 0x73, 0x5f, 0x70, 0x61, 0x79,

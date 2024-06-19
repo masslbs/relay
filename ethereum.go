@@ -23,7 +23,6 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -150,11 +149,6 @@ func newEthClient() *ethClient {
 		buf := make([]byte, 32)
 		rand.Read(buf)
 		relayTokenID.SetBytes(buf)
-
-		// working around a little qurik where big.Int.Text(16) doesn't encode zeros as expected.
-		// if the first word is 0, it just omits it. This trips up the python library, thinking it's just 31 bytes long
-		// This way we should also get a non-zero end byte.
-		buf[0] |= 0x80
 
 		txOpts, err := c.makeTxOpts(ctx)
 		check(err)
@@ -354,8 +348,10 @@ func (c ethClient) updateRootHash(_ requestID, newRootHash []byte) error {
 func (c ethClient) discoveryHandleFunc(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	var uint256 = make([]byte, 32)
+	c.relayTokenID.FillBytes(uint256)
 	err := json.NewEncoder(w).Encode(map[string]any{
-		"relay_token_id": hexutil.EncodeBig(c.relayTokenID),
+		"relay_token_id": "0x" + hex.EncodeToString(uint256),
 		"chain_id":       c.chainID,
 	})
 	if err != nil {
