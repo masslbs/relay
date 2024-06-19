@@ -930,6 +930,12 @@ func (op *CommitItemsToOrderOp) handle(sess *Session) {
 	om := op.im.response(op.err).(*CommitItemsToOrderResponse)
 	if op.err == nil {
 		om.OrderFinalizedId = op.orderFinalizedID
+	} else {
+		logSR("relay.CommitItemsToOrderOpFailed code=%s message=%s",
+			sess.id,
+			op.im.RequestId,
+			op.err.Code,
+			op.err.Message)
 	}
 	sess.writeMessage(om)
 }
@@ -2630,7 +2636,6 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		logS(sessionID, "relay.commitOrderOp.drain")
 		return
 	} else if sessionState.keyCardID == nil {
-		logSR("relay.commitOrderOp.notAuthenticated", sessionID, requestID)
 		op.err = notAuthenticatedError
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2687,8 +2692,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	}
 	_, has = shop.acceptedCurrencies[chosenCurrency]
 	if !has {
-		logSR("relay.commitOrderOp.noSuchAcceptedCurrency addr=%s chain_id=%d", sessionID, requestID, chosenCurrency.Addr.Hex(), chosenCurrency.ChainID)
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "erc20 not accepted"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "chosen currency not available"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2791,7 +2795,6 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	defer cancel()
 	gethClient, err := r.ethClient.getClient(ctx)
 	if err != nil {
-		logSR("relay.commitOrderOp.failedToGetGethClient err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "internal server error"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2812,14 +2815,12 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		// TODO: since this is a contract constant we could cache it when adding the token
 		tokenCaller, err := NewERC20Caller(chosenCurrency.Addr, gethClient)
 		if err != nil {
-			logSR("relay.commitOrderOp.failedToCreateERC20Caller err=%s", sessionID, requestID, err.Error())
 			op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to create erc20 caller"}
 			r.sendSessionOp(sessionState, op)
 			return
 		}
 		decimalCount, err := tokenCaller.Decimals(callOpts)
 		if err != nil {
-			logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
 			op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to establish contract decimals"}
 			r.sendSessionOp(sessionState, op)
 			return
@@ -2846,7 +2847,6 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	// owner
 	shopReg, err := NewRegShopCaller(r.ethClient.contractAddresses.ShopRegistry, gethClient)
 	if err != nil {
-		logSR("relay.commitOrderOp.shopRegistrySetupFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to create shop registry caller"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2854,7 +2854,6 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 	ownerAddr, err := shopReg.OwnerOf(callOpts, bigShopTokenID)
 	if err != nil {
-		logSR("relay.commitOrderOp.shopOwnerOfFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get shop owner"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2903,7 +2902,6 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	// get paymentId and create fallback address
 	paymentsContract, err := NewPaymentsByAddressCaller(r.ethClient.contractAddresses.Payments, gethClient)
 	if err != nil {
-		logSR("relay.commitOrderOp.newPaymentsByAddressFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "contract interaction error"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2911,7 +2909,6 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 	paymentId, err := paymentsContract.GetPaymentId(callOpts, pr)
 	if err != nil {
-		logSR("relay.commitOrderOp.getPaymentIdFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to paymentId"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2973,7 +2970,6 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 	cfAny, err := anypb.New(cfEvent)
 	if err != nil {
-		logSR("relay.commitOrderOp.anypb err=%s", sessionID, requestID, err)
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "interal server error"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2981,7 +2977,6 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 	sig, err := r.ethClient.eventSign(cfAny.Value)
 	if err != nil {
-		logSR("relay.commitOrderOp.eventSignFailed err=%s", sessionID, requestID, err)
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "interal server error"}
 		r.sendSessionOp(sessionState, op)
 		return
