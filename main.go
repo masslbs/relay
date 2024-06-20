@@ -53,8 +53,6 @@ import (
 
 // Server configuration.
 const (
-	sessionPingInterval             = 5 * time.Second
-	sessionKickTimeout              = 6 * sessionPingInterval
 	sessionLastSeenAtFlushLimit     = 30 * time.Second
 	sessionLastAckedKCSeqFlushLimit = 4096
 	sessionBufferSizeRefill         = limitMaxOutRequests * limitMaxOutBatchSize
@@ -82,6 +80,9 @@ var (
 	logMessages          = false
 	logEphemeralMessages = false
 	logMetrics           = false
+
+	sessionPingInterval = 15 * time.Second
+	sessionKickTimeout  = 3 * sessionPingInterval
 )
 
 // Enable error'd and ignore'd requests to be simulated with env variable.
@@ -114,6 +115,18 @@ func initLogging() {
 		simulateIgnoreRate, err = strconv.Atoi(simulateIgnoreRateStr)
 		check(err)
 		assert(simulateIgnoreRate >= 0 && simulateIgnoreRate <= 100)
+	}
+
+	pingIntervalStr := os.Getenv("PING_INTERVAL")
+	pingInterval, err := time.ParseDuration(pingIntervalStr)
+	if pingIntervalStr != "" && err == nil {
+		sessionPingInterval = pingInterval
+	}
+
+	kickTimeoutStr := os.Getenv("KICK_TIMEOUT")
+	kickTimeout, err := time.ParseDuration(kickTimeoutStr)
+	if kickTimeoutStr != "" && err == nil {
+		sessionKickTimeout = kickTimeout
 	}
 }
 
@@ -630,17 +643,16 @@ func (im *SyncStatusResponse) handle(sess *Session) {
 
 func (op *EventPushOp) handle(sess *Session) {
 	assertLTE(len(op.eventStates), limitMaxOutBatchSize)
-	events := make([]*anypb.Any, len(op.eventStates))
+	events := make([]*SignedEvent, len(op.eventStates))
 	var err error
 	for i, eventState := range op.eventStates {
 		eventState.eventID.assert()
-		events[i] = eventState.encodedEvent
-		assert(eventState.encodedEvent != nil)
+		events[i] = &eventState.encodedEvent
+		assert(eventState.encodedEvent.Event != nil)
 		if err != nil {
 			panic(fmt.Errorf("failed to create anypb for event: %w", err))
 		}
 	}
-
 	om := &EventPushRequest{RequestId: newRequestID(), Events: events}
 	sess.activePushes.Set(om.RequestId, op)
 	sess.writeMessage(om)
@@ -685,12 +697,28 @@ func validateUpdateShopManifest(_ uint, event *UpdateShopManifest) *Error {
 		errs = append(errs, validateEventID(pt, "published_tag_id"))
 		hasOpt = true
 	}
-	if add := event.AddErc20Addr; len(add) > 0 {
-		errs = append(errs, validateEthAddressBytes(add, "add_erc20_token_addr"))
+	if add := event.AddAcceptedCurrency; add != nil {
+		// TODO: validate chain ids?
+		errs = append(errs, validateEthAddressBytes(add.TokenAddr, "add_accepted_currencty.addr"))
 		hasOpt = true
 	}
-	if remove := event.RemoveErc20Addr; len(remove) > 0 {
-		errs = append(errs, validateEthAddressBytes(remove, "remove_erc20_token_addr"))
+	if remove := event.RemoveAcceptedCurrency; remove != nil {
+		errs = append(errs, validateEthAddressBytes(remove.TokenAddr, "remove_accepted_currencty.addr"))
+		hasOpt = true
+	}
+	if base := event.SetBaseCurrency; base != nil {
+		errs = append(errs, validateEthAddressBytes(base.TokenAddr, "set_base_currencty.addr"))
+		hasOpt = true
+	}
+	if base := event.AddPayee; base != nil {
+		errs = append(errs,
+			validateString(base.Name, "add_payee.name", 128),
+			validateEthAddressBytes(base.Addr, "add_payee.addr"),
+		)
+		hasOpt = true
+	}
+	if base := event.RemovePayee; base != nil {
+		errs = append(errs, validateEthAddressBytes(base.Addr, "remove_payee.addr"))
 		hasOpt = true
 	}
 	if !hasOpt {
@@ -824,16 +852,22 @@ func validateOrderCanceled(_ uint, event *UpdateOrder_OrderCanceled) *Error {
 	return nil
 }
 
+const shopEventTypeURL = "type.googleapis.com/market.mass.ShopEvent"
+
 func (im *EventWriteRequest) validate(version uint) *Error {
 	if version < 2 {
 		return minimumVersionError
 	}
 	var decodedEvt ShopEvent
-	if pberr := im.Event.UnmarshalTo(&decodedEvt); pberr != nil {
+	if u := im.Event.Event.TypeUrl; u != shopEventTypeURL {
+		log("eventWriteRequest.validate: unexpected anypb typeURL: %s", u)
+		return &Error{Code: ErrorCodes_INVALID, Message: "unsupported typeURL for event"}
+	}
+	if pberr := im.Event.Event.UnmarshalTo(&decodedEvt); pberr != nil {
 		log("eventWriteRequest.validate: anypb unmarshal failed: %s", pberr.Error())
 		return &Error{Code: ErrorCodes_INVALID, Message: "invalid protobuf encoding"}
 	}
-	if err := validateBytes(decodedEvt.Signature, "signature", signatureBytes); err != nil {
+	if err := validateBytes(im.Event.Signature, "event.signature", signatureBytes); err != nil {
 		return err
 	}
 	var err *Error
@@ -870,7 +904,7 @@ func (im *EventWriteRequest) validate(version uint) *Error {
 
 func (im *EventWriteRequest) handle(sess *Session) {
 	var decodedEvt ShopEvent
-	if pberr := im.Event.UnmarshalTo(&decodedEvt); pberr != nil {
+	if pberr := im.Event.Event.UnmarshalTo(&decodedEvt); pberr != nil {
 		// TODO: somehow fix double decode
 		check(pberr)
 	}
@@ -894,8 +928,8 @@ func (im *CommitItemsToOrderRequest) validate(version uint) *Error {
 	errs := []*Error{
 		validateEventID(im.OrderId, "order_id"),
 	}
-	if erc20 := im.GetErc20Addr(); erc20 != nil {
-		errs = append(errs, validateEthAddressBytes(erc20, "erc20_addr"))
+	if curr := im.Currency; curr != nil {
+		errs = append(errs, validateEthAddressBytes(curr.TokenAddr, "currency.token_addr"))
 	}
 	return coalesce(errs...)
 }
@@ -909,6 +943,12 @@ func (op *CommitItemsToOrderOp) handle(sess *Session) {
 	om := op.im.response(op.err).(*CommitItemsToOrderResponse)
 	if op.err == nil {
 		om.OrderFinalizedId = op.orderFinalizedID
+	} else {
+		logSR("relay.CommitItemsToOrderOpFailed code=%s message=%s",
+			sess.id,
+			op.im.RequestId,
+			op.err.Code,
+			op.err.Message)
 	}
 	sess.writeMessage(om)
 }
@@ -1015,7 +1055,7 @@ type EventState struct {
 	kcSeq uint64
 	acked bool
 
-	encodedEvent *anypb.Any
+	encodedEvent SignedEvent
 }
 
 // SessionState represents the state of a client in the database.
@@ -1058,15 +1098,28 @@ func newMetadata(keyCardID requestID, shopID eventID, version uint16) CachedMeta
 	return metadata
 }
 
+type cachedShopCurrency struct {
+	Addr    common.Address
+	ChainID uint64
+}
+type cachedCurrenciesMap map[cachedShopCurrency]struct{}
+
+type cachedShopPayee struct {
+	cachedShopCurrency
+	isEndpoint bool
+}
+
 // CachedShopManifest is latest reduction of a ShopManifest.
 // It combines the intial ShopManifest and all UpdateShopManifests
 type CachedShopManifest struct {
 	CachedMetadata
 
-	shopTokenID    []byte
-	domain         string
-	publishedTagID eventID
-	acceptedErc20s map[common.Address]struct{}
+	shopTokenID        []byte
+	domain             string
+	publishedTagID     eventID
+	payees             map[string]cachedShopPayee
+	acceptedCurrencies cachedCurrenciesMap
+	baseCurrency       *cachedShopCurrency
 
 	validKeyCardPublicKeys requestIDSlice
 	validKeyCardIDs        *MapRequestIDs[keyCardIdWithGuest]
@@ -1114,7 +1167,8 @@ where shopId = $1 and unlinkedAt is null and cardPublicKey = $2`
 
 func (current *CachedShopManifest) update(union *ShopEvent, meta CachedMetadata) {
 	current.init.Do(func() {
-		current.acceptedErc20s = make(map[common.Address]struct{})
+		current.acceptedCurrencies = make(cachedCurrenciesMap)
+		current.payees = make(map[string]cachedShopPayee)
 		current.validKeyCardIDs = NewMapRequestIDs[keyCardIdWithGuest]()
 	})
 	switch union.Union.(type) {
@@ -1132,11 +1186,37 @@ func (current *CachedShopManifest) update(union *ShopEvent, meta CachedMetadata)
 		if pt := um.PublishedTagId; len(pt) > 0 {
 			current.publishedTagID = pt
 		}
-		if addr := um.AddErc20Addr; len(addr) > 0 {
-			current.acceptedErc20s[common.Address(addr)] = struct{}{}
+		if add := um.AddAcceptedCurrency; add != nil {
+			c := cachedShopCurrency{
+				common.Address(add.TokenAddr),
+				add.ChainId,
+			}
+			current.acceptedCurrencies[c] = struct{}{}
 		}
-		if addr := um.RemoveErc20Addr; len(addr) > 0 {
-			delete(current.acceptedErc20s, common.Address(addr))
+		if rm := um.RemoveAcceptedCurrency; rm != nil {
+			c := cachedShopCurrency{
+				common.Address(rm.TokenAddr),
+				rm.ChainId,
+			}
+			delete(current.acceptedCurrencies, c)
+		}
+		if bc := um.SetBaseCurrency; bc != nil {
+			current.baseCurrency = &cachedShopCurrency{
+				Addr:    common.Address(bc.TokenAddr),
+				ChainID: bc.ChainId,
+			}
+		}
+		if p := um.AddPayee; p != nil {
+			_, taken := current.payees[p.Name]
+			assert(!taken)
+			payee := cachedShopPayee{}
+			payee.Addr = common.Address(p.Addr)
+			payee.ChainID = p.ChainId
+			payee.isEndpoint = p.CallAsContract
+			current.payees[p.Name] = payee
+		}
+		if p := um.RemovePayee; p != nil {
+			delete(current.payees, p.Name)
 		}
 	case *ShopEvent_NewKeyCard:
 		nkc := union.GetNewKeyCard()
@@ -1717,10 +1797,10 @@ type EventInsert struct {
 	CachedMetadata
 	evtType eventType
 	evt     *ShopEvent
-	pbany   *anypb.Any
+	pbany   *SignedEvent
 }
 
-func newEventInsert(evt *ShopEvent, meta CachedMetadata, abstract *anypb.Any) *EventInsert {
+func newEventInsert(evt *ShopEvent, meta CachedMetadata, abstract *SignedEvent) *EventInsert {
 	meta.createdAt = uint64(now().Unix())
 	return &EventInsert{
 		CachedMetadata: meta,
@@ -1729,7 +1809,7 @@ func newEventInsert(evt *ShopEvent, meta CachedMetadata, abstract *anypb.Any) *E
 	}
 }
 
-func (r *Relay) writeEvent(evt *ShopEvent, cm CachedMetadata, abstract *anypb.Any) {
+func (r *Relay) writeEvent(evt *ShopEvent, cm CachedMetadata, abstract *SignedEvent) {
 	assert(r.writesEnabled)
 
 	nextServerSeq := r.lastUsedServerSeq + 1
@@ -1765,7 +1845,7 @@ func (r *Relay) commitSyncTransaction() {
 	r.syncTx = nil
 }
 
-var dbEventInsertColumns = []string{"eventType", "eventId", "createdByKeyCardId", "createdByShopId", "shopSeq", "createdAt", "createdByNetworkSchemaVersion", "serverSeq", "encoded", "referenceID"}
+var dbEventInsertColumns = []string{"eventType", "eventId", "createdByKeyCardId", "createdByShopId", "shopSeq", "createdAt", "createdByNetworkSchemaVersion", "serverSeq", "encoded", "signature", "referenceID"}
 
 func formInsert(ins *EventInsert) []interface{} {
 	var (
@@ -1830,7 +1910,8 @@ func formInsert(ins *EventInsert) []interface{} {
 		now(),                       // createdAt
 		ins.createdByNetworkVersion, // createdByNetworkSchemaVersion
 		ins.serverSeq,               // serverSeq
-		ins.pbany.Value,             // encoded
+		ins.pbany.Event.Value,       // encoded
+		ins.pbany.Signature,         // signature
 		refID,                       // referenceID
 	}
 }
@@ -2266,7 +2347,7 @@ func (op *EventWriteOp) process(r *Relay) {
 	r.lastSeenAtTouch(sessionState)
 
 	// check signature
-	if err := r.ethClient.eventVerify(op.decodedShopEvt, sessionState.keyCardPublicKey); err != nil {
+	if err := r.ethClient.eventVerify(op.im.Event, sessionState.keyCardPublicKey); err != nil {
 		logSR("relay.eventWriteOp.verifyEventFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "invalid signature"}
 		r.sendSessionOp(sessionState, op)
@@ -2318,49 +2399,73 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 		if sess.keyCardOfAGuest {
 			return notFoundError
 		}
+		if p := tv.UpdateShopManifest.AddPayee; p != nil {
+			for name, payee := range manifest.payees {
+				if bytes.Equal(payee.Addr[:], p.Addr) && payee.ChainID == p.ChainId {
+					return &Error{Code: ErrorCodes_INVALID, Message: "conflicting payee: " + name}
+				}
+			}
+		}
+		if p := tv.UpdateShopManifest.RemovePayee; p != nil {
+			if _, has := manifest.payees[p.Name]; !has {
+				return notFoundError
+			}
+		}
 		// this feels like a pre-op validation step but we dont have access to the relay there
-		if addr := tv.UpdateShopManifest.AddErc20Addr; len(addr) > 0 {
-			callOpts := &bind.CallOpts{
-				Pending: false,
-				From:    r.ethClient.wallet,
-				Context: context.Background(),
+		if add := tv.UpdateShopManifest.AddAcceptedCurrency; add != nil {
+			// check if already assigned
+			c := cachedShopCurrency{
+				common.Address(add.TokenAddr),
+				add.ChainId,
 			}
+			if _, has := manifest.acceptedCurrencies[c]; has {
+				return &Error{Code: ErrorCodes_INVALID, Message: "currency already in use"}
+			}
+			if !bytes.Equal(ZeroAddress[:], add.TokenAddr) {
+				// validate existance of contract
+				callOpts := &bind.CallOpts{
+					Pending: false,
+					From:    r.ethClient.wallet,
+					Context: context.Background(),
+				}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-			defer cancel()
+				ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+				defer cancel()
 
-			gethClient, err := r.ethClient.getClient(ctx)
-			if err != nil {
-				log("relay.validateWrite.failedToGetClient err=%s", err)
-				return &Error{Code: ErrorCodes_INVALID, Message: "internal server error"}
-			}
-			defer gethClient.Close()
+				// TODO: pass chainID
+				gethClient, err := r.ethClient.getClient(ctx)
+				if err != nil {
+					log("relay.validateWrite.failedToGetClient err=%s", err)
+					return &Error{Code: ErrorCodes_INVALID, Message: "internal server error"}
+				}
+				defer gethClient.Close()
 
-			tokenCaller, err := NewERC20Caller(common.Address(addr), gethClient)
-			if err != nil {
-				log("relay.validateWrite.newERC20Caller err=%s", err)
-				return &Error{Code: ErrorCodes_INVALID, Message: "failed to create token caller"}
-			}
-			decimalCount, err := tokenCaller.Decimals(callOpts)
-			if err != nil {
-				return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token decimals: %s", err)}
-			}
-			if decimalCount < 1 || decimalCount > 18 {
-				return &Error{Code: ErrorCodes_INVALID, Message: "invalid token decimals"}
-			}
-			symbol, err := tokenCaller.Symbol(callOpts)
-			if err != nil {
-				return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token symbol: %s", err)}
-			}
-			if symbol == "" {
-				return &Error{Code: ErrorCodes_INVALID, Message: "invalid token symbol"}
-			}
-			tokenName, err := tokenCaller.Name(callOpts)
-			if err != nil {
-				return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token name: %s", err)}
-			}
-			if tokenName == "" {
-				return &Error{Code: ErrorCodes_INVALID, Message: "invalid token name"}
+				tokenCaller, err := NewERC20Caller(common.Address(add.TokenAddr), gethClient)
+				if err != nil {
+					log("relay.validateWrite.newERC20Caller err=%s", err)
+					return &Error{Code: ErrorCodes_INVALID, Message: "failed to create token caller"}
+				}
+				decimalCount, err := tokenCaller.Decimals(callOpts)
+				if err != nil {
+					return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token decimals: %s", err)}
+				}
+				if decimalCount < 1 || decimalCount > 18 {
+					return &Error{Code: ErrorCodes_INVALID, Message: "invalid token decimals"}
+				}
+				symbol, err := tokenCaller.Symbol(callOpts)
+				if err != nil {
+					return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token symbol: %s", err)}
+				}
+				if symbol == "" {
+					return &Error{Code: ErrorCodes_INVALID, Message: "invalid token symbol"}
+				}
+				tokenName, err := tokenCaller.Name(callOpts)
+				if err != nil {
+					return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token name: %s", err)}
+				}
+				if tokenName == "" {
+					return &Error{Code: ErrorCodes_INVALID, Message: "invalid token name"}
+				}
 			}
 		}
 	case *ShopEvent_CreateItem:
@@ -2530,6 +2635,11 @@ func (op *EventPushOp) process(r *Relay) {
 
 const DefaultPaymentTTL = 60 * 60 * 24
 
+var (
+	// TODO: defined in geth?
+	ZeroAddress common.Address
+)
+
 func (op *CommitItemsToOrderOp) process(r *Relay) {
 	ctx := context.Background()
 	sessionID := op.sessionID
@@ -2539,7 +2649,6 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		logS(sessionID, "relay.commitOrderOp.drain")
 		return
 	} else if sessionState.keyCardID == nil {
-		logSR("relay.commitOrderOp.notAuthenticated", sessionID, requestID)
 		op.err = notAuthenticatedError
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2586,6 +2695,17 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	shop, has := r.shopManifestsByShopID.get(sessionState.shopID)
 	if !has {
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "shop not found"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
+	chosenCurrency := cachedShopCurrency{
+		common.Address(op.im.Currency.TokenAddr),
+		op.im.Currency.ChainId,
+	}
+	_, has = shop.acceptedCurrencies[chosenCurrency]
+	if !has {
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "chosen currency not available"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2682,14 +2802,12 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 		receiptHash [32]byte
 
-		usignErc20     = len(op.im.Erc20Addr) == 20
-		erc20TokenAddr common.Address
+		usignErc20 = !bytes.Equal(ZeroAddress[:], chosenCurrency.Addr[:])
 	)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	gethClient, err := r.ethClient.getClient(ctx)
 	if err != nil {
-		logSR("relay.commitOrderOp.failedToGetGethClient err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "internal server error"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2704,29 +2822,18 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 	inBaseTokens := new(apd.Decimal)
 	if usignErc20 {
-		erc20TokenAddr = common.Address(op.im.Erc20Addr)
-		var has bool
-		_, has = shop.acceptedErc20s[erc20TokenAddr]
-		if !has {
-			logSR("relay.commitOrderOp.noSuchAcceptedErc20s addr=%s", sessionID, requestID, erc20TokenAddr.Hex())
-			op.err = &Error{Code: ErrorCodes_INVALID, Message: "erc20 not accepted"}
-			r.sendSessionOp(sessionState, op)
-			return
-		}
-		inErc20 := r.prices.FromFiatToERC20(fiatTotal, erc20TokenAddr)
+		inErc20 := r.prices.FromFiatToERC20(fiatTotal, chosenCurrency.Addr)
 
 		// get decimals count of this contract
 		// TODO: since this is a contract constant we could cache it when adding the token
-		tokenCaller, err := NewERC20Caller(erc20TokenAddr, gethClient)
+		tokenCaller, err := NewERC20Caller(chosenCurrency.Addr, gethClient)
 		if err != nil {
-			logSR("relay.commitOrderOp.failedToCreateERC20Caller err=%s", sessionID, requestID, err.Error())
 			op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to create erc20 caller"}
 			r.sendSessionOp(sessionState, op)
 			return
 		}
 		decimalCount, err := tokenCaller.Decimals(callOpts)
 		if err != nil {
-			logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
 			op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to establish contract decimals"}
 			r.sendSessionOp(sessionState, op)
 			return
@@ -2753,7 +2860,6 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	// owner
 	shopReg, err := NewRegShopCaller(r.ethClient.contractAddresses.ShopRegistry, gethClient)
 	if err != nil {
-		logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to create shop registry caller"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2761,7 +2867,6 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 	ownerAddr, err := shopReg.OwnerOf(callOpts, bigShopTokenID)
 	if err != nil {
-		logSR("relay.commitOrderOp.erc20DecimalsFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get shop owner"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2782,25 +2887,27 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		return
 	}
 
-	// if there is an escrow address use it for payee
-	payeeAddress := ownerAddr
-	isEndpoint := false
-	/* TODO: configure payout endpoint
-	isEndpoint := ea != nil
-		if isEndpoint {
-			isEndpoint = true
-		    payeeAddress = common.Address(ea)
-		}
-	*/
+	payee, has := shop.payees[op.im.PayeeName]
+	if !has {
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "no such payee"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
+	if payee.ChainID != chosenCurrency.ChainID {
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "payee and chosenCurrency chain_id mismatch"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
 
 	var pr = PaymentRequest{}
-	pr.ChainId = new(big.Int).SetInt64(int64(r.ethClient.chainID))
+	pr.ChainId = new(big.Int).SetUint64(payee.ChainID)
 	pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
 	pr.Order = receiptHash
-	pr.Currency = erc20TokenAddr
+	pr.Currency = chosenCurrency.Addr
 	pr.Amount = bigTotal
-	pr.PayeeAddress = payeeAddress
-	pr.IsPaymentEndpoint = isEndpoint
+	pr.PayeeAddress = payee.Addr
+	pr.IsPaymentEndpoint = payee.isEndpoint
 	pr.ShopId = bigShopTokenID
 	// TODO: calculate signature
 	pr.ShopSignature = bytes.Repeat([]byte{0}, 64)
@@ -2808,7 +2915,6 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	// get paymentId and create fallback address
 	paymentsContract, err := NewPaymentsByAddressCaller(r.ethClient.contractAddresses.Payments, gethClient)
 	if err != nil {
-		logSR("relay.commitCartOp.newPaymentsByAddressFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "contract interaction error"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2816,7 +2922,6 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 	paymentId, err := paymentsContract.GetPaymentId(callOpts, pr)
 	if err != nil {
-		logSR("relay.commitCartOp.getPaymentIdFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to paymentId"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -2829,7 +2934,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		return
 	}
 
-	log("relay.commitCartOp.paymentRequest id=%s addr=%x total=%s currentBlock=%d", paymentId.Text(16), purchaseAddr, bigTotal.String(), blockNo)
+	log("relay.commitOrderOp.paymentRequest id=%s addr=%x total=%s currentBlock=%d", paymentId.Text(16), purchaseAddr, bigTotal.String(), blockNo)
 
 	// mark order as finalized by creating the event and updating payments table
 	var (
@@ -2844,10 +2949,12 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 	fin.Ttl = pr.Ttl.String()
 	fin.OrderHash = receiptHash[:]
-	fin.CurrencyAddr = erc20TokenAddr[:]
-	fin.TotalInCrypto = bigTotal.String()
-	fin.PayeeAddr = payeeAddress[:]
-	fin.IsPaymentEndpoint = isEndpoint
+	fin.CurrencyAddr = chosenCurrency.Addr[:]
+	var uint256 = make([]byte, 32)
+	bigTotal.FillBytes(uint256)
+	fin.TotalInCrypto = uint256
+	fin.PayeeAddr = payee.Addr[:]
+	fin.IsPaymentEndpoint = payee.isEndpoint
 	fin.ShopSignature = pr.ShopSignature
 
 	update := &UpdateOrder{
@@ -2868,30 +2975,28 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	w.paymentId = SQLStringBigInt{*paymentId}
 
 	if usignErc20 {
-		w.erc20TokenAddr = &erc20TokenAddr
+		w.erc20TokenAddr = &chosenCurrency.Addr
 	}
 
 	cfMetadata := newMetadata(relayKeyCardID, sessionState.shopID, currentRelayVersion)
 	cfEvent := &ShopEvent{Union: &ShopEvent_UpdateOrder{update}}
 
-	err = r.ethClient.eventSign(cfEvent)
+	cfAny, err := anypb.New(cfEvent)
 	if err != nil {
-		logSR("relay.commitOrderOp.eventSignFailed err=%s", sessionID, requestID, err)
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "interal server error"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
-	cfAny, err := anypb.New(cfEvent)
+	sig, err := r.ethClient.eventSign(cfAny.Value)
 	if err != nil {
-		logSR("relay.commitOrderOp.anypb err=%s", sessionID, requestID, err)
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "interal server error"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
 	r.beginSyncTransaction()
-	r.writeEvent(cfEvent, cfMetadata, cfAny)
+	r.writeEvent(cfEvent, cfMetadata, &SignedEvent{Event: cfAny, Signature: sig})
 
 	seqPair := r.shopIdsToShopState.MustGet(sessionState.shopID)
 	const insertPaymentWaiterQuery = `insert into payments (waiterId, shopSeqNo, createdByShopId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr, paymentId)
@@ -3062,14 +3167,15 @@ order by serverSeq`
 		}},
 	}
 
-	err = r.ethClient.eventSign(evt)
+	var sigEvt SignedEvent
+	sigEvt.Event, err = anypb.New(evt)
 	check(err)
 
-	anyEvt, err := anypb.New(evt)
+	sigEvt.Signature, err = r.ethClient.eventSign(sigEvt.Event.Value)
 	check(err)
 
 	meta := newMetadata(relayKeyCardID, op.shopID, currentRelayVersion)
-	r.writeEvent(evt, meta, anyEvt)
+	r.writeEvent(evt, meta, &sigEvt)
 
 	r.commitSyncTransaction()
 	close(op.done)
@@ -3117,13 +3223,14 @@ func (op *PaymentFoundInternalOp) process(r *Relay) {
 
 	evt := &ShopEvent{Union: &ShopEvent_ChangeStock{ChangeStock: cs}}
 
-	err = r.ethClient.eventSign(evt)
-	check(err) // fatal code error
+	var sigEvt SignedEvent
+	sigEvt.Event, err = anypb.New(evt)
+	check(err)
 
-	evtAny, err := anypb.New(evt)
-	check(err) // fatal code error
+	sigEvt.Signature, err = r.ethClient.eventSign(sigEvt.Event.Value)
+	check(err)
 
-	r.writeEvent(evt, meta, evtAny)
+	r.writeEvent(evt, meta, &sigEvt)
 	r.commitSyncTransaction()
 	log("db.paymentFoundInternalOp.finish orderID=%s took=%d", op.orderID, took(start))
 	close(op.done)
@@ -3224,7 +3331,7 @@ where kce.serverSeq = e.serverSeq
 			readStart := now()
 			reads := 0
 			// Index: events(shopId, shopSeq)
-			query := `select kce.keycardseq, e.eventId, e.encoded
+			query := `select kce.keycardseq, e.eventId, e.encoded, e.signature
 from events e, keyCardEvents kce
 where kce.serverSeq = e.serverSeq
     and e.createdByShopId = $1
@@ -3237,10 +3344,10 @@ order by kce.keyCardSeq asc limit $4`
 			defer rows.Close()
 			for rows.Next() {
 				var (
-					eventState = &EventState{}
-					encoded    []byte
+					eventState         = &EventState{}
+					encoded, signature []byte
 				)
-				err := rows.Scan(&eventState.kcSeq, &eventState.eventID, &encoded)
+				err := rows.Scan(&eventState.kcSeq, &eventState.eventID, &encoded, &signature)
 				check(err)
 				reads++
 				// log("relay.debounceSessions.debug event=%x", eventState.eventID)
@@ -3251,11 +3358,12 @@ order by kce.keyCardSeq asc limit $4`
 				sessionState.lastBufferedKCSeq = eventState.kcSeq
 
 				// re-create pb object from encoded database data
-				eventState.encodedEvent = &anypb.Any{
+				eventState.encodedEvent.Event = &anypb.Any{
 					// TODO: would prever to not craft this manually
-					TypeUrl: "type.googleapis.com/market.mass.ShopEvent",
+					TypeUrl: shopEventTypeURL,
 					Value:   encoded,
 				}
+				eventState.encodedEvent.Signature = signature
 			}
 			check(rows.Err())
 
@@ -4442,7 +4550,8 @@ func emitUptime(metric *Metric) {
 func server() {
 	initLoggingOnce.Do(initLogging)
 	port := mustGetEnvInt("PORT")
-	log("relay.start port=%d logMessages=%t logEphemeralMessages=%t simulateErrorRate=%d simulateIgnoreRate=%d", port, logMessages, logEphemeralMessages, simulateErrorRate, simulateIgnoreRate)
+	log("relay.start port=%d logMessages=%t logEphemeralMessages=%t simulateErrorRate=%d simulateIgnoreRate=%d sessionPingInterval=%s, sessionKickTimeout=%s",
+		port, logMessages, logEphemeralMessages, simulateErrorRate, simulateIgnoreRate, sessionPingInterval, sessionKickTimeout)
 
 	metric := newMetric()
 

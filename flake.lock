@@ -234,11 +234,11 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1718060059,
-        "narHash": "sha256-9XKFni8VMXo81RTq9XygCyaO3I/7UKpwIlM/yn0MdcM=",
+        "lastModified": 1718447546,
+        "narHash": "sha256-JHuXsrC9pr4kA4n7LuuPfWFJUVlDBVJ1TXDVpHEuUgM=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "a3c8d64ba846725f040582b2d3b875466d2115bd",
+        "rev": "842253bf992c3a7157b67600c2857193f126563a",
         "type": "github"
       },
       "original": {
@@ -314,16 +314,16 @@
     "schema": {
       "flake": false,
       "locked": {
-        "lastModified": 1718263869,
-        "narHash": "sha256-DouotD7r7xm6rO6ZKKymDNywLKpdnipq5eTYnzRD/v8=",
+        "lastModified": 1718799935,
+        "narHash": "sha256-O/jWZ59XmccO/L7aBj9Yy2KYa6d1XfvrfdcLPVj+qO0=",
         "owner": "masslbs",
         "repo": "network-schema",
-        "rev": "ab901ccb68aec0af4acbfbd2c8a468d365b618e2",
+        "rev": "7add0e4a0f4842870b3fb38386705a946292d017",
         "type": "github"
       },
       "original": {
         "owner": "masslbs",
-        "ref": "wip/v2",
+        "ref": "signatures-v2",
         "repo": "network-schema",
         "type": "github"
       }
