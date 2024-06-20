@@ -53,8 +53,6 @@ import (
 
 // Server configuration.
 const (
-	sessionPingInterval             = 5 * time.Second
-	sessionKickTimeout              = 6 * sessionPingInterval
 	sessionLastSeenAtFlushLimit     = 30 * time.Second
 	sessionLastAckedKCSeqFlushLimit = 4096
 	sessionBufferSizeRefill         = limitMaxOutRequests * limitMaxOutBatchSize
@@ -82,6 +80,9 @@ var (
 	logMessages          = false
 	logEphemeralMessages = false
 	logMetrics           = false
+
+	sessionPingInterval = 15 * time.Second
+	sessionKickTimeout  = 3 * sessionPingInterval
 )
 
 // Enable error'd and ignore'd requests to be simulated with env variable.
@@ -114,6 +115,18 @@ func initLogging() {
 		simulateIgnoreRate, err = strconv.Atoi(simulateIgnoreRateStr)
 		check(err)
 		assert(simulateIgnoreRate >= 0 && simulateIgnoreRate <= 100)
+	}
+
+	pingIntervalStr := os.Getenv("PING_INTERVAL")
+	pingInterval, err := time.ParseDuration(pingIntervalStr)
+	if pingIntervalStr != "" && err == nil {
+		sessionPingInterval = pingInterval
+	}
+
+	kickTimeoutStr := os.Getenv("KICK_TIMEOUT")
+	kickTimeout, err := time.ParseDuration(kickTimeoutStr)
+	if kickTimeoutStr != "" && err == nil {
+		sessionKickTimeout = kickTimeout
 	}
 }
 
@@ -4537,7 +4550,8 @@ func emitUptime(metric *Metric) {
 func server() {
 	initLoggingOnce.Do(initLogging)
 	port := mustGetEnvInt("PORT")
-	log("relay.start port=%d logMessages=%t logEphemeralMessages=%t simulateErrorRate=%d simulateIgnoreRate=%d", port, logMessages, logEphemeralMessages, simulateErrorRate, simulateIgnoreRate)
+	log("relay.start port=%d logMessages=%t logEphemeralMessages=%t simulateErrorRate=%d simulateIgnoreRate=%d sessionPingInterval=%s, sessionKickTimeout=%s",
+		port, logMessages, logEphemeralMessages, simulateErrorRate, simulateIgnoreRate, sessionPingInterval, sessionKickTimeout)
 
 	metric := newMetric()
 
