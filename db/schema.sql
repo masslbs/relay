@@ -26,10 +26,6 @@ create unique index keyCardsOnPublicKey on keyCards(cardPublicKey);
 create index keyCardsOnUserId on keyCards(userWalletAddr);
 create index keyCardsOnShopId on keyCards(shopId);
 
--- Take care to order these as they appear in network-schema/schema.proto
-create type manifestFieldEnum as enum ('domain', 'paymentAddr', 'publishedTagId', 'addErc20', 'removeErc20');
-create type itemFieldEnum as enum ('price', 'metadata');
-
 create table events (
     -- Every event has these.
     eventType eventTypeEnum not null,
