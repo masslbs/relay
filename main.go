@@ -29,10 +29,8 @@ import (
 	"time"
 
 	"github.com/cockroachdb/apd"
-	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
 	ipfsFiles "github.com/ipfs/boxo/files"
@@ -1415,10 +1413,16 @@ type ShopState struct {
 
 // IO represents the input/output of the server.
 type IO struct {
-	metric    *Metric
-	connPool  *pgxpool.Pool
-	ethClient *ethClient
-	prices    priceConverter
+	metric *Metric
+
+	connPool *pgxpool.Pool
+
+	// enabled ethereum chains (chainID:rpcURL)
+	ethRegistryChainID uint64 //used for registry lookups
+	ethChains          map[uint64]*ethClient
+
+	prices priceConverter
+
 	// TODO: add ipfs client?
 }
 
@@ -1454,7 +1458,24 @@ type Relay struct {
 func newRelay(metric *Metric) *Relay {
 	r := &Relay{}
 
-	r.ethClient = newEthClient()
+	r.ethRegistryChainID = uint64(mustGetEnvInt("ETH_STORE_REGISTRY_CHAIN_ID"))
+
+	r.ethChains = make(map[uint64]*ethClient)
+	const chainConfigEnvPrefix = "ETH_RPC_ENDPOINT_"
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, chainConfigEnvPrefix) {
+			continue
+		}
+		values := strings.TrimPrefix(env, chainConfigEnvPrefix)
+		parts := strings.SplitN(values, "=", 2)
+		assert(len(parts) == 2)
+
+		chainId, err := strconv.ParseUint(parts[0], 10, 64)
+		check(err)
+
+		r.ethChains[chainId] = newEthClient(chainId, strings.Split(parts[1], ";"))
+	}
+
 	if cgAPIKey := os.Getenv("COINGECKO_API_KEY"); cgAPIKey != "" {
 		r.prices = newCoinGecko(cgAPIKey, "usd", "ethereum")
 	} else {
@@ -2187,7 +2208,7 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 	check(err)
 	logS(op.sessionID, "relay.challengeSolvedOp.ids keyCardId=%s shopId=%s", sessionState.keyCardID, shopID)
 
-	err = r.ethClient.verifyChallengeResponse(keyCardPublicKey, sessionState.authChallenge, op.im.Signature)
+	err = verifyChallengeResponse(keyCardPublicKey, sessionState.authChallenge, op.im.Signature)
 	if err != nil {
 		logS(op.sessionID, "relay.challengeSolvedOp.verifyFailed err=%s", err)
 		op.err = notFoundError
@@ -2347,7 +2368,7 @@ func (op *EventWriteOp) process(r *Relay) {
 	r.lastSeenAtTouch(sessionState)
 
 	// check signature
-	if err := r.ethClient.eventVerify(op.im.Event, sessionState.keyCardPublicKey); err != nil {
+	if err := op.im.Event.Verify(sessionState.keyCardPublicKey); err != nil {
 		logSR("relay.eventWriteOp.verifyEventFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "invalid signature"}
 		r.sendSessionOp(sessionState, op)
@@ -2421,19 +2442,22 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 			if _, has := manifest.acceptedCurrencies[c]; has {
 				return &Error{Code: ErrorCodes_INVALID, Message: "currency already in use"}
 			}
+			ethClient, has := r.ethChains[add.ChainId]
+			if !has {
+				return &Error{Code: ErrorCodes_INVALID, Message: "chain not supported"}
+			}
 			if !bytes.Equal(ZeroAddress[:], add.TokenAddr) {
 				// validate existance of contract
 				callOpts := &bind.CallOpts{
 					Pending: false,
-					From:    r.ethClient.wallet,
+					From:    ethClient.wallet,
 					Context: context.Background(),
 				}
 
 				ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 				defer cancel()
 
-				// TODO: pass chainID
-				gethClient, err := r.ethClient.getClient(ctx)
+				gethClient, err := ethClient.getClient(ctx)
 				if err != nil {
 					log("relay.validateWrite.failedToGetClient err=%s", err)
 					return &Error{Code: ErrorCodes_INVALID, Message: "internal server error"}
@@ -2710,6 +2734,23 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		return
 	}
 
+	ethClient, has := r.ethChains[op.im.Currency.ChainId]
+	if !has {
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "chain not enabled on relay"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ethRpc, err := ethClient.getClient(ctx)
+	if err != nil {
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "internal server error"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+	defer ethRpc.Close()
+
 	// get all other orders that haven't been paid yet
 	otherOrderRows, err := r.connPool.Query(ctx, `select orderId from payments where
 	createdByShopId = $1 and
@@ -2804,19 +2845,10 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 		usignErc20 = !bytes.Equal(ZeroAddress[:], chosenCurrency.Addr[:])
 	)
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	gethClient, err := r.ethClient.getClient(ctx)
-	if err != nil {
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "internal server error"}
-		r.sendSessionOp(sessionState, op)
-		return
-	}
-	defer gethClient.Close()
 
 	callOpts := &bind.CallOpts{
 		Pending: false,
-		From:    r.ethClient.wallet,
+		From:    ethClient.wallet,
 		Context: context.Background(),
 	}
 
@@ -2826,7 +2858,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 		// get decimals count of this contract
 		// TODO: since this is a contract constant we could cache it when adding the token
-		tokenCaller, err := NewERC20Caller(chosenCurrency.Addr, gethClient)
+		tokenCaller, err := NewERC20Caller(chosenCurrency.Addr, ethRpc)
 		if err != nil {
 			op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to create erc20 caller"}
 			r.sendSessionOp(sessionState, op)
@@ -2858,7 +2890,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	bigShopTokenID := new(big.Int).SetBytes(shop.shopTokenID)
 
 	// owner
-	shopReg, err := NewRegShopCaller(r.ethClient.contractAddresses.ShopRegistry, gethClient)
+	shopReg, err := NewRegShopCaller(ethClient.contractAddresses.ShopRegistry, ethRpc)
 	if err != nil {
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to create shop registry caller"}
 		r.sendSessionOp(sessionState, op)
@@ -2873,14 +2905,14 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	}
 
 	// ttl
-	blockNo, err := gethClient.BlockNumber(ctx)
+	blockNo, err := ethRpc.BlockNumber(ctx)
 	if err != nil {
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get block number"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
-	block, err := gethClient.BlockByNumber(ctx, new(big.Int).SetInt64(int64(blockNo)))
+	block, err := ethRpc.BlockByNumber(ctx, new(big.Int).SetInt64(int64(blockNo)))
 	if err != nil {
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get block number"}
 		r.sendSessionOp(sessionState, op)
@@ -2913,7 +2945,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	pr.ShopSignature = bytes.Repeat([]byte{0}, 64)
 
 	// get paymentId and create fallback address
-	paymentsContract, err := NewPaymentsByAddressCaller(r.ethClient.contractAddresses.Payments, gethClient)
+	paymentsContract, err := NewPaymentsByAddressCaller(ethClient.contractAddresses.Payments, ethRpc)
 	if err != nil {
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "contract interaction error"}
 		r.sendSessionOp(sessionState, op)
@@ -2988,7 +3020,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		return
 	}
 
-	sig, err := r.ethClient.eventSign(cfAny.Value)
+	sig, err := ethClient.eventSign(cfAny.Value)
 	if err != nil {
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "interal server error"}
 		r.sendSessionOp(sessionState, op)
@@ -3171,7 +3203,10 @@ order by serverSeq`
 	sigEvt.Event, err = anypb.New(evt)
 	check(err)
 
-	sigEvt.Signature, err = r.ethClient.eventSign(sigEvt.Event.Value)
+	ethClient, has := r.ethChains[r.ethRegistryChainID]
+	assert(has)
+
+	sigEvt.Signature, err = ethClient.eventSign(sigEvt.Event.Value)
 	check(err)
 
 	meta := newMetadata(relayKeyCardID, op.shopID, currentRelayVersion)
@@ -3227,7 +3262,10 @@ func (op *PaymentFoundInternalOp) process(r *Relay) {
 	sigEvt.Event, err = anypb.New(evt)
 	check(err)
 
-	sigEvt.Signature, err = r.ethClient.eventSign(sigEvt.Event.Value)
+	ethClient, has := r.ethChains[r.ethRegistryChainID]
+	assert(has)
+
+	sigEvt.Signature, err = ethClient.eventSign(sigEvt.Event.Value)
 	check(err)
 
 	r.writeEvent(evt, meta, &sigEvt)
@@ -3576,469 +3614,6 @@ func (r *Relay) debounceEventPropagations() {
 	debug("relay.debounceEventPropagations.finish took=%d", took(start))
 }
 
-// PaymentWaiter is a struct that holds the state of a order that is waiting for payment.
-type PaymentWaiter struct {
-	waiterID         requestID
-	orderID          eventID
-	orderFinalizedAt time.Time
-	purchaseAddr     common.Address
-	lastBlockNo      SQLStringBigInt
-	coinsPayed       SQLStringBigInt
-	coinsTotal       SQLStringBigInt
-	paymentId        SQLStringBigInt
-
-	// (optional) contract of the erc20 that we are looking for
-	erc20TokenAddr *common.Address
-
-	// set if order was payed
-	orderPayedAt *time.Time
-	orderPayedTx *common.Hash
-}
-
-var (
-	bigZero = big.NewInt(0)
-	bigOne  = big.NewInt(1)
-)
-
-func (r *Relay) watchEthereumPayments() error {
-	debug("relay.watchEthereumPayments.start")
-
-	var (
-		start = now()
-
-		// this is the block iterator
-		lowestLastBlock = new(big.Int)
-
-		waiters = make(map[common.Address]PaymentWaiter)
-	)
-
-	ctx, cancel := context.WithDeadline(context.Background(), start.Add(watcherTimeout))
-	defer cancel()
-
-	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal
-	FROM payments
-	WHERE orderPayedAt IS NULL
-		AND erc20TokenAddr IS NULL -- see watchErc20Payments()
-		AND orderFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
-	rows, err := r.connPool.Query(ctx, openPaymentsQry)
-	check(err)
-	defer rows.Close()
-	for rows.Next() {
-		var waiter PaymentWaiter
-		err := rows.Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal)
-		check(err)
-
-		assert(waiter.lastBlockNo.Cmp(bigZero) != 0)
-
-		// init first
-		if lowestLastBlock.Cmp(bigZero) == 0 {
-			lowestLastBlock = &waiter.lastBlockNo.Int
-		}
-		// is this waiter smaller?
-		if lowestLastBlock.Cmp(&waiter.lastBlockNo.Int) == -1 {
-			lowestLastBlock = &waiter.lastBlockNo.Int
-		}
-
-		waiters[waiter.purchaseAddr] = waiter
-	}
-	check(rows.Err())
-
-	if len(waiters) == 0 {
-		debug("relay.watchEthereumPayments.noOpenPayments took=%d", took(start))
-		return nil
-	}
-
-	debug("relay.watchEthereumPayments.dbRead took=%d waiters=%d lowestLastBlock=%s", took(start), len(waiters), lowestLastBlock)
-
-	// make geth client
-	gethClient, err := r.ethClient.getClient(ctx)
-	if err != nil {
-		return err
-	}
-	defer gethClient.Close()
-
-	// Get the latest block number
-	currentBlockNoInt, err := gethClient.BlockNumber(ctx)
-	check(err)
-	currentBlockNo := big.NewInt(int64(currentBlockNoInt))
-
-	for {
-		if currentBlockNo.Cmp(lowestLastBlock) == -1 {
-			// nothing to do
-			debug("relay.watchEthereumPayments.noNewBlocks current=%d", currentBlockNoInt)
-			break
-		}
-		// check each block for transactions
-		block, err := gethClient.BlockByNumber(ctx, lowestLastBlock)
-		if err != nil {
-			return fmt.Errorf("relay.watchEthereumPayments.failedToGetBlock block=%s err=%s", lowestLastBlock, err)
-		}
-
-		for _, tx := range block.Transactions() {
-			to := tx.To()
-			if to == nil {
-				continue // contract creation
-			}
-			waiter, has := waiters[*to]
-			if has {
-				debug("relay.watchEthereumPayments.checkTx waiter.lastBlockNo=%s checkingBlock=%s tx=%s to=%s", waiter.lastBlockNo.String(), block.Number().String(), tx.Hash().String(), tx.To().String())
-				orderID := waiter.orderID
-				// order, has := r.ordersByOrderID.get(orderID)
-				assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
-
-				// found a transaction to the purchase address
-				// check if it's the right amount
-				inTx := tx.Value()
-				waiter.coinsPayed.Add(&waiter.coinsPayed.Int, inTx)
-				if waiter.coinsPayed.Cmp(&waiter.coinsTotal.Int) != -1 {
-					// it is larger or equal
-
-					op := PaymentFoundInternalOp{
-						orderID: orderID,
-						txHash:  tx.Hash(),
-						done:    make(chan struct{}),
-					}
-					r.opsInternal <- &op
-					<-op.done // wait for write
-
-					delete(waiters, waiter.purchaseAddr)
-					log("relay.watchEthereumPayments.completed orderId=%s", orderID)
-				} else {
-					// it is still smaller
-					log("relay.watchEthereumPayments.partial orderId=%s inTx=%s subTotal=%s", orderID, inTx.String(), waiter.coinsPayed.String())
-					// update subtotal
-					const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE orderId = $2;`
-					_, err := r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, orderID)
-					check(err) // cant recover sql errors
-				}
-			}
-		}
-		for _, waiter := range waiters {
-			// only advance those waiters which last blocks are lower then the block we just checked
-			if waiter.lastBlockNo.Cmp(currentBlockNo) == -1 {
-				continue
-			}
-			// lastBlockNo += 1
-			waiter.lastBlockNo.Add(&waiter.lastBlockNo.Int, bigOne)
-			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = lastBlockNo + 1 WHERE orderId = $1;`
-			orderID := waiter.orderID
-			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, orderID)
-			check(err)
-			debug("relay.watchEthereumPayments.advance orderId=%x newLastBlock=%s", orderID, waiter.lastBlockNo.String())
-		}
-		// increment iterator
-		lowestLastBlock.Add(lowestLastBlock, bigOne)
-	}
-
-	stillWaiting := len(waiters)
-	debug("relay.watchEthereumPayments.finish took=%d openWaiters=%d", took(start), stillWaiting)
-	r.metric.emit("relay_payments_eth_open", uint64(stillWaiting))
-	return nil
-}
-
-var (
-	eventSignatureTransferErc20 = crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)"))
-	eventSignaturePaymentMade   = crypto.Keccak256Hash([]byte("PaymentMade(uint256)"))
-)
-
-func (r *Relay) watchErc20Payments() error {
-	debug("relay.watchErc20Payments.start")
-
-	var (
-		start = now()
-
-		// this is the block iterator
-		lowestLastBlock = new(big.Int)
-
-		waiters         = make(map[common.Hash]PaymentWaiter)
-		erc20AddressSet = make(map[common.Address]struct{})
-	)
-
-	ctx, cancel := context.WithDeadline(context.Background(), start.Add(watcherTimeout))
-	defer cancel()
-
-	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr
-		FROM payments
-		WHERE orderPayedAt IS NULL
-			AND erc20TokenAddr IS NOT NULL -- see watchErc20Payments()
-			AND orderFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
-	rows, err := r.connPool.Query(ctx, openPaymentsQry)
-	check(err)
-	defer rows.Close()
-	for rows.Next() {
-		var waiter PaymentWaiter
-		err := rows.Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal, &waiter.erc20TokenAddr)
-		check(err)
-		assert(waiter.lastBlockNo.Cmp(bigZero) != 0)
-
-		// init first
-		if lowestLastBlock.Cmp(bigZero) == 0 {
-			lowestLastBlock = &waiter.lastBlockNo.Int
-		}
-		// is this waiter smaller?
-		if lowestLastBlock.Cmp(&waiter.lastBlockNo.Int) == -1 {
-			lowestLastBlock = &waiter.lastBlockNo.Int
-		}
-
-		erc20AddressSet[*waiter.erc20TokenAddr] = struct{}{}
-
-		// right-align the purchase address to 32 bytes so we can use it as a topic
-		var purchaseAddrAsHash common.Hash
-		copy(purchaseAddrAsHash[12:], waiter.purchaseAddr.Bytes())
-		waiters[purchaseAddrAsHash] = waiter
-	}
-	check(rows.Err())
-
-	if len(waiters) == 0 {
-		debug("relay.watchErc20Payments.noOpenPayments took=%d", took(start))
-		return nil
-	}
-
-	gethClient, err := r.ethClient.getClient(ctx)
-	if err != nil {
-		return err
-	}
-	defer gethClient.Close()
-
-	// Get the latest block number.
-	currentBlockNoInt, err := gethClient.BlockNumber(ctx)
-	if err != nil {
-		return fmt.Errorf("relay.watchErc20Payments.blockNumber err=%s", err)
-	}
-
-	debug("relay.watchErc20Payments.starting currentBlock=%d", currentBlockNoInt)
-	currentBlockNo := big.NewInt(int64(currentBlockNoInt))
-
-	// turn set into a list
-	erc20Addresses := make([]common.Address, len(erc20AddressSet))
-	i := 0
-	for addr := range erc20AddressSet {
-		copy(erc20Addresses[i][:], addr[:])
-		i++
-	}
-
-	qry := ethereum.FilterQuery{
-		Addresses: erc20Addresses,
-		FromBlock: lowestLastBlock,
-		ToBlock:   currentBlockNo,
-		Topics: [][]common.Hash{
-			{eventSignatureTransferErc20},
-			// TODO: it would seem that {transferSignatureErc20, {}, purchaseAddrAsHash} would be the right filter, but it doesn't work
-			// See the following article but i'm not willing to do all that just right now
-			// https://dave-appleton.medium.com/overcoming-ethclients-filter-restrictions-81e232a8eccd
-		},
-	}
-	logs, err := gethClient.FilterLogs(ctx, qry)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return nil // possibly no new block, dont try again immediatly
-		}
-		return err
-	}
-
-	// iterate over all matching logs of events from that erc20 contract with the transfer signature
-	var lastBlockNo uint64
-	for _, vLog := range logs {
-		// debug("relay.watchErc20Payments.checking block=%d", vLog.BlockNumber)
-		// debug("relay.watchErc20Payments.checking topics=%#v", vLog.Topics[1:])
-		fromHash := vLog.Topics[1]
-		toHash := vLog.Topics[2]
-
-		waiter, has := waiters[toHash]
-		if has && waiter.erc20TokenAddr.Cmp(vLog.Address) == 0 {
-			// We found a transfer to our address!
-			orderID := waiter.orderID
-
-			_, has := r.ordersByOrderID.get(orderID)
-			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
-
-			evts, err := r.ethClient.erc20ContractABI.Unpack("Transfer", vLog.Data)
-			if err != nil {
-				log("relay.watchErc20Payments.transferErc20.failedToUnpackTransfer err=%s", err)
-				continue
-			}
-
-			inTx, ok := evts[0].(*big.Int)
-			assertWithMessage(ok, fmt.Sprintf("unexpected unpack result for field 0 - type=%T", evts[0]))
-			debug("relay.watchErc20Payments.foundTransfer orderId=%s from=%s to=%s amount=%s", orderID, fromHash.Hex(), toHash.Hex(), inTx.String())
-
-			waiter.coinsPayed.Add(&waiter.coinsPayed.Int, inTx)
-			if waiter.coinsPayed.Cmp(&waiter.coinsTotal.Int) != -1 {
-				// it is larger or equal
-
-				op := PaymentFoundInternalOp{
-					orderID: orderID,
-					txHash:  vLog.TxHash,
-					done:    make(chan struct{}),
-				}
-				r.opsInternal <- &op
-				<-op.done
-
-				delete(waiters, toHash)
-				log("relay.watchErc20Payments.completed orderId=%s", orderID)
-
-			} else {
-				// it is still smaller
-				log("relay.watchErc20Payments.partial orderId=%s inTx=%s subTotal=%s", orderID, inTx.String(), waiter.coinsPayed.String())
-				// update subtotal
-				const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE orderId = $2;`
-				_, err = r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, orderID)
-				check(err)
-			}
-		}
-		if vLog.BlockNumber > lastBlockNo {
-			lastBlockNo = vLog.BlockNumber
-		}
-
-	}
-	if lastBlockNo > 0 {
-		lastBlockBig := new(big.Int).SetUint64(lastBlockNo)
-		for _, waiter := range waiters {
-			// only advance those waiters which last blocks are lower then the block we just checked
-			if waiter.lastBlockNo.Cmp(lastBlockBig) == -1 {
-				continue
-			}
-			// move up block number
-			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = $2 WHERE orderId = $1;`
-			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, waiter.orderID, currentBlockNo.String())
-			check(err)
-			debug("relay.watchErc20Payments.advance orderId=%x newLastBlock=%s", waiter.orderID, waiter.lastBlockNo.String())
-		}
-	}
-	stillWaiting := len(waiters)
-	debug("relay.watchErc20Payments.finish took=%d openWaiters=%d", took(start), stillWaiting)
-	r.metric.emit("relay_payments_erc20_open", uint64(stillWaiting))
-	return nil
-}
-
-func (r *Relay) watchPaymentMade() error {
-	debug("relay.watchPaymentMade.start")
-
-	var (
-		start = now()
-
-		// this is the block iterator
-		lowestLastBlock = new(big.Int)
-
-		waiters = make(map[common.Hash]PaymentWaiter)
-	)
-
-	ctx, cancel := context.WithDeadline(context.Background(), start.Add(watcherTimeout))
-	defer cancel()
-
-	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, paymentId, lastBlockNo
-		FROM payments
-		WHERE orderPayedAt IS NULL AND orderFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
-	rows, err := r.connPool.Query(ctx, openPaymentsQry)
-	check(err)
-	defer rows.Close()
-	for rows.Next() {
-		var waiter PaymentWaiter
-		err := rows.Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.paymentId, &waiter.lastBlockNo)
-		check(err)
-		assert(waiter.lastBlockNo.Cmp(bigZero) != 0)
-
-		// init first
-		if lowestLastBlock.Cmp(bigZero) == 0 {
-			lowestLastBlock = &waiter.lastBlockNo.Int
-		}
-		// is this waiter smaller?
-		if lowestLastBlock.Cmp(&waiter.lastBlockNo.Int) == -1 {
-			lowestLastBlock = &waiter.lastBlockNo.Int
-		}
-		pid := common.Hash(waiter.paymentId.Bytes())
-		//debug("relay.watchPaymentMade.want pid=%s", pid.Hex())
-		waiters[pid] = waiter
-	}
-	check(rows.Err())
-
-	if len(waiters) == 0 {
-		debug("relay.watchPaymentMade.noOpenPayments took=%d", took(start))
-		return nil
-	}
-
-	gethClient, err := r.ethClient.getClient(ctx)
-	if err != nil {
-		return err
-	}
-	defer gethClient.Close()
-
-	// Get the latest block number.
-	currentBlockNoInt, err := gethClient.BlockNumber(ctx)
-	if err != nil {
-		return fmt.Errorf("relay.watchPaymentMade.blockNumber err=%s", err)
-	}
-
-	debug("relay.watchPaymentMade.starting currentBlock=%d", currentBlockNoInt)
-	currentBlockNo := big.NewInt(int64(currentBlockNoInt))
-
-	qry := ethereum.FilterQuery{
-		Addresses: []common.Address{r.ethClient.contractAddresses.Payments},
-		FromBlock: lowestLastBlock,
-		ToBlock:   currentBlockNo,
-		Topics: [][]common.Hash{
-			{eventSignaturePaymentMade},
-		},
-	}
-	logs, err := gethClient.FilterLogs(ctx, qry)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			debug("relay.watchPaymentMade.noNewBlocks took=%d", took(start))
-			return nil // possibly no new block, dont try again immediatly
-		}
-		return err
-	}
-
-	// iterate over all matching logs of events from that erc20 contract with the transfer signature
-	var lastBlockNo uint64
-	for _, vLog := range logs {
-		//debug("relay.watchPaymentMade.checking block=%d", vLog.BlockNumber)
-
-		var paymentIdHash = common.Hash(vLog.Topics[1])
-		//debug("relay.watchPaymentMade.seen pid=%s", paymentIdHash.Hex())
-
-		if waiter, has := waiters[paymentIdHash]; has {
-			orderID := waiter.orderID
-			//debug("relay.watchPaymentMade.found cartId=%s txHash=%x", orderID, vLog.TxHash)
-
-			_, has := r.ordersByOrderID.get(orderID)
-			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
-
-			op := PaymentFoundInternalOp{
-				orderID: orderID,
-				txHash:  vLog.TxHash,
-				done:    make(chan struct{}),
-			}
-			r.opsInternal <- &op
-			<-op.done // block until op was processed by server loop
-
-			delete(waiters, paymentIdHash)
-			log("relay.watchPaymentMade.completed cartId=%s txHash=%x", orderID, vLog.TxHash)
-		}
-		if vLog.BlockNumber > lastBlockNo {
-			lastBlockNo = vLog.BlockNumber
-		}
-	}
-	if lastBlockNo > 0 {
-		lastBlockBig := new(big.Int).SetUint64(lastBlockNo)
-		for _, waiter := range waiters {
-			// only advance those waiters which last blocks are lower then the block we just checked
-			if waiter.lastBlockNo.Cmp(lastBlockBig) == -1 {
-				continue
-			}
-			// move up block number
-			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = $2 WHERE cartId = $1;`
-			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, waiter.orderID, currentBlockNo.String())
-			check(err)
-			debug("relay.watchPaymentMade.advance cartId=%x newLastBlock=%s", waiter.orderID, waiter.lastBlockNo.String())
-		}
-	}
-	stillWaiting := len(waiters)
-	debug("relay.watchPaymentMade.finish elapsed=%d openWaiters=%d", took(start), stillWaiting)
-	r.metric.emit("relay_payments_open", uint64(stillWaiting))
-	return nil
-}
-
 func (r *Relay) memoryStats() {
 	start := now()
 	debug("relay.memoryStats.start")
@@ -4385,7 +3960,7 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			return http.StatusBadRequest, errors.New("invalid shopTokenID")
 		}
 
-		userWallet, err := r.ethClient.verifyKeyCardEnroll(data.KeyCardPublicKey, data.Signature)
+		userWallet, err := verifyKeyCardEnroll(data.KeyCardPublicKey, data.Signature)
 		if err != nil {
 			return http.StatusForbidden, fmt.Errorf("invalid signature: %w", err)
 		}
@@ -4393,15 +3968,18 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 		ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
 		defer cancel()
 
-		shopReg, gethClient, err := r.ethClient.newShopReg(ctx)
+		geth, has := r.ethChains[r.ethRegistryChainID]
+		assert(has)
+
+		shopReg, ethRpc, err := geth.newShopReg(ctx)
 		if err != nil {
 			return http.StatusInternalServerError, fmt.Errorf("contract call error: %w", err)
 		}
-		defer gethClient.Close()
+		defer ethRpc.Close()
 
 		opts := &bind.CallOpts{
 			Pending: false,
-			From:    r.ethClient.wallet,
+			From:    geth.wallet,
 			Context: ctx,
 		}
 
@@ -4561,31 +4139,35 @@ func server() {
 	go r.run()
 
 	// spawn payment watchers
-	var ops = []repeat.Operation{
-		repeat.Fn(func() error {
-			err := r.watchPaymentMade()
-			if err != nil {
-				log("relay.watchPayemtnMade.error %+v", err)
-				return repeat.HintTemporary(err)
-			}
-			return nil
-		}),
-		repeat.Fn(func() error {
-			err := r.watchEthereumPayments()
-			if err != nil {
-				log("relay.watchEthereumPayments.error %+v", err)
-				return repeat.HintTemporary(err)
-			}
-			return nil
-		}),
-		repeat.Fn(func() error {
-			err := r.watchErc20Payments()
-			if err != nil {
-				log("relay.watchErc20Payments.error %+v", err)
-				return repeat.HintTemporary(err)
-			}
-			return nil
-		}),
+	type watcher struct {
+		name string
+		fn   func(ethClient) error
+	}
+	var (
+		fns = []watcher{
+			{"subscribe", r.subscriptPaymentsMade},
+			//{"paymentsMade", r.watchPaymentMade},
+			//{"erc20", r.watchErc20Payments},
+			//{"eth", r.watchEthereumPayments},
+		}
+		ops = []repeat.Operation{}
+
+		mkWatch = func(w watcher, geth ethClient) repeat.Operation {
+			return repeat.Fn(func() error {
+				err := w.fn(geth)
+				if err != nil {
+					log("relay.watchFailed name=%s chainId=%d err=%s", w.name, geth.chainID, err)
+					return repeat.HintTemporary(err)
+				}
+				return nil
+			})
+
+		}
+	)
+	for _, watcher := range fns {
+		for _, geth := range r.ethChains {
+			ops = append(ops, mkWatch(watcher, *geth))
+		}
 	}
 	for _, op := range ops {
 		go func(op repeat.Operation) {
@@ -4626,7 +4208,7 @@ func server() {
 		AllowedOrigins: []string{"*"},
 	}
 	if isDevEnv {
-		mux.HandleFunc("/testing/discovery", r.ethClient.discoveryHandleFunc)
+		mux.HandleFunc("/testing/discovery", r.ethChains[r.ethRegistryChainID].discoveryHandleFunc)
 		corsOpts.Debug = true
 	}
 

@@ -54,11 +54,11 @@ func ecrecoverEIP191AndCompare(message, signature, publicKey []byte) error {
 	return nil
 }
 
-func (c ethClient) verifyChallengeResponse(publicKey, challange, signature []byte) error {
+func verifyChallengeResponse(publicKey, challange, signature []byte) error {
 	return ecrecoverEIP191AndCompare(challange, signature, publicKey)
 }
 
-func (c ethClient) verifyKeyCardEnroll(keyCardPublicKey, signature []byte) (common.Address, error) {
+func verifyKeyCardEnroll(keyCardPublicKey, signature []byte) (common.Address, error) {
 	rec, err := ecrecoverEIP191(keyCardPublicKey, signature)
 	if err != nil {
 		return common.Address{}, fmt.Errorf("UnmarshalPubkey failed: %w", err)
@@ -73,7 +73,7 @@ func (c ethClient) verifyKeyCardEnroll(keyCardPublicKey, signature []byte) (comm
 	return recoveredAddress, nil
 }
 
-func (c ethClient) eventVerify(evt *SignedEvent, publicKey []byte) error {
+func (evt *SignedEvent) Verify(publicKey []byte) error {
 	return ecrecoverEIP191AndCompare(evt.Event.Value, evt.Signature, publicKey)
 }
 
