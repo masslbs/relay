@@ -29,7 +29,6 @@ import (
 	"time"
 
 	"github.com/cockroachdb/apd"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
@@ -1416,10 +1415,7 @@ type IO struct {
 	metric *Metric
 
 	connPool *pgxpool.Pool
-
-	// enabled ethereum chains (chainID:rpcURL)
-	ethRegistryChainID uint64 //used for registry lookups
-	ethChains          map[uint64]*ethClient
+	ethereum *ethRPCService
 
 	prices priceConverter
 
@@ -1458,23 +1454,7 @@ type Relay struct {
 func newRelay(metric *Metric) *Relay {
 	r := &Relay{}
 
-	r.ethRegistryChainID = uint64(mustGetEnvInt("ETH_STORE_REGISTRY_CHAIN_ID"))
-
-	r.ethChains = make(map[uint64]*ethClient)
-	const chainConfigEnvPrefix = "ETH_RPC_ENDPOINT_"
-	for _, env := range os.Environ() {
-		if !strings.HasPrefix(env, chainConfigEnvPrefix) {
-			continue
-		}
-		values := strings.TrimPrefix(env, chainConfigEnvPrefix)
-		parts := strings.SplitN(values, "=", 2)
-		assert(len(parts) == 2)
-
-		chainId, err := strconv.ParseUint(parts[0], 10, 64)
-		check(err)
-
-		r.ethChains[chainId] = newEthClient(chainId, strings.Split(parts[1], ";"))
-	}
+	r.ethereum = newEthRPCService()
 
 	if cgAPIKey := os.Getenv("COINGECKO_API_KEY"); cgAPIKey != "" {
 		r.prices = newCoinGecko(cgAPIKey, "usd", "ethereum")
@@ -2442,52 +2422,20 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 			if _, has := manifest.acceptedCurrencies[c]; has {
 				return &Error{Code: ErrorCodes_INVALID, Message: "currency already in use"}
 			}
-			ethClient, has := r.ethChains[add.ChainId]
-			if !has {
-				return &Error{Code: ErrorCodes_INVALID, Message: "chain not supported"}
-			}
+
 			if !bytes.Equal(ZeroAddress[:], add.TokenAddr) {
 				// validate existance of contract
-				callOpts := &bind.CallOpts{
-					Pending: false,
-					From:    ethClient.wallet,
-					Context: context.Background(),
-				}
-
-				ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-				defer cancel()
-
-				gethClient, err := ethClient.getClient(ctx)
+				t, err := r.ethereum.GetERC20Metadata(add.ChainId, common.Address(add.TokenAddr))
 				if err != nil {
-					log("relay.validateWrite.failedToGetClient err=%s", err)
-					return &Error{Code: ErrorCodes_INVALID, Message: "internal server error"}
+					return &Error{Code: ErrorCodes_INVALID, Message: err.Error()}
 				}
-				defer gethClient.Close()
-
-				tokenCaller, err := NewERC20Caller(common.Address(add.TokenAddr), gethClient)
-				if err != nil {
-					log("relay.validateWrite.newERC20Caller err=%s", err)
-					return &Error{Code: ErrorCodes_INVALID, Message: "failed to create token caller"}
-				}
-				decimalCount, err := tokenCaller.Decimals(callOpts)
-				if err != nil {
-					return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token decimals: %s", err)}
-				}
-				if decimalCount < 1 || decimalCount > 18 {
+				if t.decimals < 1 || t.decimals > 18 {
 					return &Error{Code: ErrorCodes_INVALID, Message: "invalid token decimals"}
 				}
-				symbol, err := tokenCaller.Symbol(callOpts)
-				if err != nil {
-					return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token symbol: %s", err)}
-				}
-				if symbol == "" {
+				if t.symbol == "" {
 					return &Error{Code: ErrorCodes_INVALID, Message: "invalid token symbol"}
 				}
-				tokenName, err := tokenCaller.Name(callOpts)
-				if err != nil {
-					return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("failed to get token name: %s", err)}
-				}
-				if tokenName == "" {
+				if t.tokenName == "" {
 					return &Error{Code: ErrorCodes_INVALID, Message: "invalid token name"}
 				}
 			}
@@ -2734,23 +2682,6 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		return
 	}
 
-	ethClient, has := r.ethChains[op.im.Currency.ChainId]
-	if !has {
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "chain not enabled on relay"}
-		r.sendSessionOp(sessionState, op)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	ethRpc, err := ethClient.getClient(ctx)
-	if err != nil {
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "internal server error"}
-		r.sendSessionOp(sessionState, op)
-		return
-	}
-	defer ethRpc.Close()
-
 	// get all other orders that haven't been paid yet
 	otherOrderRows, err := r.connPool.Query(ctx, `select orderId from payments where
 	createdByShopId = $1 and
@@ -2846,32 +2777,20 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		usignErc20 = !bytes.Equal(ZeroAddress[:], chosenCurrency.Addr[:])
 	)
 
-	callOpts := &bind.CallOpts{
-		Pending: false,
-		From:    ethClient.wallet,
-		Context: context.Background(),
-	}
-
 	inBaseTokens := new(apd.Decimal)
 	if usignErc20 {
 		inErc20 := r.prices.FromFiatToERC20(fiatTotal, chosenCurrency.Addr)
 
 		// get decimals count of this contract
 		// TODO: since this is a contract constant we could cache it when adding the token
-		tokenCaller, err := NewERC20Caller(chosenCurrency.Addr, ethRpc)
+		tok, err := r.ethereum.GetERC20Metadata(chosenCurrency.ChainID, chosenCurrency.Addr)
 		if err != nil {
-			op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to create erc20 caller"}
-			r.sendSessionOp(sessionState, op)
-			return
-		}
-		decimalCount, err := tokenCaller.Decimals(callOpts)
-		if err != nil {
-			op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to establish contract decimals"}
+			op.err = &Error{Code: ErrorCodes_INVALID, Message: err.Error()}
 			r.sendSessionOp(sessionState, op)
 			return
 		}
 
-		_, err = decimalCtx.Mul(inBaseTokens, inErc20, apd.New(1, int32(decimalCount)))
+		_, err = decimalCtx.Mul(inBaseTokens, inErc20, apd.New(1, int32(tok.decimals)))
 		check(err)
 	} else {
 		// convert decimal in USD to ethereum
@@ -2889,32 +2808,9 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 	bigShopTokenID := new(big.Int).SetBytes(shop.shopTokenID)
 
-	// owner
-	shopReg, err := NewRegShopCaller(ethClient.contractAddresses.ShopRegistry, ethRpc)
+	ownerAddr, err := r.ethereum.GetOwnerOfShop(bigShopTokenID)
 	if err != nil {
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to create shop registry caller"}
-		r.sendSessionOp(sessionState, op)
-		return
-	}
-
-	ownerAddr, err := shopReg.OwnerOf(callOpts, bigShopTokenID)
-	if err != nil {
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get shop owner"}
-		r.sendSessionOp(sessionState, op)
-		return
-	}
-
-	// ttl
-	blockNo, err := ethRpc.BlockNumber(ctx)
-	if err != nil {
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get block number"}
-		r.sendSessionOp(sessionState, op)
-		return
-	}
-
-	block, err := ethRpc.BlockByNumber(ctx, new(big.Int).SetInt64(int64(blockNo)))
-	if err != nil {
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get block number"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: err.Error()}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2932,6 +2828,22 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		return
 	}
 
+	// ttl
+	blockNo, err := r.ethereum.GetCurrentBlockNumber(chosenCurrency.ChainID)
+	if err != nil {
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get block number"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+	bigBlockNo := new(big.Int).SetInt64(int64(blockNo))
+
+	block, err := r.ethereum.GetBlockByNumber(chosenCurrency.ChainID, bigBlockNo)
+	if err != nil {
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get block number"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
 	var pr = PaymentRequest{}
 	pr.ChainId = new(big.Int).SetUint64(payee.ChainID)
 	pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
@@ -2944,29 +2856,14 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	// TODO: calculate signature
 	pr.ShopSignature = bytes.Repeat([]byte{0}, 64)
 
-	// get paymentId and create fallback address
-	paymentsContract, err := NewPaymentsByAddressCaller(ethClient.contractAddresses.Payments, ethRpc)
+	paymentId, paymentAddr, err := r.ethereum.GetPaymentIDAndAddress(chosenCurrency.ChainID, &pr, ownerAddr)
 	if err != nil {
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "contract interaction error"}
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: err.Error()}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
-	paymentId, err := paymentsContract.GetPaymentId(callOpts, pr)
-	if err != nil {
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to paymentId"}
-		r.sendSessionOp(sessionState, op)
-		return
-	}
-
-	purchaseAddr, err := paymentsContract.GetPaymentAddress(callOpts, pr, ownerAddr)
-	if err != nil {
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to create payment address"}
-		r.sendSessionOp(sessionState, op)
-		return
-	}
-
-	log("relay.commitOrderOp.paymentRequest id=%s addr=%x total=%s currentBlock=%d", paymentId.Text(16), purchaseAddr, bigTotal.String(), blockNo)
+	log("relay.commitOrderOp.paymentRequest id=%s addr=%x total=%s currentBlock=%d", paymentId.Text(16), paymentAddr, bigTotal.String(), blockNo)
 
 	// mark order as finalized by creating the event and updating payments table
 	var (
@@ -3000,7 +2897,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	w.waiterID = newRequestID()
 	w.orderID = op.im.OrderId
 	w.orderFinalizedAt = now()
-	w.purchaseAddr = purchaseAddr
+	w.purchaseAddr = paymentAddr
 	w.lastBlockNo.SetInt64(int64(blockNo))
 	w.coinsTotal.Set(bigTotal)
 	w.coinsPayed.SetInt64(0)
@@ -3020,7 +2917,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		return
 	}
 
-	sig, err := ethClient.eventSign(cfAny.Value)
+	sig, err := r.ethereum.signEvent(cfAny.Value)
 	if err != nil {
 		op.err = &Error{Code: ErrorCodes_INVALID, Message: "interal server error"}
 		r.sendSessionOp(sessionState, op)
@@ -3203,10 +3100,7 @@ order by serverSeq`
 	sigEvt.Event, err = anypb.New(evt)
 	check(err)
 
-	ethClient, has := r.ethChains[r.ethRegistryChainID]
-	assert(has)
-
-	sigEvt.Signature, err = ethClient.eventSign(sigEvt.Event.Value)
+	sigEvt.Signature, err = r.ethereum.signEvent(sigEvt.Event.Value)
 	check(err)
 
 	meta := newMetadata(relayKeyCardID, op.shopID, currentRelayVersion)
@@ -3262,10 +3156,7 @@ func (op *PaymentFoundInternalOp) process(r *Relay) {
 	sigEvt.Event, err = anypb.New(evt)
 	check(err)
 
-	ethClient, has := r.ethChains[r.ethRegistryChainID]
-	assert(has)
-
-	sigEvt.Signature, err = ethClient.eventSign(sigEvt.Event.Value)
+	sigEvt.Signature, err = r.ethereum.signEvent(sigEvt.Event.Value)
 	check(err)
 
 	r.writeEvent(evt, meta, &sigEvt)
@@ -3965,41 +3856,18 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			return http.StatusForbidden, fmt.Errorf("invalid signature: %w", err)
 		}
 
-		ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
-		defer cancel()
-
-		geth, has := r.ethChains[r.ethRegistryChainID]
-		assert(has)
-
-		shopReg, ethRpc, err := geth.newShopReg(ctx)
-		if err != nil {
-			return http.StatusInternalServerError, fmt.Errorf("contract call error: %w", err)
-		}
-		defer ethRpc.Close()
-
-		opts := &bind.CallOpts{
-			Pending: false,
-			From:    geth.wallet,
-			Context: ctx,
-		}
-
 		var bigTokenID big.Int
 		bigTokenID.SetBytes(data.ShopTokenID)
 
 		//  check if shop exists
-		_, err = shopReg.OwnerOf(opts, &bigTokenID)
+		_, err = r.ethereum.GetOwnerOfShop(&bigTokenID)
 		if err != nil {
 			return http.StatusNotFound, fmt.Errorf("no owner for shop: %w", err)
 		}
 
 		var isGuest bool = req.URL.Query().Get("guest") == "1"
 		if !isGuest {
-			// updateRootHash PERM is equivalent to Clerk or higher
-			perm, err := shopReg.PERMUpdateRootHash(opts)
-			if err != nil {
-				return http.StatusBadRequest, fmt.Errorf("failed to get updateRootHash PERM: %w", err)
-			}
-			has, err := shopReg.HasPermission(opts, &bigTokenID, userWallet, perm)
+			has, err := r.ethereum.ClerkHasAccess(&bigTokenID, userWallet)
 			if err != nil {
 				return http.StatusInternalServerError, fmt.Errorf("contract call error: %w", err)
 			}
@@ -4150,7 +4018,6 @@ func server() {
 			//{"erc20", r.watchErc20Payments},
 			//{"eth", r.watchEthereumPayments},
 		}
-		ops = []repeat.Operation{}
 
 		mkWatch = func(w watcher, geth ethClient) repeat.Operation {
 			return repeat.Fn(func() error {
@@ -4165,23 +4032,21 @@ func server() {
 		}
 	)
 	for _, watcher := range fns {
-		for _, geth := range r.ethChains {
-			ops = append(ops, mkWatch(watcher, *geth))
-		}
-	}
-	for _, op := range ops {
-		go func(op repeat.Operation) {
-			for {
-				err := repeat.Repeat(op,
-					repeat.LimitMaxTries(10),
-					repeat.StopOnSuccess(),
-				)
-				if err != nil {
-					r.metric.counterAdd("relay_watchError_error", 1)
+		for _, geth := range r.ethereum.chains {
+
+			go func(op repeat.Operation) {
+				for {
+					err := repeat.Repeat(op,
+						repeat.LimitMaxTries(10),
+						repeat.StopOnSuccess(),
+					)
+					if err != nil {
+						r.metric.counterAdd("relay_watchError_error", 1)
+					}
+					time.Sleep(ethereumBlockInterval/2 + time.Duration(rand.Intn(1000))*time.Millisecond)
 				}
-				time.Sleep(ethereumBlockInterval/2 + time.Duration(rand.Intn(1000))*time.Millisecond)
-			}
-		}(op)
+			}(mkWatch(watcher, *geth))
+		}
 	}
 
 	// open metrics and pprof after relay & ethclient booted
@@ -4208,7 +4073,7 @@ func server() {
 		AllowedOrigins: []string{"*"},
 	}
 	if isDevEnv {
-		mux.HandleFunc("/testing/discovery", r.ethChains[r.ethRegistryChainID].discoveryHandleFunc)
+		mux.HandleFunc("/testing/discovery", r.ethereum.discoveryHandleFunc)
 		corsOpts.Debug = true
 	}
 
