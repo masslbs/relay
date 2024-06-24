@@ -13,16 +13,15 @@
         "solady": "solady"
       },
       "locked": {
-        "lastModified": 1718262187,
-        "narHash": "sha256-Cbz+W+TXjWmOC1ugNElh3tma2zqFFpzVtyu6N/6YYhw=",
+        "lastModified": 1719236669,
+        "narHash": "sha256-ngX+0H2jFaGavuFzdvoFTUR9C4dYPDbJ6E3X04aQh68=",
         "owner": "masslbs",
         "repo": "contracts",
-        "rev": "2a8fe5723da125fb72558e56299836f4258edc41",
+        "rev": "0d9625366fb6e24fb5f3b70b43d981764a26e3a2",
         "type": "github"
       },
       "original": {
         "owner": "masslbs",
-        "ref": "foundry-monthly",
         "repo": "contracts",
         "type": "github"
       }
@@ -234,11 +233,11 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1718811006,
-        "narHash": "sha256-0Y8IrGhRmBmT7HHXlxxepg2t8j1X90++qRN3lukGaIk=",
+        "lastModified": 1719122173,
+        "narHash": "sha256-aEMsNUtqSPwn6l+LIZ/rX++nCgun3E9M3uSZs6Rwb7w=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "03d771e513ce90147b65fe922d87d3a0356fc125",
+        "rev": "906320ae02f769d13a646eb3605a9821df0d6ea2",
         "type": "github"
       },
       "original": {

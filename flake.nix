@@ -13,7 +13,7 @@
     gomod2nix.inputs.flake-utils.follows = "flake-utils";
     pre-commit-hooks.url = "github:cachix/pre-commit-hooks.nix";
 
-    contracts.url = "github:masslbs/contracts/foundry-monthly";
+    contracts.url = "github:masslbs/contracts";
     contracts.inputs.nixpkgs.follows = "nixpkgs";
     schema = {
       url = "github:masslbs/network-schema/wip/v2";
