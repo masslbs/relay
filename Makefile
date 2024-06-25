@@ -4,10 +4,12 @@
 
 .phony: all lint reuse
 
-relay: *.go
-	gomod2nix
+relay: *.go gomod2nix.toml
 	./generate_code.bash
 	go build -o relay
+
+gomod2nix.toml: go.sum
+	gomod2nix
 
 lint:
 	go vet ./...

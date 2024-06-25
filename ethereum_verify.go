@@ -5,6 +5,7 @@
 package main
 
 import (
+	"crypto/ecdsa"
 	"crypto/subtle"
 	"fmt"
 
@@ -77,10 +78,10 @@ func (evt *SignedEvent) Verify(publicKey []byte) error {
 	return ecrecoverEIP191AndCompare(evt.Event.Value, evt.Signature, publicKey)
 }
 
-func (c ethClient) eventSign(evtData []byte) ([]byte, error) {
+func eventSign(evtData []byte, secret *ecdsa.PrivateKey) ([]byte, error) {
 	sighash := accounts.TextHash(evtData)
 
-	signature, err := crypto.Sign(sighash, c.secret)
+	signature, err := crypto.Sign(sighash, secret)
 	if err != nil {
 		return nil, fmt.Errorf("signEvent: crypto.Sign failed: %w", err)
 	}

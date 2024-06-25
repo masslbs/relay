@@ -148,7 +148,7 @@ func newEthRPCService() *ethRPCService {
 func (rpc *ethRPCService) signEvent(data []byte) ([]byte, error) {
 	c, has := rpc.chains[rpc.registryChainID]
 	assert(has)
-	return c.eventSign(data)
+	return eventSign(data, c.secret)
 }
 
 func (rpc *ethRPCService) discoveryHandleFunc(w http.ResponseWriter, _ *http.Request) {

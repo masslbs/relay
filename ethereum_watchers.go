@@ -350,11 +350,9 @@ func (r *Relay) watchErc20Payments(geth *ethClient) error {
 		},
 	}
 
-	debug("relay.watchErc20Payments.newSubscription from=%d", currentBlockNo)
-
 	subscription, err := rpc.SubscribeFilterLogs(ctx, arg, ch)
 	if err != nil {
-		return fmt.Errorf("relay.watchErc20Payments.EthSubscribeFailed err=%s", err)
+		return fmt.Errorf("relay.watchErc20Payments.EthSubscribeFailed: %w", err)
 	}
 	defer subscription.Unsubscribe()
 
