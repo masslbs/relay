@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
@@ -37,12 +38,10 @@ import (
 type EthLookup interface {
 	getChainID() uint64
 	closeWithError(error)
-
-	// TODO: might need more context, wallet addr, key, ..?
-	// KISS for now until we identified all the needed call sites
 	process(*ethClient)
 }
 
+// exposes the "public api", manages rpc clients and dispatching of lookups to them.
 type ethRPCService struct {
 	// "the control plane" where the massMarket registries are hosted
 	registryChainID uint64
@@ -52,7 +51,7 @@ type ethRPCService struct {
 
 	ops chan<- EthLookup
 
-	relayTokenID big.Int
+	relayTokenID *big.Int
 }
 
 // Populate the following env vars.
@@ -62,6 +61,8 @@ type ethRPCService struct {
 // ETH_RPC_ENDPOINT_$n=rpcA;rpcB;rpcC
 func newEthRPCService() *ethRPCService {
 	r := ethRPCService{}
+
+	// setup chains
 	r.registryChainID = uint64(mustGetEnvInt("ETH_STORE_REGISTRY_CHAIN_ID"))
 
 	r.chains = make(map[uint64]*ethClient)
@@ -70,12 +71,14 @@ func newEthRPCService() *ethRPCService {
 		if !strings.HasPrefix(env, chainConfigEnvPrefix) {
 			continue
 		}
+
 		values := strings.TrimPrefix(env, chainConfigEnvPrefix)
 		parts := strings.SplitN(values, "=", 2)
 		assert(len(parts) == 2)
 
 		chainId, err := strconv.ParseUint(parts[0], 10, 64)
 		check(err)
+
 		var hasWebsocketEndpoint = false
 		urls := strings.Split(parts[1], ";")
 		for _, url := range urls {
@@ -84,16 +87,60 @@ func newEthRPCService() *ethRPCService {
 			}
 		}
 		assertWithMessage(hasWebsocketEndpoint, "need at least one websocket endpoint per chain for payment subscriptions")
+
 		r.chains[chainId] = newEthClient(chainId, urls)
 	}
 
-	ops := make(chan EthLookup)
-	srv := &ethRPCService{
-		ops: ops,
-	}
-	go srv.process(ops)
+	// register / verify nft for the relay
+	c, has := r.chains[r.registryChainID]
+	assertWithMessage(has, "no rpc endpoint for store registries")
+	relaysReg, err := c.newRelayReg()
+	check(err)
+	gethc, err := c.getRPC()
+	check(err)
 
-	return srv
+	ctx := context.Background()
+	callOpts := &bind.CallOpts{
+		Pending: false,
+		From:    c.wallet,
+		Context: ctx,
+	}
+
+	relayTokenID := new(big.Int)
+	if nftIDStr := os.Getenv("RELAY_NFT_ID"); nftIDStr != "" {
+		buf, err := hex.DecodeString(nftIDStr)
+		check(err)
+		assertWithMessage(len(buf) == 32, fmt.Sprintf("expected 32bytes of data in RELAY_NFT_ID. got %d", len(buf)))
+		relayTokenID.SetBytes(buf)
+
+		nftOwner, err := relaysReg.OwnerOf(callOpts, relayTokenID)
+		check(err)
+		assertWithMessage(nftOwner.Cmp(c.wallet) == 0, fmt.Sprintf("passed NFT is owned by %s", nftOwner))
+
+	} else { // in testing, always create a new nft
+		buf := make([]byte, 32)
+		rand.Read(buf)
+		relayTokenID.SetBytes(buf)
+
+		txOpts, err := c.makeTxOpts(ctx, gethc)
+		check(err)
+
+		tx, err := relaysReg.Mint(txOpts, relayTokenID, c.wallet, fmt.Sprintf("http://localhost:%d/relay_nft?token=%s", mustGetEnvInt("PORT"), relayTokenID))
+		check(err)
+
+		err = c.checkTransaction(ctx, gethc, tx)
+		check(err)
+	}
+
+	log("ethClient.relayNft token=%s", relayTokenID)
+	r.relayTokenID = relayTokenID
+
+	// start processing loop
+	ops := make(chan EthLookup)
+	r.ops = ops
+	go r.process(ops)
+
+	return &r
 }
 
 func (rpc *ethRPCService) signEvent(data []byte) ([]byte, error) {
@@ -104,10 +151,20 @@ func (rpc *ethRPCService) signEvent(data []byte) ([]byte, error) {
 
 func (rpc *ethRPCService) discoveryHandleFunc(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	enc := json.NewEncoder(w)
 	var uint256 = make([]byte, 32)
 	rpc.relayTokenID.FillBytes(uint256)
-	err := json.NewEncoder(w).Encode(map[string]any{
+	if bytes.Equal(uint256, bytes.Repeat([]byte{0}, 32)) {
+		w.WriteHeader(http.StatusInternalServerError)
+		enc.Encode(map[string]any{
+			"status": "error",
+			"error":  "token ID not set",
+		})
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	err := enc.Encode(map[string]any{
+		"status":         "ok",
 		"relay_token_id": "0x" + hex.EncodeToString(uint256),
 		"chain_id":       rpc.registryChainID,
 	})
@@ -117,24 +174,18 @@ func (rpc *ethRPCService) discoveryHandleFunc(w http.ResponseWriter, _ *http.Req
 }
 
 func (rpc *ethRPCService) process(ops <-chan EthLookup) {
-	// ctx := context.Background()
 	for op := range ops {
 		start := now()
-		log("ethRPC.start op=%T", op)
 		cid := op.getChainID()
+		log("ethRPC.start op=%T chain_id=%d", op, cid)
 		ethClient, ok := rpc.chains[cid]
 		if !ok {
 			op.closeWithError(fmt.Errorf("chain not supported: %d", cid))
 			continue
 		}
-		// ctx, cancel := context.WithCancel(ctx)
 
-		// TODO: re-use clientq
-		//c, err := ethClient.getClient(ctx)
-		//check(err) // TODO: repeat?
+		go op.process(ethClient)
 
-		op.process(ethClient)
-		// cancel()
 		log("ethRPC.done took=%d", took(start))
 	}
 }
@@ -196,6 +247,7 @@ func (lookup *erc20MetadataEthLookup) process(client *ethClient) {
 		symbol:    symbol,
 		tokenName: tokenName,
 	}
+	close(lookup.errCh)
 	return
 }
 
@@ -263,7 +315,9 @@ func (lookup *ownerOfShopEthLookup) process(client *ethClient) {
 		lookup.closeWithError(fmt.Errorf("failed to get shop owner: %w", err))
 		return
 	}
+
 	lookup.result = &ownerAddr
+	close(lookup.errCh)
 
 	return
 }
@@ -279,8 +333,15 @@ func (rpc *ethRPCService) GetOwnerOfShop(shopID *big.Int) (common.Address, error
 
 	rpc.ops <- lookup
 
-	if err := <-errCh; err != nil {
-		return common.Address{}, err
+	select {
+	case err := <-errCh:
+		if err != nil {
+			return common.Address{}, err
+		}
+
+	case <-time.After(10 * time.Second):
+		return common.Address{}, errors.New("eth rpc timeout")
+
 	}
 	assert(lookup.result != nil)
 
@@ -338,6 +399,8 @@ func (lookup *clerkHasAccessEthLookup) process(client *ethClient) {
 	}
 
 	lookup.result = has
+	close(lookup.errCh)
+
 	return
 }
 
@@ -389,6 +452,8 @@ func (lookup *blockNumberEthLookup) process(client *ethClient) {
 	}
 
 	lookup.result = &result
+	close(lookup.errCh)
+
 }
 
 func (rpc *ethRPCService) GetCurrentBlockNumber(chainID uint64) (uint64, error) {
@@ -436,6 +501,8 @@ func (lookup *blockByNumberEthLookup) process(client *ethClient) {
 	}
 
 	lookup.result = b
+	close(lookup.errCh)
+
 	return
 }
 
@@ -508,6 +575,7 @@ func (lookup *paymentIDandAddressEthLookup) process(client *ethClient) {
 	}
 	lookup.resultID = paymentId
 	lookup.resultAddr = purchaseAddr
+	close(lookup.errCh)
 
 	return
 }
@@ -556,8 +624,6 @@ type ethClient struct {
 	}
 	secret *ecdsa.PrivateKey
 	wallet common.Address
-
-	relayTokenID *big.Int
 }
 
 //go:embed gen_contract_addresses.json
@@ -577,14 +643,14 @@ func newEthClient(chainID uint64, rpcURLs []string) *ethClient {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*30)
 	defer cancel()
 
-	// register a new nft for the relay
-	relaysReg, gethc, err := c.newRelayReg()
-	check(err)
-
 	// check rpc works
 	err = repeat.Repeat(
 		repeat.Fn(func() error {
-			err := c.updateGasLimit(ctx, gethc)
+			gethc, err := c.getRPC()
+			if errors.Is(err, context.DeadlineExceeded) {
+				return repeat.HintTemporary(err)
+			}
+			err = c.updateGasLimit(ctx, gethc)
 			if errors.Is(err, context.DeadlineExceeded) {
 				return repeat.HintTemporary(err)
 			}
@@ -633,41 +699,6 @@ func newEthClient(chainID uint64, rpcURLs []string) *ethClient {
 
 	c.erc20ContractABI, err = abi.JSON(strings.NewReader(ERC20MetaData.ABI))
 	check(err)
-
-	callOpts := &bind.CallOpts{
-		Pending: false,
-		From:    c.wallet,
-		Context: ctx,
-	}
-
-	relayTokenID := new(big.Int)
-	if nftIDStr := os.Getenv("RELAY_NFT_ID"); nftIDStr != "" {
-		buf, err := hex.DecodeString(nftIDStr)
-		check(err)
-		assertWithMessage(len(buf) == 32, fmt.Sprintf("expected 32bytes of data in RELAY_NFT_ID. got %d", len(buf)))
-		relayTokenID.SetBytes(buf)
-
-		nftOwner, err := relaysReg.OwnerOf(callOpts, relayTokenID)
-		check(err)
-		assertWithMessage(nftOwner.Cmp(c.wallet) == 0, fmt.Sprintf("passed NFT is owned by %s", nftOwner))
-
-	} else { // in testing, always create a new nft
-		buf := make([]byte, 32)
-		rand.Read(buf)
-		relayTokenID.SetBytes(buf)
-
-		txOpts, err := c.makeTxOpts(ctx, gethc)
-		check(err)
-		tx, err := relaysReg.Mint(txOpts, relayTokenID, c.wallet, fmt.Sprintf("http://localhost:%d/relay_nft?token=%s", mustGetEnvInt("PORT"), relayTokenID))
-		check(err)
-
-		err = c.checkTransaction(ctx, gethc, tx)
-		check(err)
-	}
-	gethc.Close()
-
-	log("ethClient.relayNft token=%s", relayTokenID)
-	c.relayTokenID = relayTokenID
 
 	return &c
 }
@@ -741,30 +772,34 @@ func (c *ethClient) getRPC() (*ethclient.Client, error) {
 	return newClient, err
 }
 
-func (c ethClient) newRelayReg() (*RegRelay, *ethclient.Client, error) {
+func (c ethClient) newRelayReg() (*RegRelay, error) {
 	client, err := c.getRPC()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
+	}
+	if bytes.Equal(c.contractAddresses.RelayRegistry[:], bytes.Repeat([]byte{0}, 20)) {
+		return nil, errors.New("cant use zero address for relayReg")
 	}
 	reg, err := NewRegRelay(c.contractAddresses.RelayRegistry, client)
 	if err != nil {
-		return nil, nil, fmt.Errorf("ethClient.newRelayReg: creating relay registry failed: %w", err)
+		return nil, fmt.Errorf("ethClient.newRelayReg: creating relay registry failed: %w", err)
 	}
-	return reg, client, nil
+	return reg, nil
 }
 
-func (c ethClient) newShopReg() (*RegShop, *ethclient.Client, error) {
+func (c ethClient) newShopReg() (*RegShop, error) {
 	client, err := c.getRPC()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-
+	if bytes.Equal(c.contractAddresses.ShopRegistry[:], bytes.Repeat([]byte{0}, 20)) {
+		return nil, errors.New("cant use zero address for shopReg")
+	}
 	reg, err := NewRegShop(c.contractAddresses.ShopRegistry, client)
 	if err != nil {
-		return nil, nil, fmt.Errorf("ethClient.newShopReg: creating shop registry failed: %w", err)
+		return nil, fmt.Errorf("ethClient.newShopReg: creating shop registry failed: %w", err)
 	}
-
-	return reg, client, nil
+	return reg, nil
 }
 
 func (c ethClient) makeTxOpts(ctx context.Context, client *ethclient.Client) (*bind.TransactOpts, error) {
