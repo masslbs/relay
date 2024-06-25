@@ -77,10 +77,11 @@ CREATE TABLE payments (
     waiterId         bytea PRIMARY KEY NOT NULL,
     orderId          bytea NOT NULL,
     paymentId        bytea NOT NULL, -- uint256
-    createdByShopId bytea NOT NULL,
-    shopSeqNo       bigint not null, -- the seqNo of shop when the order was finalized
-    orderFinalizedAt  TIMESTAMP NOT NULL,
+    createdByShopId  bytea NOT NULL,
+    shopSeqNo        bigint not null, -- the seqNo of shop when the order was finalized
+    orderFinalizedAt TIMESTAMP NOT NULL,
     purchaseAddr     bytea NOT NULL,
+    chainId          integer not null,
     lastBlockNo      NUMERIC(80,0) NOT NULL,
     coinsPayed       NUMERIC(80,0) NOT NULL,
     coinsTotal       NUMERIC(80,0) NOT NULL,

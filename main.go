@@ -2902,6 +2902,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	w.orderID = op.im.OrderId
 	w.orderFinalizedAt = now()
 	w.purchaseAddr = paymentAddr
+	w.chainID = chosenCurrency.ChainID
 	w.lastBlockNo.SetInt64(int64(blockNo))
 	w.coinsTotal.Set(bigTotal)
 	w.coinsPayed.SetInt64(0)
@@ -2932,10 +2933,10 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	r.writeEvent(cfEvent, cfMetadata, &SignedEvent{Event: cfAny, Signature: sig})
 
 	seqPair := r.shopIdsToShopState.MustGet(sessionState.shopID)
-	const insertPaymentWaiterQuery = `insert into payments (waiterId, shopSeqNo, createdByShopId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr, paymentId)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+	const insertPaymentWaiterQuery = `insert into payments (waiterId, shopSeqNo, createdByShopId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr, paymentId, chainId)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 	_, err = r.syncTx.Exec(ctx, insertPaymentWaiterQuery,
-		w.waiterID, seqPair.lastUsedShopSeq, order.createdByShopID, w.orderID, w.orderFinalizedAt, w.purchaseAddr.Bytes(), w.lastBlockNo, w.coinsPayed, w.coinsTotal, w.erc20TokenAddr, w.paymentId)
+		w.waiterID, seqPair.lastUsedShopSeq, order.createdByShopID, w.orderID, w.orderFinalizedAt, w.purchaseAddr.Bytes(), w.lastBlockNo, w.coinsPayed, w.coinsTotal, w.erc20TokenAddr, w.paymentId, w.chainID)
 	check(err)
 
 	r.commitSyncTransaction()
@@ -4031,10 +4032,9 @@ func server() {
 	}
 	var (
 		fns = []watcher{
-			{"subscribe", r.subscriptPaymentsMade},
-			{"paymentsMade", r.watchPaymentMade},
+			{"paymentMade", r.subscriptPaymentsMade},
 			{"erc20", r.watchErc20Payments},
-			{"eth", r.watchEthereumPayments},
+			{"vanilla-eth", r.watchEthereumPayments},
 		}
 
 		mkWatch = func(w watcher, geth *ethClient) repeat.Operation {

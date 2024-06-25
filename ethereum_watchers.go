@@ -6,7 +6,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math/big"
 	"time"
@@ -23,6 +22,7 @@ type PaymentWaiter struct {
 	waiterID         requestID
 	orderID          eventID
 	orderFinalizedAt time.Time
+	chainID          uint64
 	purchaseAddr     common.Address
 	lastBlockNo      SQLStringBigInt
 	coinsPayed       SQLStringBigInt
@@ -98,8 +98,9 @@ FROM payments
 WHERE
 orderPayedAt IS NULL
 AND orderFinalizedAt >= NOW() - INTERVAL '1 day'
-AND paymentId = $1`
-			err := r.connPool.QueryRow(ctx, openPaymentsQry, paymentIdHash.Bytes()).Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt)
+AND paymentId = $1
+AND chainId = $2`
+			err := r.connPool.QueryRow(ctx, openPaymentsQry, paymentIdHash.Bytes(), geth.chainID).Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt)
 			if err == pgx.ErrNoRows {
 				continue
 			} else if err != nil {
@@ -145,8 +146,10 @@ func (r *Relay) watchEthereumPayments(client *ethClient) error {
 	FROM payments
 	WHERE orderPayedAt IS NULL
 		AND erc20TokenAddr IS NULL -- see watchErc20Payments()
-		AND orderFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
-	rows, err := r.connPool.Query(ctx, openPaymentsQry)
+		AND orderFinalizedAt >= NOW() - INTERVAL '1 day'
+        AND chainId = $1
+ ORDER BY lastBlockNo asc;`
+	rows, err := r.connPool.Query(ctx, openPaymentsQry, client.chainID)
 	check(err)
 	defer rows.Close()
 	for rows.Next() {
@@ -289,8 +292,10 @@ func (r *Relay) watchErc20Payments(geth *ethClient) error {
 		FROM payments
 		WHERE orderPayedAt IS NULL
 			AND erc20TokenAddr IS NOT NULL -- see watchErc20Payments()
-			AND orderFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
-	rows, err := r.connPool.Query(ctx, openPaymentsQry)
+			AND orderFinalizedAt >= NOW() - INTERVAL '1 day'
+            AND chainId = $1
+ORDER BY lastBlockNo asc;`
+	rows, err := r.connPool.Query(ctx, openPaymentsQry, geth.chainID)
 	check(err)
 	defer rows.Close()
 	for rows.Next() {
@@ -443,131 +448,5 @@ watch:
 	stillWaiting := len(waiters)
 	debug("relay.watchErc20Payments.finish took=%d openWaiters=%d", took(start), stillWaiting)
 	r.metric.emit("relay_payments_erc20_open", uint64(stillWaiting))
-	return nil
-}
-
-func (r *Relay) watchPaymentMade(geth *ethClient) error {
-	debug("relay.watchPaymentMade.start chainID=%d", geth.chainID)
-
-	var (
-		ctx   = context.Background()
-		start = now()
-
-		// this is the block iterator
-		lowestLastBlock = new(big.Int)
-
-		waiters = make(map[common.Hash]PaymentWaiter)
-	)
-
-	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, paymentId, lastBlockNo
-		FROM payments
-		WHERE orderPayedAt IS NULL AND orderFinalizedAt >= NOW() - INTERVAL '1 day' ORDER BY lastBlockNo asc;`
-	rows, err := r.connPool.Query(ctx, openPaymentsQry)
-	check(err)
-	defer rows.Close()
-	for rows.Next() {
-		var waiter PaymentWaiter
-		err := rows.Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.paymentId, &waiter.lastBlockNo)
-		check(err)
-		assert(waiter.lastBlockNo.Cmp(bigZero) != 0)
-
-		// init first
-		if lowestLastBlock.Cmp(bigZero) == 0 {
-			lowestLastBlock = &waiter.lastBlockNo.Int
-		}
-		// is this waiter smaller?
-		if lowestLastBlock.Cmp(&waiter.lastBlockNo.Int) == -1 {
-			lowestLastBlock = &waiter.lastBlockNo.Int
-		}
-		pid := common.Hash(waiter.paymentId)
-		//debug("relay.watchPaymentMade.want pid=%s", pid.Hex())
-		waiters[pid] = waiter
-	}
-	check(rows.Err())
-
-	if len(waiters) == 0 {
-		debug("relay.watchPaymentMade.noOpenPayments took=%d", took(start))
-		return nil
-	}
-
-	gethClient, err := geth.getWebsocketRPC()
-	if err != nil {
-		return err
-	}
-
-	// Get the latest block number.
-	currentBlockNoInt, err := gethClient.BlockNumber(ctx)
-	if err != nil {
-		return fmt.Errorf("relay.watchPaymentMade.blockNumber err=%s", err)
-	}
-
-	debug("relay.watchPaymentMade.starting currentBlock=%d", currentBlockNoInt)
-	currentBlockNo := big.NewInt(int64(currentBlockNoInt))
-
-	qry := ethereum.FilterQuery{
-		Addresses: []common.Address{geth.contractAddresses.Payments},
-		FromBlock: lowestLastBlock,
-		ToBlock:   currentBlockNo,
-		Topics: [][]common.Hash{
-			{eventSignaturePaymentMade},
-		},
-	}
-	logs, err := gethClient.FilterLogs(ctx, qry)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			debug("relay.watchPaymentMade.noNewBlocks took=%d", took(start))
-			return nil // possibly no new block, dont try again immediatly
-		}
-		return err
-	}
-
-	// iterate over all matching logs of events from that erc20 contract with the transfer signature
-	var lastBlockNo uint64
-
-	for _, vLog := range logs {
-		//debug("relay.watchPaymentMade.checking block=%d", vLog.BlockNumber)
-
-		var paymentIdHash = common.Hash(vLog.Topics[1])
-		//debug("relay.watchPaymentMade.seen pid=%s", paymentIdHash.Hex())
-
-		if waiter, has := waiters[paymentIdHash]; has {
-			orderID := waiter.orderID
-			//debug("relay.watchPaymentMade.found cartId=%s txHash=%x", orderID, vLog.TxHash)
-
-			_, has := r.ordersByOrderID.get(orderID)
-			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
-
-			op := PaymentFoundInternalOp{
-				orderID: orderID,
-				txHash:  vLog.TxHash,
-				done:    make(chan struct{}),
-			}
-			r.opsInternal <- &op
-			<-op.done // block until op was processed by server loop
-
-			delete(waiters, paymentIdHash)
-			log("relay.watchPaymentMade.completed cartId=%s txHash=%x", orderID, vLog.TxHash)
-		}
-		if vLog.BlockNumber > lastBlockNo {
-			lastBlockNo = vLog.BlockNumber
-		}
-	}
-	if lastBlockNo > 0 {
-		lastBlockBig := new(big.Int).SetUint64(lastBlockNo)
-		for _, waiter := range waiters {
-			// only advance those waiters which last blocks are lower then the block we just checked
-			if waiter.lastBlockNo.Cmp(lastBlockBig) == -1 {
-				continue
-			}
-			// move up block number
-			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = $2 WHERE cartId = $1;`
-			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, waiter.orderID, lastBlockNo)
-			check(err)
-			debug("relay.watchPaymentMade.advance cartId=%x newLastBlock=%s", waiter.orderID, waiter.lastBlockNo.String())
-		}
-	}
-	stillWaiting := len(waiters)
-	debug("relay.watchPaymentMade.finish elapsed=%d openWaiters=%d", took(start), stillWaiting)
-	r.metric.emit("relay_payments_open", uint64(stillWaiting))
 	return nil
 }
