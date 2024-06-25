@@ -9,17 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	mrand "math/rand"
-	"strconv"
-	"strings"
 	"time"
 
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/jackc/pgx/v4"
 )
 
@@ -32,7 +27,7 @@ type PaymentWaiter struct {
 	lastBlockNo      SQLStringBigInt
 	coinsPayed       SQLStringBigInt
 	coinsTotal       SQLStringBigInt
-	paymentId        SQLStringBigInt
+	paymentId        []byte
 
 	// (optional) contract of the erc20 that we are looking for
 	erc20TokenAddr *common.Address
@@ -47,7 +42,7 @@ var (
 	bigOne  = big.NewInt(1)
 )
 
-func (r *Relay) subscriptPaymentsMade(geth ethClient) error {
+func (r *Relay) subscriptPaymentsMade(geth *ethClient) error {
 	log("relay.subscriptPaymentsMade.start chainID=%d", geth.chainID)
 
 	var start = now()
@@ -133,8 +128,8 @@ AND paymentId = $1`
 	return nil
 }
 
-func (r *Relay) watchEthereumPayments(ethClient ethClient) error {
-	debug("relay.watchEthereumPayments.start chainID=%d", ethClient.chainID)
+func (r *Relay) watchEthereumPayments(client *ethClient) error {
+	debug("relay.watchEthereumPayments.start chainID=%d", client.chainID)
 
 	var (
 		ctx   = context.Background()
@@ -158,7 +153,6 @@ func (r *Relay) watchEthereumPayments(ethClient ethClient) error {
 		var waiter PaymentWaiter
 		err := rows.Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal)
 		check(err)
-
 		assert(waiter.lastBlockNo.Cmp(bigZero) != 0)
 
 		// init first
@@ -166,7 +160,7 @@ func (r *Relay) watchEthereumPayments(ethClient ethClient) error {
 			lowestLastBlock = &waiter.lastBlockNo.Int
 		}
 		// is this waiter smaller?
-		if lowestLastBlock.Cmp(&waiter.lastBlockNo.Int) == -1 {
+		if waiter.lastBlockNo.Cmp(lowestLastBlock) == -1 {
 			lowestLastBlock = &waiter.lastBlockNo.Int
 		}
 
@@ -181,13 +175,13 @@ func (r *Relay) watchEthereumPayments(ethClient ethClient) error {
 
 	debug("relay.watchEthereumPayments.dbRead took=%d waiters=%d lowestLastBlock=%s", took(start), len(waiters), lowestLastBlock)
 
-	gethClient, err := ethClient.getWebsocketRPC()
+	rpc, err := client.getWebsocketRPC()
 	if err != nil {
 		return err
 	}
 
 	// Get the latest block number
-	currentBlockNoInt, err := gethClient.BlockNumber(ctx)
+	currentBlockNoInt, err := rpc.BlockNumber(ctx)
 	check(err)
 	currentBlockNo := big.NewInt(int64(currentBlockNoInt))
 
@@ -197,8 +191,10 @@ func (r *Relay) watchEthereumPayments(ethClient ethClient) error {
 			debug("relay.watchEthereumPayments.noNewBlocks current=%d", currentBlockNoInt)
 			break
 		}
+		debug("relay.watchEthereumPayments.checkBlock num=%d", lowestLastBlock)
+
 		// check each block for transactions
-		block, err := gethClient.BlockByNumber(ctx, lowestLastBlock)
+		block, err := rpc.BlockByNumber(ctx, lowestLastBlock)
 		if err != nil {
 			return fmt.Errorf("relay.watchEthereumPayments.failedToGetBlock block=%s err=%s", lowestLastBlock, err)
 		}
@@ -242,21 +238,26 @@ func (r *Relay) watchEthereumPayments(ethClient ethClient) error {
 				}
 			}
 		}
-		for _, waiter := range waiters {
-			// only advance those waiters which last blocks are lower then the block we just checked
-			if waiter.lastBlockNo.Cmp(currentBlockNo) == -1 {
-				continue
-			}
-			// lastBlockNo += 1
-			waiter.lastBlockNo.Add(&waiter.lastBlockNo.Int, bigOne)
-			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = lastBlockNo + 1 WHERE orderId = $1;`
-			orderID := waiter.orderID
-			_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, orderID)
-			check(err)
-			debug("relay.watchEthereumPayments.advance orderId=%x newLastBlock=%s", orderID, waiter.lastBlockNo.String())
-		}
+
 		// increment iterator
 		lowestLastBlock.Add(lowestLastBlock, bigOne)
+	}
+
+	// update waiters in db
+	var orderIDs []eventID
+	for _, waiter := range waiters {
+		// only advance those waiters which last blocks are lower then the block we just checked
+		if lowestLastBlock.Cmp(&waiter.lastBlockNo.Int) == 1 {
+			continue
+		}
+		orderIDs = append(orderIDs, waiter.orderID)
+	}
+	if len(orderIDs) > 0 {
+		// batch the update
+		const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = $2 WHERE orderId = any($1);`
+		_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, orderIDs, lowestLastBlock.String())
+		check(err)
+		debug("relay.watchEthereumPayments.advance orderIds=%v newLastBlock=%s", orderIDs, lowestLastBlock.String())
 	}
 
 	stillWaiting := len(waiters)
@@ -270,18 +271,17 @@ var (
 	eventSignaturePaymentMade   = crypto.Keccak256Hash([]byte("PaymentMade(uint256)"))
 )
 
-func (r *Relay) watchErc20Payments(geth ethClient) error {
+func (r *Relay) watchErc20Payments(geth *ethClient) error {
 	debug("relay.watchErc20Payments.start chainID=%d", geth.chainID)
 
 	var (
 		start = now()
-		ctx   = context.Background()
+		ctx   = r.watcherContextERC20
 
 		// this is the block iterator
 		lowestLastBlock = new(big.Int)
 
 		waiters         = make(map[common.Hash]PaymentWaiter)
-		topics          [][]any
 		erc20AddressSet = make(map[common.Address]struct{})
 	)
 
@@ -314,11 +314,6 @@ func (r *Relay) watchErc20Payments(geth ethClient) error {
 		var purchaseAddrAsHash common.Hash
 		copy(purchaseAddrAsHash[12:], waiter.purchaseAddr.Bytes())
 		waiters[purchaseAddrAsHash] = waiter
-
-		topics = append(topics, []any{
-			eventSignatureTransferErc20,
-			nil,
-			purchaseAddrAsHash})
 	}
 	check(rows.Err())
 
@@ -328,29 +323,15 @@ func (r *Relay) watchErc20Payments(geth ethClient) error {
 		return nil
 	}
 
-	var wsURLs []string
-	for _, u := range geth.rpcUrls {
-		if !strings.HasPrefix(u, "ws") {
-			continue
-		}
-		wsURLs = append(wsURLs, u)
-	}
-
-	randomIndex := mrand.Intn(len(wsURLs))
-	randomRPCURL := wsURLs[randomIndex]
-
-	rpcClient, err := rpc.Dial(randomRPCURL)
-	if err != nil {
-		return err
-	}
-	defer rpcClient.Close()
-
-	var currentBlockNo hexutil.Uint64
-	err = rpcClient.CallContext(ctx, &currentBlockNo, "eth_blockNumber")
+	rpc, err := geth.getWebsocketRPC()
 	if err != nil {
 		return err
 	}
 
+	currentBlockNo, err := rpc.BlockNumber(ctx)
+	if err != nil {
+		return err
+	}
 	debug("relay.watchErc20Payments.starting currentBlock=%d", currentBlockNo)
 
 	// turn set into a list
@@ -362,19 +343,16 @@ func (r *Relay) watchErc20Payments(geth ethClient) error {
 	}
 
 	ch := make(chan types.Log)
-	arg := map[string]interface{}{
-		"address": erc20Addresses,
-		// "topics":  topics,
-		"topics": [][]common.Hash{
+	arg := ethereum.FilterQuery{
+		Addresses: erc20Addresses,
+		Topics: [][]common.Hash{
 			{eventSignatureTransferErc20},
 		},
 	}
-	arg["fromBlock"] = "0x" + strconv.FormatUint(uint64(currentBlockNo), 16)
-	arg["toBlock"] = "0x" + strconv.FormatUint(uint64(currentBlockNo)*2, 16)
 
 	debug("relay.watchErc20Payments.newSubscription from=%d", currentBlockNo)
 
-	subscription, err := rpcClient.EthSubscribe(ctx, ch, "logs", arg)
+	subscription, err := rpc.SubscribeFilterLogs(ctx, arg, ch)
 	if err != nil {
 		return fmt.Errorf("relay.watchErc20Payments.EthSubscribeFailed err=%s", err)
 	}
@@ -388,10 +366,9 @@ watch:
 	for {
 		select {
 		case <-ctx.Done():
-			log("context done")
 			break watch
 		case err := <-errch:
-			log("relay.watchErc20Payments err=%s", err)
+			debug("relay.watchErc20Payments err=%s", err)
 			break watch
 		case vLog := <-ch:
 			log("relay.watchErc20Payments i=%d block_tx=%s", i, vLog.BlockHash.Hex())
@@ -471,7 +448,7 @@ watch:
 	return nil
 }
 
-func (r *Relay) watchPaymentMade(geth ethClient) error {
+func (r *Relay) watchPaymentMade(geth *ethClient) error {
 	debug("relay.watchPaymentMade.start chainID=%d", geth.chainID)
 
 	var (
@@ -504,7 +481,7 @@ func (r *Relay) watchPaymentMade(geth ethClient) error {
 		if lowestLastBlock.Cmp(&waiter.lastBlockNo.Int) == -1 {
 			lowestLastBlock = &waiter.lastBlockNo.Int
 		}
-		pid := common.Hash(waiter.paymentId.Bytes())
+		pid := common.Hash(waiter.paymentId)
 		//debug("relay.watchPaymentMade.want pid=%s", pid.Hex())
 		waiters[pid] = waiter
 	}

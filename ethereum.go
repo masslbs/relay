@@ -20,6 +20,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	sync "sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -96,8 +97,6 @@ func newEthRPCService() *ethRPCService {
 	assertWithMessage(has, "no rpc endpoint for store registries")
 	relaysReg, err := c.newRelayReg()
 	check(err)
-	gethc, err := c.getRPC()
-	check(err)
 
 	ctx := context.Background()
 	callOpts := &bind.CallOpts{
@@ -118,6 +117,9 @@ func newEthRPCService() *ethRPCService {
 		assertWithMessage(nftOwner.Cmp(c.wallet) == 0, fmt.Sprintf("passed NFT is owned by %s", nftOwner))
 
 	} else { // in testing, always create a new nft
+		gethc, err := c.getRPC()
+		check(err)
+
 		buf := make([]byte, 32)
 		rand.Read(buf)
 		relayTokenID.SetBytes(buf)
@@ -128,7 +130,7 @@ func newEthRPCService() *ethRPCService {
 		tx, err := relaysReg.Mint(txOpts, relayTokenID, c.wallet, fmt.Sprintf("http://localhost:%d/relay_nft?token=%s", mustGetEnvInt("PORT"), relayTokenID))
 		check(err)
 
-		err = c.checkTransaction(ctx, gethc, tx)
+		err = checkTransaction(ctx, gethc, tx)
 		check(err)
 	}
 
@@ -183,9 +185,7 @@ func (rpc *ethRPCService) process(ops <-chan EthLookup) {
 			op.closeWithError(fmt.Errorf("chain not supported: %d", cid))
 			continue
 		}
-
-		go op.process(ethClient)
-
+		op.process(ethClient)
 		log("ethRPC.done took=%d", took(start))
 	}
 }
@@ -529,7 +529,7 @@ type paymentIDandAddressEthLookup struct {
 	paymentReq *PaymentRequest
 	fallback   common.Address
 
-	resultID   *big.Int
+	resultID   []byte
 	resultAddr common.Address
 
 	errCh chan<- error
@@ -573,14 +573,15 @@ func (lookup *paymentIDandAddressEthLookup) process(client *ethClient) {
 		lookup.closeWithError(fmt.Errorf("failed to retreive paymentAddr: %w", err))
 		return
 	}
-	lookup.resultID = paymentId
+	lookup.resultID = make([]byte, 32)
+	paymentId.FillBytes(lookup.resultID)
 	lookup.resultAddr = purchaseAddr
 	close(lookup.errCh)
 
 	return
 }
 
-func (rpc *ethRPCService) GetPaymentIDAndAddress(chainID uint64, pr *PaymentRequest, fallback common.Address) (*big.Int, common.Address, error) {
+func (rpc *ethRPCService) GetPaymentIDAndAddress(chainID uint64, pr *PaymentRequest, fallback common.Address) ([]byte, common.Address, error) {
 	lookup := &paymentIDandAddressEthLookup{
 		chainID:    chainID,
 		paymentReq: pr,
@@ -608,7 +609,9 @@ type ethClient struct {
 	chainID uint64
 	rpcUrls []string
 
-	backgroundCtx  context.Context
+	backgroundCtx context.Context
+
+	endpointMu     sync.Mutex
 	lastClient     *ethclient.Client
 	lastWebsockRPC *ethclient.Client
 
@@ -647,8 +650,11 @@ func newEthClient(chainID uint64, rpcURLs []string) *ethClient {
 	err = repeat.Repeat(
 		repeat.Fn(func() error {
 			gethc, err := c.getRPC()
-			if errors.Is(err, context.DeadlineExceeded) {
-				return repeat.HintTemporary(err)
+			if err != nil {
+				if errors.Is(err, context.DeadlineExceeded) {
+					return repeat.HintTemporary(err)
+				}
+				return err
 			}
 			err = c.updateGasLimit(ctx, gethc)
 			if errors.Is(err, context.DeadlineExceeded) {
@@ -704,6 +710,9 @@ func newEthClient(chainID uint64, rpcURLs []string) *ethClient {
 }
 
 func (c *ethClient) getWebsocketRPC() (*ethclient.Client, error) {
+	c.endpointMu.Lock()
+	defer c.endpointMu.Unlock()
+
 	if last := c.lastWebsockRPC; last != nil {
 		_, err := last.BlockNumber(c.backgroundCtx)
 		if err == nil {
@@ -711,6 +720,7 @@ func (c *ethClient) getWebsocketRPC() (*ethclient.Client, error) {
 		}
 		c.lastWebsockRPC = nil
 	}
+
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 1 * time.Second,
 		// custom dialer..?
@@ -723,7 +733,6 @@ func (c *ethClient) getWebsocketRPC() (*ethclient.Client, error) {
 		}
 		wsURLs = append(wsURLs, u)
 	}
-
 	randomIndex := mrand.Intn(len(wsURLs))
 	randomRPCURL := wsURLs[randomIndex]
 	debug("ethClient.getWSClient rpc=%s", randomRPCURL)
@@ -737,10 +746,16 @@ func (c *ethClient) getWebsocketRPC() (*ethclient.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ethclient.NewClient(gethRPC), nil
+
+	newRPC := ethclient.NewClient(gethRPC)
+	c.lastWebsockRPC = newRPC
+	return newRPC, nil
 }
 
 func (c *ethClient) getRPC() (*ethclient.Client, error) {
+	c.endpointMu.Lock()
+	defer c.endpointMu.Unlock()
+
 	if last := c.lastClient; last != nil {
 		err := c.updateGasLimit(c.backgroundCtx, last)
 		if err == nil {
@@ -772,7 +787,7 @@ func (c *ethClient) getRPC() (*ethclient.Client, error) {
 	return newClient, err
 }
 
-func (c ethClient) newRelayReg() (*RegRelay, error) {
+func (c *ethClient) newRelayReg() (*RegRelay, error) {
 	client, err := c.getRPC()
 	if err != nil {
 		return nil, err
@@ -787,7 +802,7 @@ func (c ethClient) newRelayReg() (*RegRelay, error) {
 	return reg, nil
 }
 
-func (c ethClient) newShopReg() (*RegShop, error) {
+func (c *ethClient) newShopReg() (*RegShop, error) {
 	client, err := c.getRPC()
 	if err != nil {
 		return nil, err
@@ -802,7 +817,7 @@ func (c ethClient) newShopReg() (*RegShop, error) {
 	return reg, nil
 }
 
-func (c ethClient) makeTxOpts(ctx context.Context, client *ethclient.Client) (*bind.TransactOpts, error) {
+func (c *ethClient) makeTxOpts(ctx context.Context, client *ethclient.Client) (*bind.TransactOpts, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -821,7 +836,7 @@ func (c ethClient) makeTxOpts(ctx context.Context, client *ethclient.Client) (*b
 	}, nil
 }
 
-func (c ethClient) checkTransaction(ctx context.Context, conn *ethclient.Client, tx *types.Transaction) error {
+func checkTransaction(ctx context.Context, conn *ethclient.Client, tx *types.Transaction) error {
 	receipt, err := bind.WaitMined(ctx, conn, tx)
 	if err != nil {
 		return fmt.Errorf("waiting for mint failed: %w", err)
@@ -847,7 +862,7 @@ func (c *ethClient) updateGasLimit(ctx context.Context, client *ethclient.Client
 	return nil
 }
 
-func (c ethClient) hasBalance(ctx context.Context, addr common.Address) bool {
+func (c *ethClient) hasBalance(ctx context.Context, addr common.Address) bool {
 	rpc, err := c.getRPC()
 	if err != nil {
 		log("ethClient.hasBalance.getClient error=%s", err)

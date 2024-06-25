@@ -1434,6 +1434,9 @@ type Relay struct {
 	blobUploadTokens   map[string]struct{}
 	blobUploadTokensMu *sync.Mutex
 
+	watcherContextERC20       context.Context
+	watcherContextERC20Cancel context.CancelFunc
+
 	// persistence
 	syncTx                  pgx.Tx
 	queuedEventInserts      []*EventInsert
@@ -1455,6 +1458,7 @@ func newRelay(metric *Metric) *Relay {
 	r := &Relay{}
 
 	r.ethereum = newEthRPCService()
+	r.watcherContextERC20, r.watcherContextERC20Cancel = context.WithCancel(context.Background())
 
 	if cgAPIKey := os.Getenv("COINGECKO_API_KEY"); cgAPIKey != "" {
 		r.prices = newCoinGecko(cgAPIKey, "usd", "ethereum")
@@ -2863,14 +2867,14 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		return
 	}
 
-	log("relay.commitOrderOp.paymentRequest id=%s addr=%x total=%s currentBlock=%d", paymentId.Text(16), paymentAddr, bigTotal.String(), blockNo)
+	log("relay.commitOrderOp.paymentRequest id=%x addr=%x total=%s currentBlock=%d", paymentId, paymentAddr, bigTotal.String(), blockNo)
 
 	// mark order as finalized by creating the event and updating payments table
 	var (
 		fin UpdateOrder_ItemsFinalized
 		w   PaymentWaiter
 	)
-	fin.PaymentId = paymentId.Bytes()
+	fin.PaymentId = paymentId
 
 	fin.SubTotal = roundPrice(fiatSubtotal).Text('f')
 	fin.SalesTax = roundPrice(salesTax).Text('f')
@@ -2901,7 +2905,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	w.lastBlockNo.SetInt64(int64(blockNo))
 	w.coinsTotal.Set(bigTotal)
 	w.coinsPayed.SetInt64(0)
-	w.paymentId = SQLStringBigInt{*paymentId}
+	w.paymentId = paymentId
 
 	if usignErc20 {
 		w.erc20TokenAddr = &chosenCurrency.Addr
@@ -2931,12 +2935,17 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	const insertPaymentWaiterQuery = `insert into payments (waiterId, shopSeqNo, createdByShopId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr, paymentId)
 	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	_, err = r.syncTx.Exec(ctx, insertPaymentWaiterQuery,
-		w.waiterID, seqPair.lastUsedShopSeq, order.createdByShopID, w.orderID, w.orderFinalizedAt, w.purchaseAddr.Bytes(), w.lastBlockNo, w.coinsPayed, w.coinsTotal, w.erc20TokenAddr, w.paymentId.Bytes())
+		w.waiterID, seqPair.lastUsedShopSeq, order.createdByShopID, w.orderID, w.orderFinalizedAt, w.purchaseAddr.Bytes(), w.lastBlockNo, w.coinsPayed, w.coinsTotal, w.erc20TokenAddr, w.paymentId)
 	check(err)
 
 	r.commitSyncTransaction()
 
 	op.orderFinalizedID = update.EventId
+
+	if usignErc20 {
+		r.watcherContextERC20Cancel()
+		r.watcherContextERC20, r.watcherContextERC20Cancel = context.WithCancel(context.Background())
+	}
 
 	logSR("relay.commitOrderOp.finish took=%d", sessionID, requestID, took(start))
 	r.sendSessionOp(sessionState, op)
@@ -3645,6 +3654,7 @@ func (r *Relay) run() {
 
 // Metric maps a name to a prometheus metric.
 type Metric struct {
+	mu                sync.Mutex
 	name2gauge        map[string]prometheus.Gauge
 	name2counter      map[string]prometheus.Counter
 	httpStatusCodes   *prometheus.CounterVec
@@ -3680,6 +3690,10 @@ func (m *Metric) emit(name string, value uint64) {
 	if logMetrics {
 		log("metric.emit name=%s value=%d", name, value)
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	gauge, has := m.name2gauge[name]
 	if !has {
 		gauge = promauto.NewGauge(prometheus.GaugeOpts{
@@ -3691,9 +3705,13 @@ func (m *Metric) emit(name string, value uint64) {
 	if !has {
 		m.name2gauge[name] = gauge
 	}
+
 }
 
 func (m *Metric) counterAdd(name string, value float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	counter, has := m.name2counter[name]
 	if !has {
 		counter = promauto.NewCounter(prometheus.CounterOpts{
@@ -4009,17 +4027,17 @@ func server() {
 	// spawn payment watchers
 	type watcher struct {
 		name string
-		fn   func(ethClient) error
+		fn   func(*ethClient) error
 	}
 	var (
 		fns = []watcher{
 			{"subscribe", r.subscriptPaymentsMade},
-			//{"paymentsMade", r.watchPaymentMade},
-			//{"erc20", r.watchErc20Payments},
-			//{"eth", r.watchEthereumPayments},
+			{"paymentsMade", r.watchPaymentMade},
+			{"erc20", r.watchErc20Payments},
+			{"eth", r.watchEthereumPayments},
 		}
 
-		mkWatch = func(w watcher, geth ethClient) repeat.Operation {
+		mkWatch = func(w watcher, geth *ethClient) repeat.Operation {
 			return repeat.Fn(func() error {
 				err := w.fn(geth)
 				if err != nil {
@@ -4045,7 +4063,7 @@ func server() {
 					}
 					time.Sleep(ethereumBlockInterval/2 + time.Duration(rand.Intn(1000))*time.Millisecond)
 				}
-			}(mkWatch(watcher, *geth))
+			}(mkWatch(watcher, geth))
 		}
 	}
 
@@ -4058,7 +4076,6 @@ func server() {
 	mux := http.NewServeMux()
 
 	// Public APIs
-
 	for _, v := range networkVersions {
 		mux.HandleFunc(fmt.Sprintf("/v%d/sessions", v), sessionsHandleFunc(v, r))
 		mux.HandleFunc(fmt.Sprintf("/v%d/enroll_key_card", v), enrollKeyCardHandleFunc(v, r))

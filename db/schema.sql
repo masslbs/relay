@@ -90,7 +90,7 @@ CREATE TABLE payments (
     orderPayedAt     TIMESTAMP,
     orderPayedTx     bytea
 );
-
+alter table payments add constraint paymentIdLength check (octet_length(paymentId) = 32);
 alter table payments add constraint erc20TokenAddrCheck check (erc20TokenAddr is null or octet_length(erc20TokenAddr) = 20);
 
 CREATE UNIQUE INDEX paymentsOrderId ON payments (orderId);
