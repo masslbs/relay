@@ -818,18 +818,31 @@ func validateCreateOrder(_ uint, event *CreateOrder) *Error {
 	)
 }
 
-func validateUpdateOrder(_ uint, event *UpdateOrder) *Error {
+func validateUpdateShippingDetails(_ uint, event *UpdateOrder_AddressDetails) *Error {
+	return coalesce(
+		validateString(event.Name, "name", 1024),
+		validateString(event.Address1, "address1", 128),
+		validateString(event.City, "city", 128),
+		validateString(event.PostalCode, "postal_code", 25),
+		validateString(event.Country, "country", 50),
+		validateString(event.PhoneNumber, "phone_number", 20),
+	)
+}
+
+func validateUpdateOrder(v uint, event *UpdateOrder) *Error {
 	errs := []*Error{
 		validateEventID(event.EventId, "event_id"),
 		validateEventID(event.OrderId, "order_id"),
 	}
 	switch tv := event.Action.(type) {
 	case *UpdateOrder_ChangeItems_:
-		errs = append(errs, validateChangeItems(2, tv.ChangeItems))
+		errs = append(errs, validateChangeItems(v, tv.ChangeItems))
 	case *UpdateOrder_ItemsFinalized_:
 		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "OrderFinalized is not allowed in EventWriteRequest"})
 	case *UpdateOrder_OrderCanceled_:
-		errs = append(errs, validateOrderCanceled(2, tv.OrderCanceled))
+		errs = append(errs, validateOrderCanceled(v, tv.OrderCanceled))
+	case *UpdateOrder_UpdateShippingDetails:
+		errs = append(errs, validateUpdateShippingDetails(v, tv.UpdateShippingDetails))
 	default:
 		panic(fmt.Sprintf("Unhandled action type: %T", tv))
 	}
@@ -1345,7 +1358,8 @@ func (current *CachedOrder) update(evt *ShopEvent, meta CachedMetadata) {
 			current.finalized = true
 		case *UpdateOrder_OrderCanceled_:
 			current.abandoned = true
-
+		case *UpdateOrder_UpdateShippingDetails:
+			// noop - data isn't used by the relay
 		default:
 			panic(fmt.Sprintf("unhandled event type: %T", evt.Union))
 		}
