@@ -2849,7 +2849,8 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	// ttl
 	blockNo, err := r.ethereum.GetCurrentBlockNumber(chosenCurrency.ChainID)
 	if err != nil {
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get block number"}
+		logSR("relay.commitOrderOp.blockNumberFailed err=%s", sessionID, requestID, err)
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get current block number"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2857,7 +2858,8 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 
 	block, err := r.ethereum.GetBlockByNumber(chosenCurrency.ChainID, bigBlockNo)
 	if err != nil {
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get block number"}
+		logSR("relay.commitOrderOp.blockByNumberFailed block=%d err=%s", sessionID, requestID, blockNo, err)
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "failed to get block by number"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -2881,7 +2883,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 		return
 	}
 
-	log("relay.commitOrderOp.paymentRequest id=%x addr=%x total=%s currentBlock=%d", paymentId, paymentAddr, bigTotal.String(), blockNo)
+	logSR("relay.commitOrderOp.paymentRequest id=%x addr=%x total=%s currentBlock=%d", sessionID, requestID, paymentId, paymentAddr, bigTotal.String(), blockNo)
 
 	// mark order as finalized by creating the event and updating payments table
 	var (
