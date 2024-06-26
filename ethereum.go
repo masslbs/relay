@@ -23,14 +23,15 @@ import (
 	sync "sync"
 	"time"
 
+	"github.com/ethereum-optimism/optimism/op-service/dial"
+	oplog "github.com/ethereum-optimism/optimism/op-service/log"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/ethereum/go-ethereum/rpc"
-	"github.com/gorilla/websocket"
+	ethlog "github.com/ethereum/go-ethereum/log"
 	"github.com/ssgreg/repeat"
 )
 
@@ -721,11 +722,6 @@ func (c *ethClient) getWebsocketRPC() (*ethclient.Client, error) {
 		c.lastWebsockRPC = nil
 	}
 
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 1 * time.Second,
-		// custom dialer..?
-	}
-
 	var wsURLs []string
 	for _, u := range c.rpcUrls {
 		if !strings.HasPrefix(u, "ws") {
@@ -737,12 +733,12 @@ func (c *ethClient) getWebsocketRPC() (*ethclient.Client, error) {
 	randomRPCURL := wsURLs[randomIndex]
 	debug("ethClient.getWSClient rpc=%s", randomRPCURL)
 
-	gethRPC, err := rpc.DialOptions(c.backgroundCtx,
-		randomRPCURL,
-		rpc.WithWebsocketDialer(dialer),
-		// TODO: with retry http roundtripper for http endpoints
-		// https://pkg.go.dev/github.com/hashicorp/go-retryablehttp#Client
-	)
+	ctx := context.Background()
+	logCfg := oplog.DefaultCLIConfig()
+	logCfg.Level = ethlog.LevelDebug
+	setupLog := oplog.NewLogger(os.Stderr, logCfg)
+
+	gethRPC, err := dial.DialRPCClientWithTimeout(ctx, dial.DefaultDialTimeout, setupLog, randomRPCURL)
 	if err != nil {
 		return nil, err
 	}
@@ -764,21 +760,20 @@ func (c *ethClient) getRPC() (*ethclient.Client, error) {
 		c.lastClient = nil
 	}
 
-	// TODO: retry
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 1 * time.Second,
-	}
-
 	randomIndex := mrand.Intn(len(c.rpcUrls))
 	randomRPCURL := c.rpcUrls[randomIndex]
 	debug("ethClient.newClient chainID=%d rpc=%s", c.chainID, randomRPCURL)
 
-	gethRPC, err := rpc.DialOptions(c.backgroundCtx,
-		randomRPCURL,
-		rpc.WithWebsocketDialer(dialer),
-		// TODO: with retry http roundtripper for http endpoints
-		// https://pkg.go.dev/github.com/hashicorp/go-retryablehttp#Client
-	)
+	ctx := context.Background()
+	logCfg := oplog.DefaultCLIConfig()
+	logCfg.Level = ethlog.LevelDebug
+	setupLog := oplog.NewLogger(os.Stderr, logCfg)
+
+	gethRPC, err := dial.DialRPCClientWithTimeout(ctx, dial.DefaultDialTimeout, setupLog, randomRPCURL)
+	if err != nil {
+		return nil, err
+	}
+
 	if err != nil {
 		return nil, err
 	}
