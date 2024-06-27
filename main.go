@@ -3893,7 +3893,10 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			return http.StatusBadRequest, errors.New("invalid shopTokenID")
 		}
 
-		userWallet, err := verifyKeyCardEnroll(data.KeyCardPublicKey, data.Signature)
+		ethClient, ok := r.ethereum.chains[r.ethereum.registryChainID]
+		assertWithMessage(ok, "no registry chain client")
+
+		userWallet, err := ethClient.verifyKeyCardEnroll(data.KeyCardPublicKey, data.Signature)
 		if err != nil {
 			return http.StatusForbidden, fmt.Errorf("invalid signature: %w", err)
 		}
