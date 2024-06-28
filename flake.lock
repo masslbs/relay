@@ -13,11 +13,11 @@
         "solady": "solady"
       },
       "locked": {
-        "lastModified": 1719236669,
-        "narHash": "sha256-ngX+0H2jFaGavuFzdvoFTUR9C4dYPDbJ6E3X04aQh68=",
+        "lastModified": 1719565636,
+        "narHash": "sha256-gqyslAyKo6BmUauNYfFCNULWRtH6aJL0tpiAUCCi0MY=",
         "owner": "masslbs",
         "repo": "contracts",
-        "rev": "0d9625366fb6e24fb5f3b70b43d981764a26e3a2",
+        "rev": "090421365ddcb7fbb1d1649e67f2ec7716a74ada",
         "type": "github"
       },
       "original": {
@@ -210,11 +210,11 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1719426051,
-        "narHash": "sha256-yJL9VYQhaRM7xs0M867ZFxwaONB9T2Q4LnGo1WovuR4=",
+        "lastModified": 1719707984,
+        "narHash": "sha256-RoxIr/fbndtuKqulGvNCcuzC6KdAib85Q8gXnjzA1dw=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "89c49874fb15f4124bf71ca5f42a04f2ee5825fd",
+        "rev": "7dca15289a1c2990efbe4680f0923ce14139b042",
         "type": "github"
       },
       "original": {

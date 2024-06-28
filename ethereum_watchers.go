@@ -40,10 +40,14 @@ type PaymentWaiter struct {
 var (
 	bigZero = big.NewInt(0)
 	bigOne  = big.NewInt(1)
+
+	eventSignatureTransferErc20 = crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)"))
+	eventSignaturePaymentMade   = crypto.Keccak256Hash([]byte("PaymentMade(uint256)"))
 )
 
-func (r *Relay) subscriptPaymentsMade(geth *ethClient) error {
-	log("relay.subscriptPaymentsMade.start chainID=%d", geth.chainID)
+// direct contract calls, done via pay() that emit PaymentMade events
+func (r *Relay) subscribeFilterLogsPaymentsMade(geth *ethClient) error {
+	log("relay.subscribeFilterLogsPaymentsMade.start chainID=%d", geth.chainID)
 
 	var start = now()
 
@@ -70,24 +74,24 @@ func (r *Relay) subscriptPaymentsMade(geth *ethClient) error {
 	}
 
 	ch := make(chan types.Log)
-	subscription, err := gethClient.SubscribeFilterLogs(ctx, qry, ch)
+	subscribeFilterLogsion, err := gethClient.SubscribeFilterLogs(ctx, qry, ch)
 	if err != nil {
-		return fmt.Errorf("relay.subscriptPaymentsMade.ethSubscribeFailed err=%s", err)
+		return fmt.Errorf("relay.subscribeFilterLogsPaymentsMade.ethSubscribeFailed err=%s", err)
 	}
-	defer subscription.Unsubscribe()
-	errch := subscription.Err()
+	defer subscribeFilterLogsion.Unsubscribe()
+	errch := subscribeFilterLogsion.Err()
 	i := 0
 
-	log("relay.subscriptPaymentsMade.startingBlockNo  current=%d", currentBlockNoInt)
+	log("relay.subscribeFilterLogsPaymentsMade.startingBlockNo  current=%d", currentBlockNoInt)
 
 watch:
 	for {
 		select {
 		case err := <-errch:
-			log("relay.subscriptPaymentsMade.subscriptionBroke err=%s", err)
+			log("relay.subscribeFilterLogsPaymentsMade.subscribeFilterLogsionBroke err=%s", err)
 			break watch
 		case vLog := <-ch:
-			debug("relay.subscriptPaymentsMade.newLog i=%d block_tx=%s", i, vLog.BlockHash.Hex())
+			debug("relay.subscribeFilterLogsPaymentsMade.newLog i=%d block_tx=%s", i, vLog.BlockHash.Hex())
 			i++
 
 			var paymentIdHash = vLog.Topics[1]
@@ -108,7 +112,7 @@ AND chainId = $2`
 			}
 
 			orderID := waiter.orderID
-			log("relay.subscriptPaymentsMade.found orderId=%s txHash=%x", orderID, vLog.TxHash)
+			log("relay.subscribeFilterLogsPaymentsMade.found orderId=%s txHash=%x", orderID, vLog.TxHash)
 
 			_, has := r.ordersByOrderID.get(orderID)
 			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
@@ -121,28 +125,25 @@ AND chainId = $2`
 			r.opsInternal <- &op
 			<-op.done // block until op was processed by server loop
 
-			log("relay.subscriptPaymentsMade.completed cartId=%s txHash=%x", orderID, vLog.TxHash)
+			log("relay.subscribeFilterLogsPaymentsMade.completed cartId=%s txHash=%x", orderID, vLog.TxHash)
 		}
 	}
 
-	log("relay.subscriptPaymentsMade.exited took=%d", took(start))
+	log("relay.subscribeFilterLogsPaymentsMade.exited took=%d", took(start))
 	return nil
 }
 
-func (r *Relay) watchEthereumPayments(client *ethClient) error {
-	debug("relay.watchEthereumPayments.start chainID=%d", client.chainID)
+func (r *Relay) subscribeNewHeadsForEthereByCall(client *ethClient) error {
+	debug("relay.subscribeNewHeadsForEthereByCall.start chainID=%d", client.chainID)
 
 	var (
 		ctx   = context.Background()
 		start = now()
-
-		// this is the block iterator
-		lowestLastBlock = new(big.Int)
-
-		waiters = make(map[common.Address]PaymentWaiter)
 	)
 
-	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal
+	var waiters = make(map[common.Address]PaymentWaiter)
+
+	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, purchaseAddr, coinsTotal
 	FROM payments
 	WHERE orderPayedAt IS NULL
 		AND erc20TokenAddr IS NULL -- see watchErc20Payments()
@@ -154,128 +155,74 @@ func (r *Relay) watchEthereumPayments(client *ethClient) error {
 	defer rows.Close()
 	for rows.Next() {
 		var waiter PaymentWaiter
-		err := rows.Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal)
+		err := rows.Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.purchaseAddr, &waiter.coinsTotal)
 		check(err)
-		assert(waiter.lastBlockNo.Cmp(bigZero) != 0)
-
-		// init first
-		if lowestLastBlock.Cmp(bigZero) == 0 {
-			lowestLastBlock = &waiter.lastBlockNo.Int
-		}
-		// is this waiter smaller?
-		if waiter.lastBlockNo.Cmp(lowestLastBlock) == -1 {
-			lowestLastBlock = &waiter.lastBlockNo.Int
-		}
 
 		waiters[waiter.purchaseAddr] = waiter
 	}
 	check(rows.Err())
 
 	if len(waiters) == 0 {
-		debug("relay.watchEthereumPayments.noOpenPayments took=%d", took(start))
+		debug("relay.subscribeNewHeadsForEthereByCall.noOpenPayments took=%d", took(start))
 		return nil
 	}
 
-	debug("relay.watchEthereumPayments.dbRead took=%d waiters=%d lowestLastBlock=%s", took(start), len(waiters), lowestLastBlock)
+	debug("relay.subscribeNewHeadsForEthereByCall.dbRead took=%d waiters=%d", took(start), len(waiters))
 
 	rpc, err := client.getWebsocketRPC()
 	if err != nil {
 		return err
 	}
 
-	// Get the latest block number
-	currentBlockNoInt, err := rpc.BlockNumber(ctx)
-	check(err)
-	currentBlockNo := big.NewInt(int64(currentBlockNoInt))
-
-	for {
-		if currentBlockNo.Cmp(lowestLastBlock) == -1 {
-			// nothing to do
-			debug("relay.watchEthereumPayments.noNewBlocks current=%d", currentBlockNoInt)
-			break
-		}
-		debug("relay.watchEthereumPayments.checkBlock num=%d", lowestLastBlock)
-
-		// check each block for transactions
-		block, err := rpc.BlockByNumber(ctx, lowestLastBlock)
-		if err != nil {
-			return fmt.Errorf("relay.watchEthereumPayments.failedToGetBlock block=%s err=%s", lowestLastBlock, err)
-		}
-
-		for _, tx := range block.Transactions() {
-			to := tx.To()
-			if to == nil {
-				continue // contract creation
-			}
-			waiter, has := waiters[*to]
-			if has {
-				debug("relay.watchEthereumPayments.checkTx waiter.lastBlockNo=%s checkingBlock=%s tx=%s to=%s", waiter.lastBlockNo.String(), block.Number().String(), tx.Hash().String(), tx.To().String())
-				orderID := waiter.orderID
-				// order, has := r.ordersByOrderID.get(orderID)
-				assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
-
-				// found a transaction to the purchase address
-				// check if it's the right amount
-				inTx := tx.Value()
-				waiter.coinsPayed.Add(&waiter.coinsPayed.Int, inTx)
-				if waiter.coinsPayed.Cmp(&waiter.coinsTotal.Int) != -1 {
-					// it is larger or equal
-
-					op := PaymentFoundInternalOp{
-						orderID: orderID,
-						txHash:  tx.Hash(),
-						done:    make(chan struct{}),
-					}
-					r.opsInternal <- &op
-					<-op.done // wait for write
-
-					delete(waiters, waiter.purchaseAddr)
-					log("relay.watchEthereumPayments.completed orderId=%s", orderID)
-				} else {
-					// it is still smaller
-					log("relay.watchEthereumPayments.partial orderId=%s inTx=%s subTotal=%s", orderID, inTx.String(), waiter.coinsPayed.String())
-					// update subtotal
-					const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE orderId = $2;`
-					_, err := r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, orderID)
-					check(err) // cant recover sql errors
-				}
-			}
-		}
-
-		// increment iterator
-		lowestLastBlock.Add(lowestLastBlock, bigOne)
+	ch := make(chan *types.Header)
+	sub, err := rpc.SubscribeNewHead(ctx, ch)
+	if err != nil {
+		return fmt.Errorf("subNewHead failed: %w", err)
 	}
+	defer sub.Unsubscribe()
+	errch := sub.Err()
 
-	// update waiters in db
-	var orderIDs []eventID
-	for _, waiter := range waiters {
-		// only advance those waiters which last blocks are lower then the block we just checked
-		if lowestLastBlock.Cmp(&waiter.lastBlockNo.Int) == 1 {
-			continue
+	select {
+	case err := <-errch:
+		return fmt.Errorf("subscription broke: %w", err)
+
+	case newHead := <-ch:
+		for addr, waiter := range waiters {
+			balance, err := rpc.BalanceAt(ctx, addr, newHead.Number)
+			if err != nil {
+				return fmt.Errorf("relay.subscribeNewHeadsForEthereByCall.balanceAtFailed addr=%s block=%s err=%w", addr.Hex(), newHead.Number.String(), err)
+			}
+
+			if balance.Cmp(&waiter.coinsTotal.Int) == -1 {
+				continue
+			}
+
+			debug("relay.subscribeNewHeadsForEthereByCall.checkTx checkingBlock=%s to=%s", newHead.Hash().Hex(), addr.Hex())
+			orderID := waiter.orderID
+			_, has := r.ordersByOrderID.get(orderID)
+			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
+
+			op := PaymentFoundInternalOp{
+				orderID: orderID,
+				txHash:  newHead.Hash(),
+				done:    make(chan struct{}),
+			}
+			r.opsInternal <- &op
+			<-op.done // wait for write
+
+			delete(waiters, waiter.purchaseAddr)
+			log("relay.subscribeNewHeadsForEthereByCall.completed orderId=%s", orderID)
 		}
-		orderIDs = append(orderIDs, waiter.orderID)
-	}
-	if len(orderIDs) > 0 {
-		// batch the update
-		const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = $2 WHERE orderId = any($1);`
-		_, err = r.connPool.Exec(ctx, updateLastBlockNoQuery, orderIDs, lowestLastBlock.String())
-		check(err)
-		debug("relay.watchEthereumPayments.advance orderIds=%v newLastBlock=%s", orderIDs, lowestLastBlock.String())
 	}
 
 	stillWaiting := len(waiters)
-	debug("relay.watchEthereumPayments.finish took=%d openWaiters=%d", took(start), stillWaiting)
+	debug("relay.subscribeNewHeadsForEthereByCall.finish took=%d openWaiters=%d", took(start), stillWaiting)
 	r.metric.emit("relay_payments_eth_open", uint64(stillWaiting))
 	return nil
 }
 
-var (
-	eventSignatureTransferErc20 = crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)"))
-	eventSignaturePaymentMade   = crypto.Keccak256Hash([]byte("PaymentMade(uint256)"))
-)
-
-func (r *Relay) watchErc20Payments(geth *ethClient) error {
-	debug("relay.watchErc20Payments.start chainID=%d", geth.chainID)
+func (r *Relay) subscribeFilterLogsERC20Transfers(geth *ethClient) error {
+	debug("relay.subscribeFilterLogsERC20Transfers.start chainID=%d", geth.chainID)
 
 	var (
 		start = now()
@@ -291,7 +238,7 @@ func (r *Relay) watchErc20Payments(geth *ethClient) error {
 	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr
 		FROM payments
 		WHERE orderPayedAt IS NULL
-			AND erc20TokenAddr IS NOT NULL -- see watchErc20Payments()
+			AND erc20TokenAddr IS NOT NULL -- see subscribeFilterLogsERC20Transfers()
 			AND orderFinalizedAt >= NOW() - INTERVAL '1 day'
             AND chainId = $1
 ORDER BY lastBlockNo asc;`
@@ -323,7 +270,7 @@ ORDER BY lastBlockNo asc;`
 	check(rows.Err())
 
 	if len(waiters) == 0 {
-		debug("relay.watchErc20Payments.noOpenPayments took=%d", took(start))
+		debug("relay.subscribeFilterLogsERC20Transfers.noOpenPayments took=%d", took(start))
 		time.Sleep(ethereumBlockInterval)
 		return nil
 	}
@@ -337,7 +284,7 @@ ORDER BY lastBlockNo asc;`
 	if err != nil {
 		return err
 	}
-	debug("relay.watchErc20Payments.starting currentBlock=%d", currentBlockNo)
+	debug("relay.subscribeFilterLogsERC20Transfers.starting currentBlock=%d", currentBlockNo)
 
 	// turn set into a list
 	erc20Addresses := make([]common.Address, len(erc20AddressSet))
@@ -357,7 +304,7 @@ ORDER BY lastBlockNo asc;`
 
 	subscription, err := rpc.SubscribeFilterLogs(ctx, arg, ch)
 	if err != nil {
-		return fmt.Errorf("relay.watchErc20Payments.EthSubscribeFailed: %w", err)
+		return fmt.Errorf("relay.subscribeFilterLogsERC20Transfers.EthSubscribeFailed: %w", err)
 	}
 	defer subscription.Unsubscribe()
 
@@ -371,13 +318,13 @@ watch:
 		case <-ctx.Done():
 			break watch
 		case err := <-errch:
-			debug("relay.watchErc20Payments err=%s", err)
+			debug("relay.subscribeFilterLogsERC20Transfers err=%s", err)
 			break watch
 		case vLog := <-ch:
-			log("relay.watchErc20Payments i=%d block_tx=%s", i, vLog.BlockHash.Hex())
+			log("relay.subscribeFilterLogsERC20Transfers i=%d block_tx=%s", i, vLog.BlockHash.Hex())
 			i++
-			// debug("relay.watchErc20Payments.checking block=%d", vLog.BlockNumber)
-			debug("relay.watchErc20Payments.checking topics=%#v", vLog.Topics[1:])
+			// debug("relay.subscribeFilterLogsERC20Transfers.checking block=%d", vLog.BlockNumber)
+			debug("relay.subscribeFilterLogsERC20Transfers.checking topics=%#v", vLog.Topics[1:])
 			fromHash := vLog.Topics[1]
 			toHash := vLog.Topics[2]
 
@@ -391,13 +338,13 @@ watch:
 
 				evts, err := geth.erc20ContractABI.Unpack("Transfer", vLog.Data)
 				if err != nil {
-					log("relay.watchErc20Payments.transferErc20.failedToUnpackTransfer tx=%s err=%s", vLog.TxHash.Hex(), err)
+					log("relay.subscribeFilterLogsERC20Transfers.transferErc20.failedToUnpackTransfer tx=%s err=%s", vLog.TxHash.Hex(), err)
 					continue
 				}
 
 				inTx, ok := evts[0].(*big.Int)
 				assertWithMessage(ok, fmt.Sprintf("unexpected unpack result for field 0 - type=%T", evts[0]))
-				debug("relay.watchErc20Payments.foundTransfer orderId=%s from=%s to=%s amount=%s", orderID, fromHash.Hex(), toHash.Hex(), inTx.String())
+				debug("relay.subscribeFilterLogsERC20Transfers.foundTransfer orderId=%s from=%s to=%s amount=%s", orderID, fromHash.Hex(), toHash.Hex(), inTx.String())
 
 				waiter.coinsPayed.Add(&waiter.coinsPayed.Int, inTx)
 				if waiter.coinsPayed.Cmp(&waiter.coinsTotal.Int) != -1 {
@@ -412,18 +359,18 @@ watch:
 					<-op.done
 
 					delete(waiters, toHash)
-					log("relay.watchErc20Payments.completed orderId=%s", orderID)
+					log("relay.subscribeFilterLogsERC20Transfers.completed orderId=%s", orderID)
 
 				} else {
 					// it is still smaller
-					log("relay.watchErc20Payments.partial orderId=%s inTx=%s subTotal=%s", orderID, inTx.String(), waiter.coinsPayed.String())
+					log("relay.subscribeFilterLogsERC20Transfers.partial orderId=%s inTx=%s subTotal=%s", orderID, inTx.String(), waiter.coinsPayed.String())
 					// update subtotal
 					const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE orderId = $2;`
 					_, err = r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, orderID)
 					check(err)
 				}
 			} else {
-				log("relay.watchErc20Payments.noWaiter inTx=%s", vLog.TxHash.Hex())
+				log("relay.subscribeFilterLogsERC20Transfers.noWaiter inTx=%s", vLog.TxHash.Hex())
 			}
 			// TODO: are logs always emitted in order?
 			if vLog.BlockNumber > lastBlockNo {
@@ -442,11 +389,11 @@ watch:
 			const updateLastBlockNoQuery = `UPDATE payments SET lastBlockNo = $2 WHERE orderId = $1;`
 			_, err = r.connPool.Exec(context.Background(), updateLastBlockNoQuery, waiter.orderID, uint64(currentBlockNo))
 			check(err)
-			debug("relay.watchErc20Payments.advance orderId=%x newLastBlock=%s", waiter.orderID, waiter.lastBlockNo.String())
+			debug("relay.subscribeFilterLogsERC20Transfers.advance orderId=%x newLastBlock=%s", waiter.orderID, waiter.lastBlockNo.String())
 		}
 	}
 	stillWaiting := len(waiters)
-	debug("relay.watchErc20Payments.finish took=%d openWaiters=%d", took(start), stillWaiting)
+	debug("relay.subscribeFilterLogsERC20Transfers.finish took=%d openWaiters=%d", took(start), stillWaiting)
 	r.metric.emit("relay_payments_erc20_open", uint64(stillWaiting))
 	return nil
 }
