@@ -4048,9 +4048,9 @@ func server() {
 	}
 	var (
 		fns = []watcher{
-			{"paymentMade", r.subscriptPaymentsMade},
-			{"erc20", r.watchErc20Payments},
-			{"vanilla-eth", r.watchEthereumPayments},
+			{"paymentMade", r.subscribeFilterLogsPaymentsMade},
+			{"erc20", r.subscribeFilterLogsERC20Transfers},
+			{"vanilla-eth", r.subscribeNewHeadsForEthereByCall},
 		}
 
 		mkWatch = func(w watcher, geth *ethClient) repeat.Operation {
@@ -4077,7 +4077,7 @@ func server() {
 					if err != nil {
 						r.metric.counterAdd("relay_watchError_error", 1)
 					}
-					time.Sleep(ethereumBlockInterval/2 + time.Duration(rand.Intn(1000))*time.Millisecond)
+					time.Sleep(ethereumBlockInterval + time.Duration(rand.Intn(5000))*time.Millisecond)
 				}
 			}(mkWatch(watcher, geth))
 		}

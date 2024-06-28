@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/cockroachdb/apd"
@@ -33,7 +32,8 @@ var decimalTwo = apd.New(2, 0)
 func (tc testingConverter) FromFiatToCoin(fiat *apd.Decimal) *apd.Decimal {
 	ctx := apd.BaseContext.WithPrecision(10)
 	coinAmount := new(apd.Decimal)
-	ctx.Mul(coinAmount, fiat, decimalTwo)
+	_, err := ctx.Mul(coinAmount, fiat, decimalTwo)
+	check(err)
 	return coinAmount
 }
 
@@ -76,7 +76,6 @@ func (cg *coinGecko) GetCoinPrice(coin string) (*apd.Decimal, error) {
 	}
 	defer resp.Body.Close()
 	var result map[string]map[string]json.RawMessage
-	// r := io.TeeReader(resp.Body, os.Stderr)
 	r := resp.Body
 	if err := json.NewDecoder(r).Decode(&result); err != nil {
 		return nil, err
@@ -113,13 +112,11 @@ func (cg *coinGecko) GetERC20Price(tokenAddress common.Address) (result *apd.Dec
 	defer resp.Body.Close()
 
 	var data map[string]map[string]json.RawMessage
-	// r := io.TeeReader(resp.Body, os.Stderr)
 	r := resp.Body
 	err = json.NewDecoder(r).Decode(&data)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintln(os.Stderr)
 
 	token, ok := data[strings.ToLower(tokenAddress.Hex())]
 	if !ok {
