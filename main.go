@@ -60,7 +60,6 @@ const (
 	tickStatsInterval        = 1 * time.Second
 	tickBlockThreshold       = 50 * time.Millisecond
 	memoryStatsInterval      = 5 * time.Second
-	ethereumBlockInterval    = 15 * time.Second
 	emitUptimeInterval       = 10 * time.Second
 
 	databaseOpsChanSize           = 64 * 1024
@@ -78,8 +77,9 @@ var (
 	logEphemeralMessages = false
 	logMetrics           = false
 
-	sessionPingInterval = 15 * time.Second
-	sessionKickTimeout  = 3 * sessionPingInterval
+	sessionPingInterval   = 15 * time.Second
+	sessionKickTimeout    = 3 * sessionPingInterval
+	ethereumBlockInterval = 15 * time.Second
 )
 
 // Enable error'd and ignore'd requests to be simulated with env variable.
@@ -114,16 +114,23 @@ func initLogging() {
 		assert(simulateIgnoreRate >= 0 && simulateIgnoreRate <= 100)
 	}
 
+	// optional - mostly for testing
 	pingIntervalStr := os.Getenv("PING_INTERVAL")
-	pingInterval, err := time.ParseDuration(pingIntervalStr)
+	optPingInterval, err := time.ParseDuration(pingIntervalStr)
 	if pingIntervalStr != "" && err == nil {
-		sessionPingInterval = pingInterval
+		sessionPingInterval = optPingInterval
 	}
 
 	kickTimeoutStr := os.Getenv("KICK_TIMEOUT")
-	kickTimeout, err := time.ParseDuration(kickTimeoutStr)
+	optKickTimeout, err := time.ParseDuration(kickTimeoutStr)
 	if kickTimeoutStr != "" && err == nil {
-		sessionKickTimeout = kickTimeout
+		sessionKickTimeout = optKickTimeout
+	}
+
+	ethereumBlockIntervalStr := os.Getenv("ETH_BLOCK_INTERVAL")
+	optBlockInterval, err := time.ParseDuration(ethereumBlockIntervalStr)
+	if ethereumBlockIntervalStr != "" && err == nil {
+		ethereumBlockInterval = optBlockInterval
 	}
 }
 
