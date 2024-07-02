@@ -69,7 +69,7 @@ var eip712spec = []apitypes.Type{
 	{Name: "verifyingContract", Type: "address"},
 }
 
-func (c ethClient) verifyKeyCardEnroll(keyCardPublicKey, signature []byte) (common.Address, error) {
+func verifyKeyCardEnroll(keyCardPublicKey, signature []byte) (common.Address, error) {
 	if len(signature) != 65 {
 		return common.Address{}, fmt.Errorf("signature length is not 65")
 	}
@@ -89,8 +89,8 @@ func (c ethClient) verifyKeyCardEnroll(keyCardPublicKey, signature []byte) (comm
 		Domain: apitypes.TypedDataDomain{
 			Name:              "MassMarket",
 			Version:           "1",
-			ChainId:           math.NewHexOrDecimal256(int64(c.chainID)),
-			VerifyingContract: c.contractAddresses.ShopRegistry.Hex(),
+			ChainId:           math.NewHexOrDecimal256(0),
+			VerifyingContract: "0x0000000000000000000000000000000000000000",
 		},
 		Message: map[string]any{
 			"keyCard": hex.EncodeToString(keyCardPublicKey),

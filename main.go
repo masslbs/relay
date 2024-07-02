@@ -3893,10 +3893,7 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			return http.StatusBadRequest, errors.New("invalid shopTokenID")
 		}
 
-		ethClient, ok := r.ethereum.chains[r.ethereum.registryChainID]
-		assertWithMessage(ok, "no registry chain client")
-
-		userWallet, err := ethClient.verifyKeyCardEnroll(data.KeyCardPublicKey, data.Signature)
+		userWallet, err := verifyKeyCardEnroll(data.KeyCardPublicKey, data.Signature)
 		if err != nil {
 			return http.StatusForbidden, fmt.Errorf("invalid signature: %w", err)
 		}
@@ -3907,7 +3904,7 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 		//  check if shop exists
 		_, err = r.ethereum.GetOwnerOfShop(&bigTokenID)
 		if err != nil {
-			return http.StatusNotFound, fmt.Errorf("no owner for shop: %w", err)
+			return http.StatusBadRequest, fmt.Errorf("no owner for shop: %w", err)
 		}
 
 		var isGuest bool = req.URL.Query().Get("guest") == "1"
