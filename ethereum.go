@@ -45,6 +45,8 @@ type EthLookup interface {
 
 // exposes the "public api", manages rpc clients and dispatching of lookups to them.
 type ethRPCService struct {
+	keyPair *ethKeyPair
+
 	// "the control plane" where the massMarket registries are hosted
 	registryChainID uint64
 
@@ -61,13 +63,20 @@ type ethRPCService struct {
 //
 // ETH_STORE_REGISTRY_CHAIN_ID=$n
 // ETH_RPC_ENDPOINT_$n=rpcA;rpcB;rpcC
-func newEthRPCService() *ethRPCService {
+func newEthRPCService(chains map[uint64][]string) *ethRPCService {
 	r := ethRPCService{}
+
+	r.keyPair = newEthKeyPair()
+	wallet := r.keyPair.Wallet()
+	log("ethClient.keyPair wallet=%s", wallet.Hex())
 
 	// setup chains
 	r.registryChainID = uint64(mustGetEnvInt("ETH_STORE_REGISTRY_CHAIN_ID"))
 
 	r.chains = make(map[uint64]*ethClient)
+	for id, urls := range chains {
+		r.chains[id] = newEthClient(r.keyPair, id, urls)
+	}
 	const chainConfigEnvPrefix = "ETH_RPC_ENDPOINT_"
 	for _, env := range os.Environ() {
 		if !strings.HasPrefix(env, chainConfigEnvPrefix) {
@@ -90,7 +99,7 @@ func newEthRPCService() *ethRPCService {
 		}
 		assertWithMessage(hasWebsocketEndpoint, "need at least one websocket endpoint per chain for payment subscriptions")
 
-		r.chains[chainId] = newEthClient(chainId, urls)
+		r.chains[chainId] = newEthClient(r.keyPair, chainId, urls)
 	}
 
 	// register / verify nft for the relay
@@ -102,7 +111,7 @@ func newEthRPCService() *ethRPCService {
 	ctx := context.Background()
 	callOpts := &bind.CallOpts{
 		Pending: false,
-		From:    c.wallet,
+		From:    wallet,
 		Context: ctx,
 	}
 
@@ -115,7 +124,7 @@ func newEthRPCService() *ethRPCService {
 
 		nftOwner, err := relaysReg.OwnerOf(callOpts, relayTokenID)
 		check(err)
-		assertWithMessage(nftOwner.Cmp(c.wallet) == 0, fmt.Sprintf("passed NFT is owned by %s", nftOwner))
+		assertWithMessage(nftOwner.Cmp(wallet) == 0, fmt.Sprintf("passed NFT is owned by %s", nftOwner))
 
 	} else { // in testing, always create a new nft
 		gethc, err := c.getRPC(ctx)
@@ -128,7 +137,7 @@ func newEthRPCService() *ethRPCService {
 		txOpts, err := c.makeTxOpts(ctx, gethc)
 		check(err)
 
-		tx, err := relaysReg.Mint(txOpts, relayTokenID, c.wallet, fmt.Sprintf("http://localhost:%d/relay_nft?token=%s", mustGetEnvInt("PORT"), relayTokenID))
+		tx, err := relaysReg.Mint(txOpts, relayTokenID, wallet, fmt.Sprintf("http://localhost:%d/relay_nft?token=%s", mustGetEnvInt("PORT"), relayTokenID))
 		check(err)
 
 		err = checkTransaction(ctx, gethc, tx)
@@ -146,10 +155,9 @@ func newEthRPCService() *ethRPCService {
 	return &r
 }
 
-func (rpc *ethRPCService) signEvent(data []byte) ([]byte, error) {
-	c, has := rpc.chains[rpc.registryChainID]
-	assert(has)
-	return eventSign(data, c.secret)
+func (rpc *ethRPCService) signEvent(data []byte) (*Signature, error) {
+	sig, err := eventSign(data, rpc.keyPair.secret)
+	return &Signature{Raw: sig}, err
 }
 
 func (rpc *ethRPCService) discoveryHandleFunc(w http.ResponseWriter, _ *http.Request) {
@@ -225,12 +233,6 @@ func (lookup *erc20MetadataEthLookup) process(client *ethClient) {
 
 	}
 
-	decimalCount, err := tokenCaller.Decimals(callOpts)
-	if err != nil {
-		lookup.closeWithError(fmt.Errorf("failed to get token decimals: %w", err))
-		return
-	}
-
 	symbol, err := tokenCaller.Symbol(callOpts)
 	if err != nil {
 		lookup.closeWithError(fmt.Errorf("failed to get token symbol: %w", err))
@@ -240,6 +242,12 @@ func (lookup *erc20MetadataEthLookup) process(client *ethClient) {
 	tokenName, err := tokenCaller.Name(callOpts)
 	if err != nil {
 		lookup.closeWithError(fmt.Errorf("failed to get token name: %w", err))
+		return
+	}
+
+	decimalCount, err := tokenCaller.Decimals(callOpts)
+	if err != nil {
+		lookup.closeWithError(fmt.Errorf("failed to get token decimals: %w", err))
 		return
 	}
 
@@ -623,10 +631,6 @@ func (rpc *ethRPCService) GetPaymentIDAndAddress(chainID uint64, pr *PaymentRequ
 	return lookup.resultID, lookup.resultAddr, nil
 }
 
-// TODO: this should be derived somehow
-// - should be per store
-var relayKeyCardID requestID
-
 // single jsonrpc client instance
 type ethClient struct {
 	chainID uint64
@@ -641,26 +645,28 @@ type ethClient struct {
 	gasTipCap *big.Int
 	gasFeeCap *big.Int
 
-	erc20ContractABI abi.ABI
+	erc20ContractABI   abi.ABI
+	shopRegContractABI abi.ABI
 
 	contractAddresses struct {
 		Payments      common.Address `json:"Payments"`
 		ShopRegistry  common.Address `json:"ShopReg"`
 		RelayRegistry common.Address `json:"RelayReg"`
 	}
-	secret *ecdsa.PrivateKey
-	wallet common.Address
+
+	keyPair *ethKeyPair
 }
 
 //go:embed gen_contract_addresses.json
 var genContractAddresses embed.FS
 
-func newEthClient(chainID uint64, rpcURLs []string) *ethClient {
-	var c ethClient
+func newEthClient(kp *ethKeyPair, chainID uint64, rpcURLs []string) *ethClient {
 	var err error
-
-	c.chainID = chainID
-	c.rpcUrls = rpcURLs
+	var c = ethClient{
+		chainID: chainID,
+		rpcUrls: rpcURLs,
+		keyPair: kp,
+	}
 
 	log("ethClient chainId=%d rpcs=%d", c.chainID, len(c.rpcUrls))
 
@@ -692,32 +698,6 @@ func newEthClient(chainID uint64, rpcURLs []string) *ethClient {
 	)
 	check(err)
 
-	// TODO: multiple keyfiles?
-	if keyPath := os.Getenv("ETH_PRIVATE_KEY_FILE"); keyPath != "" {
-		keyData, err := os.ReadFile(keyPath)
-		check(err)
-		log("ethClient.keyPairFile path=%s len=%d", keyPath, len(keyData))
-		trimmed := strings.TrimSpace(string(keyData))
-		c.secret, err = crypto.HexToECDSA(trimmed)
-		check(err)
-	} else {
-		c.secret, err = crypto.HexToECDSA(mustGetEnvString("ETH_PRIVATE_KEY"))
-		check(err)
-	}
-
-	publicKey := c.secret.Public()
-	publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
-	assertWithMessage(ok, "Error casting public key to ECDSA")
-
-	c.wallet = crypto.PubkeyToAddress(*publicKeyECDSA)
-	log("ethClient.newEthClient wallet=%s", c.wallet.Hex())
-
-	relayKeyCardID = make([]byte, requestIDBytes)
-	copy(relayKeyCardID, c.wallet.Bytes())
-
-	has := c.hasBalance(ctx, c.wallet)
-	_ = has
-
 	addrData, err := genContractAddresses.ReadFile("gen_contract_addresses.json")
 	check(err)
 	err = json.Unmarshal(addrData, &c.contractAddresses)
@@ -728,6 +708,9 @@ func newEthClient(chainID uint64, rpcURLs []string) *ethClient {
 	log("ethClient.newEthClient paymentsAddr=%s", c.contractAddresses.Payments.Hex())
 
 	c.erc20ContractABI, err = abi.JSON(strings.NewReader(ERC20MetaData.ABI))
+	check(err)
+
+	c.shopRegContractABI, err = abi.JSON(strings.NewReader(RegShopMetaData.ABI))
 	check(err)
 
 	return &c
@@ -841,12 +824,12 @@ func (c *ethClient) makeTxOpts(ctx context.Context, client *ethclient.Client) (*
 	}
 	return &bind.TransactOpts{
 		Context:   ctx,
-		From:      c.wallet,
+		From:      c.keyPair.Wallet(),
 		GasFeeCap: c.gasFeeCap,
 		GasTipCap: big.NewInt(1),
 		Nonce:     nil,
 		Signer: func(address common.Address, tx *types.Transaction) (*types.Transaction, error) {
-			return types.SignTx(tx, types.LatestSignerForChainID(big.NewInt(int64(c.chainID))), c.secret)
+			return types.SignTx(tx, types.LatestSignerForChainID(big.NewInt(int64(c.chainID))), c.keyPair.secret)
 		},
 	}, nil
 }
@@ -895,4 +878,36 @@ func (c *ethClient) hasBalance(ctx context.Context, addr common.Address) bool {
 	}
 	log("ethClient balance=%d wallet=%s", balance.Int64(), addr.Hex())
 	return balance.Int64() > 0
+}
+
+type ethKeyPair struct {
+	secret *ecdsa.PrivateKey
+}
+
+func newEthKeyPair() *ethKeyPair {
+	kp := &ethKeyPair{}
+	var err error
+	if keyPath := os.Getenv("ETH_PRIVATE_KEY_FILE"); keyPath != "" {
+		keyData, err := os.ReadFile(keyPath)
+		check(err)
+		log("ethClient.keyPairFile path=%s len=%d", keyPath, len(keyData))
+		trimmed := strings.TrimSpace(string(keyData))
+		kp.secret, err = crypto.HexToECDSA(trimmed)
+		check(err)
+	} else {
+		kp.secret, err = crypto.HexToECDSA(mustGetEnvString("ETH_PRIVATE_KEY"))
+		check(err)
+	}
+	return kp
+}
+
+func (kp ethKeyPair) Wallet() common.Address {
+	publicKey := kp.secret.Public()
+	publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
+	assertWithMessage(ok, "Error casting public key to ECDSA")
+	return crypto.PubkeyToAddress(*publicKeyECDSA)
+}
+
+func (kp ethKeyPair) CompressedPubKey() []byte {
+	return crypto.CompressPubkey(&kp.secret.PublicKey)
 }

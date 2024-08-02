@@ -5,8 +5,6 @@
 //go:build ignore
 // +build ignore
 
-// TODO: add sql unmarshling code for UpdateManifest_ManifestField && UpdateItem_ItemField
-
 package main
 
 import (
@@ -14,7 +12,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"text/template"
@@ -49,43 +46,12 @@ func main() {
 
 package main
 
-import (
-  "reflect"
-)
 
 const schemaVersion = {{.NetworkSchemaVersion}}
 
-var typesNumToType = make(map[uint8]reflect.Type)
-var typesTypePointerToNum = make(map[reflect.Type]uint8)
-
-func networkMessage(typeNum uint8, typeInstance interface{}) {
-  typeType := reflect.TypeOf(typeInstance)
-  typeTypePointer := reflect.PtrTo(typeType)
-  typesNumToType[typeNum] = typeType
-  typesTypePointerToNum[typeTypePointer] = typeNum
-}
-
-{{range .Mappings}}
-const type{{.PascalName}} = {{.Num}}
-
-func init() {
-  networkMessage({{.Num}}, {{.PascalName}}{})
-}
-func (r *{{.PascalName}}) getRequestID() requestID {
-  return r.RequestId
-}
-{{if eq .Type "Request"}}
-func (r *{{.PascalName}}) response(err *Error) Message {
-  return &{{.GetResponseName}}{RequestId: r.RequestId, Error: err}
-}
-{{else if eq .Type "Response"}}
-func (r *{{.GetResponseName}}) getError() *Error {
-  return r.Error
-}
-{{end}}{{end}}
 
 {{range .Operations}}
-func (op *{{.Name}}) getSessionID() requestID {
+func (op *{{.Name}}) getSessionID() sessionID {
   return op.sessionID
 }
 func (op *{{.Name}}) setErr(err *Error) {
@@ -97,14 +63,12 @@ func (op *{{.Name}}) setErr(err *Error) {
 	tmpl, err := template.New("code").Parse(tmplString)
 	checkError(err)
 
-	mappings := processEncodingFile(filepath.Join(os.Getenv("MASS_SCHEMA"), "encoding.txt"))
 	operations := processGoFile("main.go")
 
 	// Execute templating
 	err = tmpl.Execute(os.Stdout, map[string]interface{}{
 		"NetworkSchemaVersion": networkSchemaVersion,
 		"CommitHash":           commitHash,
-		"Mappings":             mappings,
 		"Operations":           operations,
 	})
 	checkError(err)

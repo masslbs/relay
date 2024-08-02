@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from network-schema. Files: constants.txt at version v2 (6ae53bd11e8dddf688ddbf20ff2e4ce874eef840)
+// Generated from network-schema. Files: constants.txt at version v3 (5ac728e84c6ed53e4aea4c58dee94ad539169b0b)
 //lint:file-ignore U1000 Ignore all unused code, it's generated
 
 package main
@@ -17,15 +17,15 @@ const limitMaxOutBatchSize = 64
 type eventType string
 
 const (
-	eventTypeInvalid            eventType = "invalid"
-	eventTypeShopManifest       eventType = "shopManifest"
-	eventTypeUpdateShopManifest eventType = "updateShopManifest"
-	eventTypeCreateItem         eventType = "createItem"
-	eventTypeUpdateItem         eventType = "updateItem"
-	eventTypeCreateTag          eventType = "createTag"
-	eventTypeUpdateTag          eventType = "updateTag"
-	eventTypeCreateOrder        eventType = "createOrder"
-	eventTypeUpdateOrder        eventType = "updateOrder"
-	eventTypeChangeStock        eventType = "changeStock"
-	eventTypeNewKeyCard         eventType = "newKeyCard"
+	eventTypeInvalid         eventType = "invalid"
+	eventTypeManifest        eventType = "manifest"
+	eventTypeUpdateManifest  eventType = "updateManifest"
+	eventTypeListing         eventType = "listing"
+	eventTypeUpdateListing   eventType = "updateListing"
+	eventTypeTag             eventType = "tag"
+	eventTypeUpdateTag       eventType = "updateTag"
+	eventTypeCreateOrder     eventType = "createOrder"
+	eventTypeUpdateOrder     eventType = "updateOrder"
+	eventTypeChangeInventory eventType = "changeInventory"
+	eventTypeAccount         eventType = "account"
 )

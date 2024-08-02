@@ -10,12 +10,10 @@ import (
 	"math/big"
 	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"time"
 	"unicode/utf8"
 
-	"github.com/cockroachdb/apd"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -45,16 +43,16 @@ func log(msg string, args ...interface{}) {
 	logWrite(line)
 }
 
-func logS(sessionID requestID, msg string, args ...interface{}) {
+func logS(sessionID sessionID, msg string, args ...interface{}) {
 	expandedMsg := fmt.Sprintf(msg, args...)
-	sessionSuffix := fmt.Sprintf("sessionId=%s", sessionID)
+	sessionSuffix := fmt.Sprintf("sessionId=%d", sessionID)
 	line := expandedMsg + " " + sessionSuffix + "\n"
 	logWrite(line)
 }
 
-func logSR(msg string, sID, rID requestID, args ...interface{}) {
+func logSR(msg string, sID sessionID, rID int64, args ...interface{}) {
 	args = append(args, sID, rID)
-	line := fmt.Sprintf(msg+" sessionId=%s requestId=%s\n", args...)
+	line := fmt.Sprintf(msg+" sessionId=%d requestId=%d\n", args...)
 	logWrite(line)
 }
 
@@ -76,6 +74,13 @@ func assertNilError(err *Error) {
 
 func assertNonemptyString(s string) {
 	assertWithMessage(s != "", "string was empty")
+}
+
+func validateObjectID(x uint64, field string) *Error {
+	if x == 0 {
+		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` must be a non-zero objectId", field)}
+	}
+	return nil
 }
 
 func validateString(s string, field string, maxLength int) *Error {
@@ -101,8 +106,31 @@ func validateBytes(val []byte, field string, want uint) *Error {
 	return nil
 }
 
-func validateEventID(k []byte, field string) *Error {
-	return validateBytes(k, field, eventIDBytes)
+func (payee *Payee) validate(field string) *Error {
+	return coalesce(
+		validateString(payee.Name, field+".name", 128),
+		payee.Address.validate(field+".address"),
+		validateObjectID(payee.ChainId, field+".chain_id"),
+	)
+}
+
+func (pk *PublicKey) validate() *Error {
+	return validateBytes(pk.Raw, "public_key", publicKeyBytes)
+}
+
+func (sig *Signature) validate() *Error {
+	return validateBytes(sig.Raw, "signature", signatureBytes)
+}
+
+func (curr *ShopCurrency) validate(field string) *Error {
+	return coalesce(
+		curr.Address.validate(field+".address"),
+		validateObjectID(curr.ChainId, field+".chain_id"),
+	)
+}
+
+func (addr *EthereumAddress) validate(field string) *Error {
+	return validateEthAddressBytes(addr.Raw, field)
 }
 
 func validateEthAddressBytes(addr []byte, field string) *Error {
@@ -116,30 +144,45 @@ func validateEthAddressHexString(k string, field string) *Error {
 	return nil
 }
 
-func validateURL(k string, field string) *Error {
-	if _, err := url.Parse(k); err != nil {
-		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` must be a valid URL", field)}
+func (lo *ListingOption) validate(field string) *Error {
+	errs := []*Error{
+		validateObjectID(lo.Id, field+".id"),
+		validateString(lo.Title, field+".title", 512),
 	}
-	return nil
+	for i, v := range lo.Variations {
+		field := field + fmt.Sprintf(".variation[%d]", i)
+		errs = append(errs, v.validate(field))
+	}
+	return coalesce(errs...)
 }
 
-// regexp that checks for two decimal places at the end of a string
-var decimalRegex = regexp.MustCompile(`^\d+\.\d{2}$`)
+func (lv *ListingVariation) validate(field string) *Error {
+	errs := []*Error{
+		validateObjectID(lv.Id, field+".id"),
+		lv.VariationInfo.validate(field + ".variation_info"),
+	}
+	return coalesce(errs...)
 
-func validateDecimalPrice(value string, field string) *Error {
-	if !decimalRegex.MatchString(value) {
-		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` does not have two decimal places", field)}
+}
+
+func (lm *ListingMetadata) validate(field string) *Error {
+	errs := []*Error{
+		validateString(lm.Title, field+".title", 512),
+		validateString(lm.Description, field+".description", 512),
 	}
-	// check if the value has 8 or less digits before the decimal point
-	if len(value) > 11 {
-		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` must have 8 or less digits before the decimal point", field)}
+	for i, img := range lm.Images {
+		field := field + fmt.Sprintf(".image[%d]", i)
+		errs = append(errs, validateURL(img, field))
 	}
-	parsed, _, err := apd.NewFromString(value)
-	if err != nil {
-		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` must be a valid decimal number", field)}
-	}
-	if parsed.Cmp(apd.New(0, 0)) < 0 {
-		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` must be a positive number", field)}
+	return coalesce(errs...)
+}
+
+func validateURL(k string, field string) *Error {
+	if _, err := url.Parse(k); err != nil {
+		return &Error{
+			Code:    ErrorCodes_INVALID,
+			Message: fmt.Sprintf("Field `%s` must be a valid URL", field),
+		}
 	}
 	return nil
 }
