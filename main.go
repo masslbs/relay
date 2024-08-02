@@ -4033,17 +4033,44 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			return http.StatusBadRequest, fmt.Errorf("invalid ERC-4361 message: %w", err)
 		}
 
-		if msg.GetDomain() != r.baseURL.Host {
-			return http.StatusBadRequest, fmt.Errorf("domain did not match")
-		}
+		referer := req.Referer()
+		if referer != "" {
+			// website logging into the relay as a remote service
+			refererURL, err := url.Parse(referer)
+			if err != nil {
+				return http.StatusBadRequest, fmt.Errorf("bad referer")
+			}
 
-		siweUri := msg.GetURI()
-		if siweUri.Host != r.baseURL.Host {
-			return http.StatusBadRequest, fmt.Errorf("domain did not match")
-		}
+			// assuming the enrollment is directly on the relay
+			if msg.GetDomain() != refererURL.Host {
+				return http.StatusBadRequest, fmt.Errorf("referered domain did not match")
+			}
 
-		if siweUri.Path != req.URL.Path {
-			return http.StatusBadRequest, fmt.Errorf("URI path did not match")
+			siweUri := msg.GetURI()
+			if siweUri.Host != refererURL.Host {
+				return http.StatusBadRequest, fmt.Errorf("refered URI did not match")
+			}
+
+			/* TODO: not sure how to scope this
+			if siweUri.Path != req.URL.Path {
+				return http.StatusBadRequest, fmt.Errorf("URI path did not match")
+			}
+			*/
+
+		} else {
+			// assuming the enrollment is directly on the relay
+			if msg.GetDomain() != r.baseURL.Host {
+				return http.StatusBadRequest, fmt.Errorf("domain did not match")
+			}
+
+			siweUri := msg.GetURI()
+			if siweUri.Host != r.baseURL.Host {
+				return http.StatusBadRequest, fmt.Errorf("domain did not match")
+			}
+
+			if siweUri.Path != req.URL.Path {
+				return http.StatusBadRequest, fmt.Errorf("URI path did not match")
+			}
 		}
 
 		if userWallet.Cmp(msg.GetAddress()) != 0 {
