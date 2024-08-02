@@ -59,7 +59,7 @@ func verifyChallengeResponse(publicKey, challange, signature []byte) error {
 }
 
 func (evt *SignedEvent) Verify(publicKey []byte) error {
-	return ecrecoverEIP191AndCompare(evt.Event.Value, evt.Signature, publicKey)
+	return ecrecoverEIP191AndCompare(evt.Event.Value, evt.Signature.Raw, publicKey)
 }
 
 func eventSign(evtData []byte, secret *ecdsa.PrivateKey) ([]byte, error) {

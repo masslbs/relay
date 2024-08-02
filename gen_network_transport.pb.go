@@ -1,4 +1,4 @@
-// Generated from /nix/store/c5p3rhs6n7brxdn78dmb2iwj9xi411ny-source/network-schema/transport.proto at version v2 (6ae53bd11e8dddf688ddbf20ff2e4ce874eef840)
+// Generated from /nix/store/r14cbryys0jdmf9msi39arssgc13851p-source/network-schema/transport.proto at version v3 (5ac728e84c6ed53e4aea4c58dee94ad539169b0b)
 
 // SPDX-FileCopyrightText: 2023 - 2024 Mass Labs
 //
@@ -63,7 +63,7 @@ type SignedEvent struct {
 	unknownFields protoimpl.UnknownFields
 
 	Event     *anypb.Any `protobuf:"bytes,1,opt,name=event,proto3" json:"event,omitempty"`
-	Signature []byte     `protobuf:"bytes,2,opt,name=signature,proto3" json:"signature,omitempty"` // EIP-191 of any.value
+	Signature *Signature `protobuf:"bytes,2,opt,name=signature,proto3" json:"signature,omitempty"` // EIP-191 of any.value
 }
 
 func (x *SignedEvent) Reset() {
@@ -105,21 +105,30 @@ func (x *SignedEvent) GetEvent() *anypb.Any {
 	return nil
 }
 
-func (x *SignedEvent) GetSignature() []byte {
+func (x *SignedEvent) GetSignature() *Signature {
 	if x != nil {
 		return x.Signature
 	}
 	return nil
 }
 
-// Used by the Client to write a single event to the shop.
+// Used by the Client to write events to the shop.
+// WriteRequests are ONLY authenticated by thier signature.
+// meaning an Authentication/req/res is not nessicary.
+// this allows for guest to create orders without authenticating.
+// If validation of one event fails, the whole write will fail.
+//
+// # Response via GenericResponse
+//
+// Which might return an error if the event or its signature is invalid.
+// If no error is returned,
+// the new_shop_hash is the hash of the shop with the new event applied.
 type EventWriteRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	RequestId []byte       `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	Event     *SignedEvent `protobuf:"bytes,2,opt,name=event,proto3" json:"event,omitempty"`
+	Events []*SignedEvent `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
 }
 
 func (x *EventWriteRequest) Reset() {
@@ -154,203 +163,9 @@ func (*EventWriteRequest) Descriptor() ([]byte, []int) {
 	return file_transport_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *EventWriteRequest) GetRequestId() []byte {
-	if x != nil {
-		return x.RequestId
-	}
-	return nil
-}
-
-func (x *EventWriteRequest) GetEvent() *SignedEvent {
-	if x != nil {
-		return x.Event
-	}
-	return nil
-}
-
-// Might return an error if the event or its signature is invalid.
-// If no error is returned,
-// the new_shop_hash is the hash of the shop with the new event applied.
-// The event_sequence_no is the index of the event in the shops log.
-type EventWriteResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	RequestId       []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	Error           *Error `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
-	NewShopHash     []byte `protobuf:"bytes,3,opt,name=new_shop_hash,json=newShopHash,proto3" json:"new_shop_hash,omitempty"`
-	EventSequenceNo uint64 `protobuf:"varint,4,opt,name=event_sequence_no,json=eventSequenceNo,proto3" json:"event_sequence_no,omitempty"`
-}
-
-func (x *EventWriteResponse) Reset() {
-	*x = EventWriteResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_transport_proto_msgTypes[2]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *EventWriteResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*EventWriteResponse) ProtoMessage() {}
-
-func (x *EventWriteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_transport_proto_msgTypes[2]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use EventWriteResponse.ProtoReflect.Descriptor instead.
-func (*EventWriteResponse) Descriptor() ([]byte, []int) {
-	return file_transport_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *EventWriteResponse) GetRequestId() []byte {
-	if x != nil {
-		return x.RequestId
-	}
-	return nil
-}
-
-func (x *EventWriteResponse) GetError() *Error {
-	if x != nil {
-		return x.Error
-	}
-	return nil
-}
-
-func (x *EventWriteResponse) GetNewShopHash() []byte {
-	if x != nil {
-		return x.NewShopHash
-	}
-	return nil
-}
-
-func (x *EventWriteResponse) GetEventSequenceNo() uint64 {
-	if x != nil {
-		return x.EventSequenceNo
-	}
-	return 0
-}
-
-// Used by the relay to push events to the client.
-// Will not sent more events until the client has acknowledged the last batch.
-type EventPushRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	RequestId []byte         `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	Events    []*SignedEvent `protobuf:"bytes,2,rep,name=events,proto3" json:"events,omitempty"`
-}
-
-func (x *EventPushRequest) Reset() {
-	*x = EventPushRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_transport_proto_msgTypes[3]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *EventPushRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*EventPushRequest) ProtoMessage() {}
-
-func (x *EventPushRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_transport_proto_msgTypes[3]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use EventPushRequest.ProtoReflect.Descriptor instead.
-func (*EventPushRequest) Descriptor() ([]byte, []int) {
-	return file_transport_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *EventPushRequest) GetRequestId() []byte {
-	if x != nil {
-		return x.RequestId
-	}
-	return nil
-}
-
-func (x *EventPushRequest) GetEvents() []*SignedEvent {
+func (x *EventWriteRequest) GetEvents() []*SignedEvent {
 	if x != nil {
 		return x.Events
-	}
-	return nil
-}
-
-type EventPushResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	Error     *Error `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
-}
-
-func (x *EventPushResponse) Reset() {
-	*x = EventPushResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_transport_proto_msgTypes[4]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *EventPushResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*EventPushResponse) ProtoMessage() {}
-
-func (x *EventPushResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_transport_proto_msgTypes[4]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use EventPushResponse.ProtoReflect.Descriptor instead.
-func (*EventPushResponse) Descriptor() ([]byte, []int) {
-	return file_transport_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *EventPushResponse) GetRequestId() []byte {
-	if x != nil {
-		return x.RequestId
-	}
-	return nil
-}
-
-func (x *EventPushResponse) GetError() *Error {
-	if x != nil {
-		return x.Error
 	}
 	return nil
 }
@@ -361,14 +176,13 @@ type SyncStatusRequest struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	RequestId      []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	UnpushedEvents uint64 `protobuf:"varint,2,opt,name=unpushed_events,json=unpushedEvents,proto3" json:"unpushed_events,omitempty"`
+	UnpushedEvents uint64 `protobuf:"varint,1,opt,name=unpushed_events,json=unpushedEvents,proto3" json:"unpushed_events,omitempty"`
 }
 
 func (x *SyncStatusRequest) Reset() {
 	*x = SyncStatusRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_transport_proto_msgTypes[5]
+		mi := &file_transport_proto_msgTypes[2]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -381,7 +195,7 @@ func (x *SyncStatusRequest) String() string {
 func (*SyncStatusRequest) ProtoMessage() {}
 
 func (x *SyncStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_transport_proto_msgTypes[5]
+	mi := &file_transport_proto_msgTypes[2]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -394,14 +208,7 @@ func (x *SyncStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SyncStatusRequest.ProtoReflect.Descriptor instead.
 func (*SyncStatusRequest) Descriptor() ([]byte, []int) {
-	return file_transport_proto_rawDescGZIP(), []int{5}
-}
-
-func (x *SyncStatusRequest) GetRequestId() []byte {
-	if x != nil {
-		return x.RequestId
-	}
-	return nil
+	return file_transport_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *SyncStatusRequest) GetUnpushedEvents() uint64 {
@@ -411,61 +218,6 @@ func (x *SyncStatusRequest) GetUnpushedEvents() uint64 {
 	return 0
 }
 
-type SyncStatusResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	Error     *Error `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
-}
-
-func (x *SyncStatusResponse) Reset() {
-	*x = SyncStatusResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_transport_proto_msgTypes[6]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *SyncStatusResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SyncStatusResponse) ProtoMessage() {}
-
-func (x *SyncStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_transport_proto_msgTypes[6]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SyncStatusResponse.ProtoReflect.Descriptor instead.
-func (*SyncStatusResponse) Descriptor() ([]byte, []int) {
-	return file_transport_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *SyncStatusResponse) GetRequestId() []byte {
-	if x != nil {
-		return x.RequestId
-	}
-	return nil
-}
-
-func (x *SyncStatusResponse) GetError() *Error {
-	if x != nil {
-		return x.Error
-	}
-	return nil
-}
-
 // Sent by the relay to check for the clients liveness.
 // The client needs to respond with a PingResponse.
 // The relay will close the connection if the client doesn't respond 3 times.
@@ -473,16 +225,12 @@ type PingRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
-
-	// 16 bytes, chosen by the sender but should be random.
-	// Used to match the response to the request.
-	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 }
 
 func (x *PingRequest) Reset() {
 	*x = PingRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_transport_proto_msgTypes[7]
+		mi := &file_transport_proto_msgTypes[3]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -495,7 +243,7 @@ func (x *PingRequest) String() string {
 func (*PingRequest) ProtoMessage() {}
 
 func (x *PingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_transport_proto_msgTypes[7]
+	mi := &file_transport_proto_msgTypes[3]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -508,135 +256,34 @@ func (x *PingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingRequest.ProtoReflect.Descriptor instead.
 func (*PingRequest) Descriptor() ([]byte, []int) {
-	return file_transport_proto_rawDescGZIP(), []int{7}
-}
-
-func (x *PingRequest) GetRequestId() []byte {
-	if x != nil {
-		return x.RequestId
-	}
-	return nil
-}
-
-type PingResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	Error     *Error `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
-}
-
-func (x *PingResponse) Reset() {
-	*x = PingResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_transport_proto_msgTypes[8]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *PingResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*PingResponse) ProtoMessage() {}
-
-func (x *PingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_transport_proto_msgTypes[8]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use PingResponse.ProtoReflect.Descriptor instead.
-func (*PingResponse) Descriptor() ([]byte, []int) {
-	return file_transport_proto_rawDescGZIP(), []int{8}
-}
-
-func (x *PingResponse) GetRequestId() []byte {
-	if x != nil {
-		return x.RequestId
-	}
-	return nil
-}
-
-func (x *PingResponse) GetError() *Error {
-	if x != nil {
-		return x.Error
-	}
-	return nil
+	return file_transport_proto_rawDescGZIP(), []int{3}
 }
 
 var File_transport_proto protoreflect.FileDescriptor
 
 var file_transport_proto_rawDesc = []byte{
 	0x0a, 0x0f, 0x74, 0x72, 0x61, 0x6e, 0x73, 0x70, 0x6f, 0x72, 0x74, 0x2e, 0x70, 0x72, 0x6f, 0x74,
-	0x6f, 0x12, 0x0b, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x74, 0x2e, 0x6d, 0x61, 0x73, 0x73, 0x1a, 0x19,
-	0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2f,
-	0x61, 0x6e, 0x79, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x0b, 0x65, 0x72, 0x72, 0x6f, 0x72,
-	0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0x57, 0x0a, 0x0b, 0x53, 0x69, 0x67, 0x6e, 0x65, 0x64,
-	0x45, 0x76, 0x65, 0x6e, 0x74, 0x12, 0x2a, 0x0a, 0x05, 0x65, 0x76, 0x65, 0x6e, 0x74, 0x18, 0x01,
-	0x20, 0x01, 0x28, 0x0b, 0x32, 0x14, 0x2e, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72,
-	0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x41, 0x6e, 0x79, 0x52, 0x05, 0x65, 0x76, 0x65, 0x6e,
-	0x74, 0x12, 0x1c, 0x0a, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x02,
-	0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x22,
-	0x62, 0x0a, 0x11, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x57, 0x72, 0x69, 0x74, 0x65, 0x52, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x5f,
-	0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x49, 0x64, 0x12, 0x2e, 0x0a, 0x05, 0x65, 0x76, 0x65, 0x6e, 0x74, 0x18, 0x02, 0x20, 0x01,
-	0x28, 0x0b, 0x32, 0x18, 0x2e, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x74, 0x2e, 0x6d, 0x61, 0x73, 0x73,
-	0x2e, 0x53, 0x69, 0x67, 0x6e, 0x65, 0x64, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x52, 0x05, 0x65, 0x76,
-	0x65, 0x6e, 0x74, 0x22, 0xad, 0x01, 0x0a, 0x12, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x57, 0x72, 0x69,
-	0x74, 0x65, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65,
-	0x71, 0x75, 0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09,
-	0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12, 0x28, 0x0a, 0x05, 0x65, 0x72, 0x72,
-	0x6f, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x12, 0x2e, 0x6d, 0x61, 0x72, 0x6b, 0x65,
-	0x74, 0x2e, 0x6d, 0x61, 0x73, 0x73, 0x2e, 0x45, 0x72, 0x72, 0x6f, 0x72, 0x52, 0x05, 0x65, 0x72,
-	0x72, 0x6f, 0x72, 0x12, 0x22, 0x0a, 0x0d, 0x6e, 0x65, 0x77, 0x5f, 0x73, 0x68, 0x6f, 0x70, 0x5f,
-	0x68, 0x61, 0x73, 0x68, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x0b, 0x6e, 0x65, 0x77, 0x53,
-	0x68, 0x6f, 0x70, 0x48, 0x61, 0x73, 0x68, 0x12, 0x2a, 0x0a, 0x11, 0x65, 0x76, 0x65, 0x6e, 0x74,
-	0x5f, 0x73, 0x65, 0x71, 0x75, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x6e, 0x6f, 0x18, 0x04, 0x20, 0x01,
-	0x28, 0x04, 0x52, 0x0f, 0x65, 0x76, 0x65, 0x6e, 0x74, 0x53, 0x65, 0x71, 0x75, 0x65, 0x6e, 0x63,
-	0x65, 0x4e, 0x6f, 0x22, 0x63, 0x0a, 0x10, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x50, 0x75, 0x73, 0x68,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65, 0x71, 0x75, 0x65,
-	0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x72, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12, 0x30, 0x0a, 0x06, 0x65, 0x76, 0x65, 0x6e, 0x74, 0x73,
-	0x18, 0x02, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x18, 0x2e, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x74, 0x2e,
-	0x6d, 0x61, 0x73, 0x73, 0x2e, 0x53, 0x69, 0x67, 0x6e, 0x65, 0x64, 0x45, 0x76, 0x65, 0x6e, 0x74,
-	0x52, 0x06, 0x65, 0x76, 0x65, 0x6e, 0x74, 0x73, 0x22, 0x5c, 0x0a, 0x11, 0x45, 0x76, 0x65, 0x6e,
-	0x74, 0x50, 0x75, 0x73, 0x68, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x1d, 0x0a,
-	0x0a, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28,
-	0x0c, 0x52, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12, 0x28, 0x0a, 0x05,
-	0x65, 0x72, 0x72, 0x6f, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x12, 0x2e, 0x6d, 0x61,
-	0x72, 0x6b, 0x65, 0x74, 0x2e, 0x6d, 0x61, 0x73, 0x73, 0x2e, 0x45, 0x72, 0x72, 0x6f, 0x72, 0x52,
-	0x05, 0x65, 0x72, 0x72, 0x6f, 0x72, 0x22, 0x5b, 0x0a, 0x11, 0x53, 0x79, 0x6e, 0x63, 0x53, 0x74,
-	0x61, 0x74, 0x75, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x72,
-	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52,
-	0x09, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12, 0x27, 0x0a, 0x0f, 0x75, 0x6e,
-	0x70, 0x75, 0x73, 0x68, 0x65, 0x64, 0x5f, 0x65, 0x76, 0x65, 0x6e, 0x74, 0x73, 0x18, 0x02, 0x20,
-	0x01, 0x28, 0x04, 0x52, 0x0e, 0x75, 0x6e, 0x70, 0x75, 0x73, 0x68, 0x65, 0x64, 0x45, 0x76, 0x65,
-	0x6e, 0x74, 0x73, 0x22, 0x5d, 0x0a, 0x12, 0x53, 0x79, 0x6e, 0x63, 0x53, 0x74, 0x61, 0x74, 0x75,
-	0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x72,
-	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12, 0x28, 0x0a, 0x05, 0x65, 0x72, 0x72, 0x6f,
-	0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x12, 0x2e, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x74,
-	0x2e, 0x6d, 0x61, 0x73, 0x73, 0x2e, 0x45, 0x72, 0x72, 0x6f, 0x72, 0x52, 0x05, 0x65, 0x72, 0x72,
-	0x6f, 0x72, 0x22, 0x2c, 0x0a, 0x0b, 0x50, 0x69, 0x6e, 0x67, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18,
-	0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64,
-	0x22, 0x57, 0x0a, 0x0c, 0x50, 0x69, 0x6e, 0x67, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
-	0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01,
-	0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12,
-	0x28, 0x0a, 0x05, 0x65, 0x72, 0x72, 0x6f, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x12,
-	0x2e, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x74, 0x2e, 0x6d, 0x61, 0x73, 0x73, 0x2e, 0x45, 0x72, 0x72,
-	0x6f, 0x72, 0x52, 0x05, 0x65, 0x72, 0x72, 0x6f, 0x72, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f,
-	0x33,
+	0x6f, 0x12, 0x0b, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x74, 0x2e, 0x6d, 0x61, 0x73, 0x73, 0x1a, 0x10,
+	0x62, 0x61, 0x73, 0x65, 0x5f, 0x74, 0x79, 0x70, 0x65, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f,
+	0x1a, 0x19, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75,
+	0x66, 0x2f, 0x61, 0x6e, 0x79, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0x6f, 0x0a, 0x0b, 0x53,
+	0x69, 0x67, 0x6e, 0x65, 0x64, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x12, 0x2a, 0x0a, 0x05, 0x65, 0x76,
+	0x65, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x14, 0x2e, 0x67, 0x6f, 0x6f, 0x67,
+	0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x41, 0x6e, 0x79, 0x52,
+	0x05, 0x65, 0x76, 0x65, 0x6e, 0x74, 0x12, 0x34, 0x0a, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74,
+	0x75, 0x72, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x16, 0x2e, 0x6d, 0x61, 0x72, 0x6b,
+	0x65, 0x74, 0x2e, 0x6d, 0x61, 0x73, 0x73, 0x2e, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72,
+	0x65, 0x52, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x22, 0x45, 0x0a, 0x11,
+	0x45, 0x76, 0x65, 0x6e, 0x74, 0x57, 0x72, 0x69, 0x74, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
+	0x74, 0x12, 0x30, 0x0a, 0x06, 0x65, 0x76, 0x65, 0x6e, 0x74, 0x73, 0x18, 0x01, 0x20, 0x03, 0x28,
+	0x0b, 0x32, 0x18, 0x2e, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x74, 0x2e, 0x6d, 0x61, 0x73, 0x73, 0x2e,
+	0x53, 0x69, 0x67, 0x6e, 0x65, 0x64, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x52, 0x06, 0x65, 0x76, 0x65,
+	0x6e, 0x74, 0x73, 0x22, 0x3c, 0x0a, 0x11, 0x53, 0x79, 0x6e, 0x63, 0x53, 0x74, 0x61, 0x74, 0x75,
+	0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x27, 0x0a, 0x0f, 0x75, 0x6e, 0x70, 0x75,
+	0x73, 0x68, 0x65, 0x64, 0x5f, 0x65, 0x76, 0x65, 0x6e, 0x74, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28,
+	0x04, 0x52, 0x0e, 0x75, 0x6e, 0x70, 0x75, 0x73, 0x68, 0x65, 0x64, 0x45, 0x76, 0x65, 0x6e, 0x74,
+	0x73, 0x22, 0x0d, 0x0a, 0x0b, 0x50, 0x69, 0x6e, 0x67, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
+	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -651,33 +298,24 @@ func file_transport_proto_rawDescGZIP() []byte {
 	return file_transport_proto_rawDescData
 }
 
-var file_transport_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_transport_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_transport_proto_goTypes = []interface{}{
-	(*SignedEvent)(nil),        // 0: market.mass.SignedEvent
-	(*EventWriteRequest)(nil),  // 1: market.mass.EventWriteRequest
-	(*EventWriteResponse)(nil), // 2: market.mass.EventWriteResponse
-	(*EventPushRequest)(nil),   // 3: market.mass.EventPushRequest
-	(*EventPushResponse)(nil),  // 4: market.mass.EventPushResponse
-	(*SyncStatusRequest)(nil),  // 5: market.mass.SyncStatusRequest
-	(*SyncStatusResponse)(nil), // 6: market.mass.SyncStatusResponse
-	(*PingRequest)(nil),        // 7: market.mass.PingRequest
-	(*PingResponse)(nil),       // 8: market.mass.PingResponse
-	(*anypb.Any)(nil),          // 9: google.protobuf.Any
-	(*Error)(nil),              // 10: market.mass.Error
+	(*SignedEvent)(nil),       // 0: market.mass.SignedEvent
+	(*EventWriteRequest)(nil), // 1: market.mass.EventWriteRequest
+	(*SyncStatusRequest)(nil), // 2: market.mass.SyncStatusRequest
+	(*PingRequest)(nil),       // 3: market.mass.PingRequest
+	(*anypb.Any)(nil),         // 4: google.protobuf.Any
+	(*Signature)(nil),         // 5: market.mass.Signature
 }
 var file_transport_proto_depIdxs = []int32{
-	9,  // 0: market.mass.SignedEvent.event:type_name -> google.protobuf.Any
-	0,  // 1: market.mass.EventWriteRequest.event:type_name -> market.mass.SignedEvent
-	10, // 2: market.mass.EventWriteResponse.error:type_name -> market.mass.Error
-	0,  // 3: market.mass.EventPushRequest.events:type_name -> market.mass.SignedEvent
-	10, // 4: market.mass.EventPushResponse.error:type_name -> market.mass.Error
-	10, // 5: market.mass.SyncStatusResponse.error:type_name -> market.mass.Error
-	10, // 6: market.mass.PingResponse.error:type_name -> market.mass.Error
-	7,  // [7:7] is the sub-list for method output_type
-	7,  // [7:7] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	4, // 0: market.mass.SignedEvent.event:type_name -> google.protobuf.Any
+	5, // 1: market.mass.SignedEvent.signature:type_name -> market.mass.Signature
+	0, // 2: market.mass.EventWriteRequest.events:type_name -> market.mass.SignedEvent
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_transport_proto_init() }
@@ -685,7 +323,7 @@ func file_transport_proto_init() {
 	if File_transport_proto != nil {
 		return
 	}
-	file_error_proto_init()
+	file_base_types_proto_init()
 	if !protoimpl.UnsafeEnabled {
 		file_transport_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*SignedEvent); i {
@@ -712,42 +350,6 @@ func file_transport_proto_init() {
 			}
 		}
 		file_transport_proto_msgTypes[2].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*EventWriteResponse); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_transport_proto_msgTypes[3].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*EventPushRequest); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_transport_proto_msgTypes[4].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*EventPushResponse); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_transport_proto_msgTypes[5].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*SyncStatusRequest); i {
 			case 0:
 				return &v.state
@@ -759,32 +361,8 @@ func file_transport_proto_init() {
 				return nil
 			}
 		}
-		file_transport_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*SyncStatusResponse); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_transport_proto_msgTypes[7].Exporter = func(v interface{}, i int) interface{} {
+		file_transport_proto_msgTypes[3].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*PingRequest); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_transport_proto_msgTypes[8].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PingResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -802,7 +380,7 @@ func file_transport_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_transport_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

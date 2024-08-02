@@ -1,4 +1,4 @@
-// Generated from /nix/store/c5p3rhs6n7brxdn78dmb2iwj9xi411ny-source/network-schema/shop_requests.proto at version v2 (6ae53bd11e8dddf688ddbf20ff2e4ce874eef840)
+// Generated from /nix/store/r14cbryys0jdmf9msi39arssgc13851p-source/network-schema/shop_requests.proto at version v3 (5ac728e84c6ed53e4aea4c58dee94ad539169b0b)
 
 // SPDX-FileCopyrightText: 2024 Mass Labs
 //
@@ -27,143 +27,6 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Initiate check out of a cart
-type CommitItemsToOrderRequest struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	RequestId []byte        `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	OrderId   []byte        `protobuf:"bytes,2,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
-	Currency  *ShopCurrency `protobuf:"bytes,3,opt,name=currency,proto3" json:"currency,omitempty"`
-	PayeeName string        `protobuf:"bytes,4,opt,name=payee_name,json=payeeName,proto3" json:"payee_name,omitempty"`
-}
-
-func (x *CommitItemsToOrderRequest) Reset() {
-	*x = CommitItemsToOrderRequest{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_shop_requests_proto_msgTypes[0]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *CommitItemsToOrderRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CommitItemsToOrderRequest) ProtoMessage() {}
-
-func (x *CommitItemsToOrderRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_shop_requests_proto_msgTypes[0]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use CommitItemsToOrderRequest.ProtoReflect.Descriptor instead.
-func (*CommitItemsToOrderRequest) Descriptor() ([]byte, []int) {
-	return file_shop_requests_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *CommitItemsToOrderRequest) GetRequestId() []byte {
-	if x != nil {
-		return x.RequestId
-	}
-	return nil
-}
-
-func (x *CommitItemsToOrderRequest) GetOrderId() []byte {
-	if x != nil {
-		return x.OrderId
-	}
-	return nil
-}
-
-func (x *CommitItemsToOrderRequest) GetCurrency() *ShopCurrency {
-	if x != nil {
-		return x.Currency
-	}
-	return nil
-}
-
-func (x *CommitItemsToOrderRequest) GetPayeeName() string {
-	if x != nil {
-		return x.PayeeName
-	}
-	return ""
-}
-
-// Returns an error if the cart is already finalized.
-// No error blocks further changes to a cart and starts the payment process.
-type CommitItemsToOrderResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	RequestId        []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	Error            *Error `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
-	OrderFinalizedId []byte `protobuf:"bytes,3,opt,name=order_finalized_id,json=orderFinalizedId,proto3" json:"order_finalized_id,omitempty"`
-}
-
-func (x *CommitItemsToOrderResponse) Reset() {
-	*x = CommitItemsToOrderResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_shop_requests_proto_msgTypes[1]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *CommitItemsToOrderResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CommitItemsToOrderResponse) ProtoMessage() {}
-
-func (x *CommitItemsToOrderResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_shop_requests_proto_msgTypes[1]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use CommitItemsToOrderResponse.ProtoReflect.Descriptor instead.
-func (*CommitItemsToOrderResponse) Descriptor() ([]byte, []int) {
-	return file_shop_requests_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *CommitItemsToOrderResponse) GetRequestId() []byte {
-	if x != nil {
-		return x.RequestId
-	}
-	return nil
-}
-
-func (x *CommitItemsToOrderResponse) GetError() *Error {
-	if x != nil {
-		return x.Error
-	}
-	return nil
-}
-
-func (x *CommitItemsToOrderResponse) GetOrderFinalizedId() []byte {
-	if x != nil {
-		return x.OrderFinalizedId
-	}
-	return nil
-}
-
 // Get an URL to upload a blob to.
 // This exists for future-proofing the protocol
 // and reduce stress on the websocket connection.
@@ -171,14 +34,12 @@ type GetBlobUploadURLRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
-
-	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 }
 
 func (x *GetBlobUploadURLRequest) Reset() {
 	*x = GetBlobUploadURLRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_shop_requests_proto_msgTypes[2]
+		mi := &file_shop_requests_proto_msgTypes[0]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -191,7 +52,7 @@ func (x *GetBlobUploadURLRequest) String() string {
 func (*GetBlobUploadURLRequest) ProtoMessage() {}
 
 func (x *GetBlobUploadURLRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_shop_requests_proto_msgTypes[2]
+	mi := &file_shop_requests_proto_msgTypes[0]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -204,14 +65,7 @@ func (x *GetBlobUploadURLRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBlobUploadURLRequest.ProtoReflect.Descriptor instead.
 func (*GetBlobUploadURLRequest) Descriptor() ([]byte, []int) {
-	return file_shop_requests_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *GetBlobUploadURLRequest) GetRequestId() []byte {
-	if x != nil {
-		return x.RequestId
-	}
-	return nil
+	return file_shop_requests_proto_rawDescGZIP(), []int{0}
 }
 
 // Returns a single-use URL to upload a blob to.
@@ -221,15 +75,17 @@ type GetBlobUploadURLResponse struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	RequestId []byte `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	Error     *Error `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
-	Url       string `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
+	// Types that are assignable to Result:
+	//
+	//	*GetBlobUploadURLResponse_Error
+	//	*GetBlobUploadURLResponse_Url
+	Result isGetBlobUploadURLResponse_Result `protobuf_oneof:"result"`
 }
 
 func (x *GetBlobUploadURLResponse) Reset() {
 	*x = GetBlobUploadURLResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_shop_requests_proto_msgTypes[3]
+		mi := &file_shop_requests_proto_msgTypes[1]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -242,7 +98,7 @@ func (x *GetBlobUploadURLResponse) String() string {
 func (*GetBlobUploadURLResponse) ProtoMessage() {}
 
 func (x *GetBlobUploadURLResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_shop_requests_proto_msgTypes[3]
+	mi := &file_shop_requests_proto_msgTypes[1]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -255,68 +111,60 @@ func (x *GetBlobUploadURLResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBlobUploadURLResponse.ProtoReflect.Descriptor instead.
 func (*GetBlobUploadURLResponse) Descriptor() ([]byte, []int) {
-	return file_shop_requests_proto_rawDescGZIP(), []int{3}
+	return file_shop_requests_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *GetBlobUploadURLResponse) GetRequestId() []byte {
-	if x != nil {
-		return x.RequestId
+func (m *GetBlobUploadURLResponse) GetResult() isGetBlobUploadURLResponse_Result {
+	if m != nil {
+		return m.Result
 	}
 	return nil
 }
 
 func (x *GetBlobUploadURLResponse) GetError() *Error {
-	if x != nil {
+	if x, ok := x.GetResult().(*GetBlobUploadURLResponse_Error); ok {
 		return x.Error
 	}
 	return nil
 }
 
 func (x *GetBlobUploadURLResponse) GetUrl() string {
-	if x != nil {
+	if x, ok := x.GetResult().(*GetBlobUploadURLResponse_Url); ok {
 		return x.Url
 	}
 	return ""
 }
+
+type isGetBlobUploadURLResponse_Result interface {
+	isGetBlobUploadURLResponse_Result()
+}
+
+type GetBlobUploadURLResponse_Error struct {
+	Error *Error `protobuf:"bytes,2,opt,name=error,proto3,oneof"`
+}
+
+type GetBlobUploadURLResponse_Url struct {
+	Url string `protobuf:"bytes,3,opt,name=url,proto3,oneof"`
+}
+
+func (*GetBlobUploadURLResponse_Error) isGetBlobUploadURLResponse_Result() {}
+
+func (*GetBlobUploadURLResponse_Url) isGetBlobUploadURLResponse_Result() {}
 
 var File_shop_requests_proto protoreflect.FileDescriptor
 
 var file_shop_requests_proto_rawDesc = []byte{
 	0x0a, 0x13, 0x73, 0x68, 0x6f, 0x70, 0x5f, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x2e,
 	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x0b, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x74, 0x2e, 0x6d, 0x61,
-	0x73, 0x73, 0x1a, 0x0b, 0x65, 0x72, 0x72, 0x6f, 0x72, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a,
-	0x0a, 0x73, 0x68, 0x6f, 0x70, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0xab, 0x01, 0x0a, 0x19,
-	0x43, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x49, 0x74, 0x65, 0x6d, 0x73, 0x54, 0x6f, 0x4f, 0x72, 0x64,
-	0x65, 0x72, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x72,
-	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12, 0x19, 0x0a, 0x08, 0x6f, 0x72, 0x64, 0x65,
-	0x72, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x07, 0x6f, 0x72, 0x64, 0x65,
-	0x72, 0x49, 0x64, 0x12, 0x35, 0x0a, 0x08, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x63, 0x79, 0x18,
-	0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x19, 0x2e, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x74, 0x2e, 0x6d,
-	0x61, 0x73, 0x73, 0x2e, 0x53, 0x68, 0x6f, 0x70, 0x43, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x63, 0x79,
-	0x52, 0x08, 0x63, 0x75, 0x72, 0x72, 0x65, 0x6e, 0x63, 0x79, 0x12, 0x1d, 0x0a, 0x0a, 0x70, 0x61,
-	0x79, 0x65, 0x65, 0x5f, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09,
-	0x70, 0x61, 0x79, 0x65, 0x65, 0x4e, 0x61, 0x6d, 0x65, 0x22, 0x93, 0x01, 0x0a, 0x1a, 0x43, 0x6f,
-	0x6d, 0x6d, 0x69, 0x74, 0x49, 0x74, 0x65, 0x6d, 0x73, 0x54, 0x6f, 0x4f, 0x72, 0x64, 0x65, 0x72,
-	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65, 0x71, 0x75,
-	0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x72, 0x65,
-	0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x12, 0x28, 0x0a, 0x05, 0x65, 0x72, 0x72, 0x6f, 0x72,
-	0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x12, 0x2e, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x74, 0x2e,
-	0x6d, 0x61, 0x73, 0x73, 0x2e, 0x45, 0x72, 0x72, 0x6f, 0x72, 0x52, 0x05, 0x65, 0x72, 0x72, 0x6f,
-	0x72, 0x12, 0x2c, 0x0a, 0x12, 0x6f, 0x72, 0x64, 0x65, 0x72, 0x5f, 0x66, 0x69, 0x6e, 0x61, 0x6c,
-	0x69, 0x7a, 0x65, 0x64, 0x5f, 0x69, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x10, 0x6f,
-	0x72, 0x64, 0x65, 0x72, 0x46, 0x69, 0x6e, 0x61, 0x6c, 0x69, 0x7a, 0x65, 0x64, 0x49, 0x64, 0x22,
-	0x38, 0x0a, 0x17, 0x47, 0x65, 0x74, 0x42, 0x6c, 0x6f, 0x62, 0x55, 0x70, 0x6c, 0x6f, 0x61, 0x64,
-	0x55, 0x52, 0x4c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65,
-	0x71, 0x75, 0x65, 0x73, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09,
-	0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x49, 0x64, 0x22, 0x75, 0x0a, 0x18, 0x47, 0x65, 0x74,
-	0x42, 0x6c, 0x6f, 0x62, 0x55, 0x70, 0x6c, 0x6f, 0x61, 0x64, 0x55, 0x52, 0x4c, 0x52, 0x65, 0x73,
-	0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x1d, 0x0a, 0x0a, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
-	0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x72, 0x65, 0x71, 0x75, 0x65,
-	0x73, 0x74, 0x49, 0x64, 0x12, 0x28, 0x0a, 0x05, 0x65, 0x72, 0x72, 0x6f, 0x72, 0x18, 0x02, 0x20,
-	0x01, 0x28, 0x0b, 0x32, 0x12, 0x2e, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x74, 0x2e, 0x6d, 0x61, 0x73,
-	0x73, 0x2e, 0x45, 0x72, 0x72, 0x6f, 0x72, 0x52, 0x05, 0x65, 0x72, 0x72, 0x6f, 0x72, 0x12, 0x10,
-	0x0a, 0x03, 0x75, 0x72, 0x6c, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x03, 0x75, 0x72, 0x6c,
+	0x73, 0x73, 0x1a, 0x0b, 0x65, 0x72, 0x72, 0x6f, 0x72, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22,
+	0x19, 0x0a, 0x17, 0x47, 0x65, 0x74, 0x42, 0x6c, 0x6f, 0x62, 0x55, 0x70, 0x6c, 0x6f, 0x61, 0x64,
+	0x55, 0x52, 0x4c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x22, 0x64, 0x0a, 0x18, 0x47, 0x65,
+	0x74, 0x42, 0x6c, 0x6f, 0x62, 0x55, 0x70, 0x6c, 0x6f, 0x61, 0x64, 0x55, 0x52, 0x4c, 0x52, 0x65,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x2a, 0x0a, 0x05, 0x65, 0x72, 0x72, 0x6f, 0x72, 0x18,
+	0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x12, 0x2e, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x74, 0x2e, 0x6d,
+	0x61, 0x73, 0x73, 0x2e, 0x45, 0x72, 0x72, 0x6f, 0x72, 0x48, 0x00, 0x52, 0x05, 0x65, 0x72, 0x72,
+	0x6f, 0x72, 0x12, 0x12, 0x0a, 0x03, 0x75, 0x72, 0x6c, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x48,
+	0x00, 0x52, 0x03, 0x75, 0x72, 0x6c, 0x42, 0x08, 0x0a, 0x06, 0x72, 0x65, 0x73, 0x75, 0x6c, 0x74,
 	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
@@ -332,24 +180,19 @@ func file_shop_requests_proto_rawDescGZIP() []byte {
 	return file_shop_requests_proto_rawDescData
 }
 
-var file_shop_requests_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_shop_requests_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_shop_requests_proto_goTypes = []interface{}{
-	(*CommitItemsToOrderRequest)(nil),  // 0: market.mass.CommitItemsToOrderRequest
-	(*CommitItemsToOrderResponse)(nil), // 1: market.mass.CommitItemsToOrderResponse
-	(*GetBlobUploadURLRequest)(nil),    // 2: market.mass.GetBlobUploadURLRequest
-	(*GetBlobUploadURLResponse)(nil),   // 3: market.mass.GetBlobUploadURLResponse
-	(*ShopCurrency)(nil),               // 4: market.mass.ShopCurrency
-	(*Error)(nil),                      // 5: market.mass.Error
+	(*GetBlobUploadURLRequest)(nil),  // 0: market.mass.GetBlobUploadURLRequest
+	(*GetBlobUploadURLResponse)(nil), // 1: market.mass.GetBlobUploadURLResponse
+	(*Error)(nil),                    // 2: market.mass.Error
 }
 var file_shop_requests_proto_depIdxs = []int32{
-	4, // 0: market.mass.CommitItemsToOrderRequest.currency:type_name -> market.mass.ShopCurrency
-	5, // 1: market.mass.CommitItemsToOrderResponse.error:type_name -> market.mass.Error
-	5, // 2: market.mass.GetBlobUploadURLResponse.error:type_name -> market.mass.Error
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	2, // 0: market.mass.GetBlobUploadURLResponse.error:type_name -> market.mass.Error
+	1, // [1:1] is the sub-list for method output_type
+	1, // [1:1] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_shop_requests_proto_init() }
@@ -358,33 +201,8 @@ func file_shop_requests_proto_init() {
 		return
 	}
 	file_error_proto_init()
-	file_shop_proto_init()
 	if !protoimpl.UnsafeEnabled {
 		file_shop_requests_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*CommitItemsToOrderRequest); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_shop_requests_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*CommitItemsToOrderResponse); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_shop_requests_proto_msgTypes[2].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*GetBlobUploadURLRequest); i {
 			case 0:
 				return &v.state
@@ -396,7 +214,7 @@ func file_shop_requests_proto_init() {
 				return nil
 			}
 		}
-		file_shop_requests_proto_msgTypes[3].Exporter = func(v interface{}, i int) interface{} {
+		file_shop_requests_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*GetBlobUploadURLResponse); i {
 			case 0:
 				return &v.state
@@ -409,13 +227,17 @@ func file_shop_requests_proto_init() {
 			}
 		}
 	}
+	file_shop_requests_proto_msgTypes[1].OneofWrappers = []interface{}{
+		(*GetBlobUploadURLResponse_Error)(nil),
+		(*GetBlobUploadURLResponse_Url)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_shop_requests_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

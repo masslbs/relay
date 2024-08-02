@@ -4,7 +4,10 @@
 
 package main
 
-import "bytes"
+import (
+	"fmt"
+	"golang.org/x/exp/constraints"
+)
 
 func subslice[T any](original []T, subsliceSize int) [][]T {
 	subsliced := make([][]T, 0)
@@ -31,7 +34,7 @@ type eventIDSlice []eventID
 
 func (ids eventIDSlice) has(x eventID) bool {
 	for _, i := range ids {
-		if i.Equal(x) {
+		if i == x {
 			return true
 		}
 	}
@@ -43,48 +46,35 @@ func (ids eventIDSlice) Len() int {
 }
 
 func (ids eventIDSlice) Less(a, b int) bool {
-	return bytes.Compare(ids[a], ids[b]) == -1
+	return ids[a] < ids[b]
 }
 
 func (ids eventIDSlice) Swap(a, b int) {
 	ids[a], ids[b] = ids[b], ids[a]
 }
 
-type requestIDSlice []requestID
+type requestIDSlice []int64
 
-func (ids requestIDSlice) has(x requestID) bool {
+func (ids requestIDSlice) has(x int64) bool {
 	for _, i := range ids {
-		if i.Equal(x) {
+		if i == x {
 			return true
 		}
 	}
 	return false
 }
 
-// Represent ids as arrays internally so that they work with Go maps.
-type requestIDByteArray [requestIDBytes]byte
-
-func requestIDToBytes(id requestID) requestIDByteArray {
-	var bytes requestIDByteArray
-	copy(bytes[:], id)
-	return bytes
-}
-
-func bytesToRequestID(bytes requestIDByteArray) requestID {
-	return bytes[:]
-}
-
 // Use a sentinel instead of a bool to save one byte of space per map value.
 var exists = struct{}{}
 
 // SetRequestIDs is a set of requestIDs.
-type SetRequestIDs struct {
-	elems map[requestIDByteArray]struct{}
+type SetInts[K constraints.Integer] struct {
+	elems map[K]struct{}
 }
 
 // NewSetRequestIDs creates a new set of requestIDs.
-func NewSetRequestIDs(ids ...requestID) *SetRequestIDs {
-	s := &SetRequestIDs{}
+func NewSetInts[K constraints.Integer](ids ...K) *SetInts[K] {
+	s := &SetInts[K]{}
 	s.Clear(uint(len(ids)))
 	for _, id := range ids {
 		s.Add(id)
@@ -93,23 +83,23 @@ func NewSetRequestIDs(ids ...requestID) *SetRequestIDs {
 }
 
 // Clear the set.
-func (s *SetRequestIDs) Clear(size uint) {
-	s.elems = make(map[requestIDByteArray]struct{}, size)
+func (s *SetInts[K]) Clear(size uint) {
+	s.elems = make(map[K]struct{}, size)
 }
 
 // Has returns true if the set contains the given requestID.
-func (s *SetRequestIDs) Has(e requestID) bool {
-	_, ok := s.elems[requestIDToBytes(e)]
+func (s *SetInts[K]) Has(e K) bool {
+	_, ok := s.elems[e]
 	return ok
 }
 
 // Add a requestID to the set.
-func (s *SetRequestIDs) Add(e requestID) {
-	s.elems[requestIDToBytes(e)] = exists
+func (s *SetInts[K]) Add(e K) {
+	s.elems[e] = exists
 }
 
 // Merge the set with another set.
-func (s *SetRequestIDs) Merge(other *SetRequestIDs) {
+func (s *SetInts[K]) Merge(other *SetInts[K]) {
 	assert(s != other)
 	for k := range other.elems {
 		s.elems[k] = exists
@@ -117,384 +107,159 @@ func (s *SetRequestIDs) Merge(other *SetRequestIDs) {
 }
 
 // Delete a requestID from the set.
-func (s *SetRequestIDs) Delete(e requestID) {
-	delete(s.elems, requestIDToBytes(e))
+func (s *SetInts[K]) Delete(e K) {
+	delete(s.elems, e)
 }
 
 // All calls the given function for each requestID in the set.
-func (s *SetRequestIDs) All(f func(requestID)) {
+// Returning true halts the iteration
+func (s *SetInts[K]) All(f func(K) bool) {
 	for e := range s.elems {
-		f(bytesToRequestID(e))
+		if f(e) {
+			break
+		}
 	}
 }
 
 // Slice create a copy of the set as a slice.
 //
 //revive:disable:unexported-return
-func (s *SetRequestIDs) Slice() requestIDSlice {
+func (s *SetInts[K]) Slice() []K {
 	sz := s.Size()
-	slice := make([]requestID, sz)
+	slice := make([]K, sz)
 	i := 0
 	for e := range s.elems {
-		slice[i] = bytesToRequestID(e)
+		slice[i] = e
 		i++
 	}
 	return slice
 }
 
 // Size returns the number of requestIDs in the set.
-func (s *SetRequestIDs) Size() int {
+func (s *SetInts[K]) Size() int {
 	return len(s.elems)
 }
 
 // Intersection returns a new set that contains the intersection of the two sets.
-func (s *SetRequestIDs) Intersection(other *SetRequestIDs) *SetRequestIDs {
-	var it = NewSetRequestIDs()
-	s.All(func(i requestID) {
+func (s *SetInts[K]) Intersection(other *SetInts[K]) *SetInts[K] {
+	var it = NewSetInts[K]()
+	s.All(func(i K) bool {
 		if other.Has(i) {
 			it.Add(i)
 		}
+		return false
 	})
-	other.All(func(i requestID) {
+	other.All(func(i K) bool {
 		if s.Has(i) {
 			it.Add(i)
 		}
+		return false
 	})
 	return it
 }
 
-// MapRequestIDs is a map from requestIDs to values.
-type MapRequestIDs[V any] struct {
-	elems map[requestIDByteArray]V
+// MapInts is a map from requestIDs to values.
+type MapInts[K comparable, V any] struct {
+	elems map[K]V
 }
 
-// NewMapRequestIDs creates a new map from requestIDs to values.
-func NewMapRequestIDs[V any]() *MapRequestIDs[V] {
-	m := &MapRequestIDs[V]{}
+// NewMapInts creates a new map from requestIDs to values.
+func NewMapInts[K comparable, V any]() *MapInts[K, V] {
+	m := &MapInts[K, V]{}
 	m.Clear()
 	return m
 }
 
 // Clear the map.
-func (m *MapRequestIDs[V]) Clear() {
-	m.elems = make(map[requestIDByteArray]V)
+func (m *MapInts[K, V]) Clear() {
+	m.elems = make(map[K]V)
 }
 
 // Has returns true if the map contains the given requestID.
-func (m *MapRequestIDs[V]) Has(i requestID) bool {
-	_, ok := m.elems[requestIDToBytes(i)]
+func (m *MapInts[K, V]) Has(k K) bool {
+	_, ok := m.elems[k]
 	return ok
 }
 
 // GetHas returns the value and true if the map contains the given requestID.
-func (m *MapRequestIDs[V]) GetHas(i requestID) (V, bool) {
-	v, has := m.elems[requestIDToBytes(i)]
+func (m *MapInts[K, V]) GetHas(k K) (V, bool) {
+	v, has := m.elems[k]
 	return v, has
 }
 
 // Get returns the value for the given requestID.
-func (m *MapRequestIDs[V]) Get(i requestID) V {
-	return m.elems[requestIDToBytes(i)]
+func (m *MapInts[K, V]) Get(k K) V {
+	return m.elems[k]
 }
 
 // GetOrCreate returns the value for the given requestID, creating it if it doesn't exist.
-func (m *MapRequestIDs[V]) GetOrCreate(i requestID, f func(key requestID) V) V {
-	v, has := m.GetHas(i)
+func (m *MapInts[K, V]) GetOrCreate(k K, f func(K) V) V {
+	v, has := m.GetHas(k)
 	if !has {
-		v = f(i)
-		m.Set(i, v)
+		v = f(k)
+		m.Set(k, v)
 	}
 	return v
 }
 
 // MustGet returns the value for the given requestID, panicking if it doesn't exist.
-func (m *MapRequestIDs[V]) MustGet(i requestID) V {
-	v, has := m.elems[requestIDToBytes(i)]
-	assertWithMessage(has, "element missing in set")
+func (m *MapInts[K, V]) MustGet(k K) V {
+	v, has := m.elems[k]
+	assertWithMessage(has, fmt.Sprintf("element %v missing in set", k))
 	return v
 }
 
 // Set the value for the given requestID.
-func (m *MapRequestIDs[V]) Set(i requestID, v V) {
-	m.elems[requestIDToBytes(i)] = v
+func (m *MapInts[K, V]) Set(k K, v V) {
+	m.elems[k] = v
 }
 
 // Delete the value for the given requestID.
-func (m *MapRequestIDs[V]) Delete(i requestID) {
-	delete(m.elems, requestIDToBytes(i))
+func (m *MapInts[K, V]) Delete(k K) {
+	delete(m.elems, k)
 }
 
 // Keys returns a slice of all the requestIDs in the map.
-func (m *MapRequestIDs[V]) Keys() requestIDSlice {
-	keys := make(requestIDSlice, len(m.elems))
+func (m *MapInts[K, V]) Keys() []K {
+	keys := make([]K, len(m.elems))
 	i := 0
 	for k := range m.elems {
-		keys[i] = bytesToRequestID(k)
+		keys[i] = k
 		i++
 	}
 	return keys
 }
 
 // All calls the given function for each requestID and value in the map.
-func (m *MapRequestIDs[V]) All(f func(requestID, V)) {
+// returning true halts the iteration
+func (m *MapInts[K, V]) All(f func(K, V) bool) {
 	for k, v := range m.elems {
-		f(bytesToRequestID(k), v)
-	}
-}
-
-// AllValues calls the given function for each value in the map.
-func (m *MapRequestIDs[V]) AllValues(f func(V)) {
-	for _, v := range m.elems {
-		f(v)
-	}
-}
-
-// Find calls the given function for each requestID and value in the map and returns the first requestID and value for which the function returns true.
-func (m *MapRequestIDs[V]) Find(check func(requestID, V) bool) (requestID, bool) {
-	for k, v := range m.elems {
-		sliceID := bytesToRequestID(k)
-		if check(sliceID, v) {
-			return sliceID, true
-		}
-	}
-	return nil, false
-}
-
-// Size returns the number of requestIDs in the map.
-func (m *MapRequestIDs[V]) Size() int {
-	return len(m.elems)
-}
-
-// MapIdsIter is an iterator for a map from requestIDs to values.
-type MapIdsIter[V any] struct {
-	elems map[requestIDByteArray]V
-	keys  []requestIDByteArray
-	index int
-}
-
-// Next returns the next requestID and value in the map.
-func (i *MapIdsIter[V]) Next() (requestID, V, bool) {
-	if i.index == len(i.keys) {
-		var zeroV V
-		return nil, zeroV, false
-	}
-	k := i.keys[i.index]
-	v := i.elems[k]
-	i.index++
-	return bytesToRequestID(k), v, true
-}
-
-// Iter returns an iterator for the map.
-func (m *MapRequestIDs[V]) Iter() *MapIdsIter[V] {
-	keys := make([]requestIDByteArray, 0)
-	for k := range m.elems {
-		keys = append(keys, k)
-	}
-	return &MapIdsIter[V]{
-		elems: m.elems,
-		keys:  keys,
-		index: 0,
-	}
-}
-
-// Event IDs
-
-type eventIDByteArray = [eventIDBytes]byte
-
-func eventIDToBytes(id eventID) eventIDByteArray {
-	var bytes eventIDByteArray
-	copy(bytes[:], id)
-	return bytes
-}
-
-func bytesToEventID(bytes eventIDByteArray) eventID {
-	return bytes[:]
-}
-
-// SetEventIDs is a set of eventIDs.
-type SetEventIDs struct {
-	elems map[eventIDByteArray]struct{}
-}
-
-// NewSetEventIDs creates a new set of eventIDs.
-func NewSetEventIDs(ids ...eventID) *SetEventIDs {
-	s := &SetEventIDs{}
-	s.Clear(uint(len(ids)))
-	for _, id := range ids {
-		s.Add(id)
-	}
-	return s
-}
-
-// Clear the set.
-func (s *SetEventIDs) Clear(size uint) {
-	s.elems = make(map[eventIDByteArray]struct{}, size)
-}
-
-// Has returns true if the set contains the given eventID.
-func (s *SetEventIDs) Has(e eventID) bool {
-	_, ok := s.elems[eventIDToBytes(e)]
-	return ok
-}
-
-// Add an eventID to the set.
-func (s *SetEventIDs) Add(e eventID) {
-	s.elems[eventIDToBytes(e)] = exists
-}
-
-// Merge the set with another set.
-func (s *SetEventIDs) Merge(other *SetEventIDs) {
-	assert(s != other)
-	for k := range other.elems {
-		s.elems[k] = exists
-	}
-}
-
-// Delete an eventID from the set.
-func (s *SetEventIDs) Delete(e eventID) {
-	delete(s.elems, eventIDToBytes(e))
-}
-
-// All calls the given function for each eventID in the set.
-func (s *SetEventIDs) All(f func(eventID)) {
-	for e := range s.elems {
-		f(bytesToEventID(e))
-	}
-}
-
-// Slice create a copy of the set as a slice.
-func (s *SetEventIDs) Slice() eventIDSlice {
-	sz := s.Size()
-	slice := make([]eventID, sz)
-	i := 0
-	for e := range s.elems {
-		slice[i] = bytesToEventID(e)
-		i++
-	}
-	return slice
-}
-
-// Size returns the number of eventIDs in the set.
-func (s *SetEventIDs) Size() int {
-	return len(s.elems)
-}
-
-// Intersection returns a new set that contains the intersection of the two sets.
-func (s *SetEventIDs) Intersection(other *SetEventIDs) *SetEventIDs {
-	var it = NewSetEventIDs()
-	s.All(func(i eventID) {
-		if other.Has(i) {
-			it.Add(i)
-		}
-	})
-	other.All(func(i eventID) {
-		if s.Has(i) {
-			it.Add(i)
-		}
-	})
-	return it
-}
-
-// MapEventIDs is a map from eventIDs to values.
-type MapEventIDs[V any] struct {
-	elems map[eventIDByteArray]V
-}
-
-// NewMapEventIDs creates a new map from eventIDs to values.
-func NewMapEventIDs[V any]() *MapEventIDs[V] {
-	m := &MapEventIDs[V]{}
-	m.Clear()
-	return m
-}
-
-// Clear the map.
-func (m *MapEventIDs[V]) Clear() {
-	m.elems = make(map[eventIDByteArray]V)
-}
-
-// Has returns true if the map contains the given eventID.
-func (m *MapEventIDs[V]) Has(i eventID) bool {
-	_, ok := m.elems[eventIDToBytes(i)]
-	return ok
-}
-
-// GetHas returns the value and true if the map contains the given eventID.
-func (m *MapEventIDs[V]) GetHas(i eventID) (V, bool) {
-	v, has := m.elems[eventIDToBytes(i)]
-	return v, has
-}
-
-// Get returns the value for the given eventID.
-func (m *MapEventIDs[V]) Get(i eventID) V {
-	return m.elems[eventIDToBytes(i)]
-}
-
-// MustGet returns the value for the given eventID, panicking if it doesn't exist.
-func (m *MapEventIDs[V]) MustGet(i eventID) V {
-	v, has := m.GetHas(i)
-	assertWithMessage(has, "element missing in set")
-	return v
-}
-
-// GetOrCreate returns the value for the given eventID, creating it if it doesn't exist.
-func (m *MapEventIDs[V]) GetOrCreate(i eventID, f func() V) V {
-	val, has := m.GetHas(i)
-	if !has {
-		val = f()
-		m.Set(i, val)
-	}
-	return val
-}
-
-// Set the value for the given eventID.
-func (m *MapEventIDs[V]) Set(i eventID, v V) {
-	m.elems[eventIDToBytes(i)] = v
-}
-
-// Delete the value for the given eventID.
-func (m *MapEventIDs[V]) Delete(i eventID) {
-	delete(m.elems, eventIDToBytes(i))
-}
-
-// Keys returns a slice of all the eventIDs in the map.
-func (m *MapEventIDs[V]) Keys() eventIDSlice {
-	keys := make([]eventID, len(m.elems))
-	i := 0
-	m.All(func(id eventID, _ V) {
-		keys[i] = id
-		i++
-	})
-	return keys
-}
-
-// All calls the given function for each eventID and value in the map.
-func (m *MapEventIDs[V]) All(f func(eventID, V)) {
-	m.AllWithBreak(func(ei eventID, v V) bool {
-		f(ei, v)
-		return false
-	})
-}
-
-// AllWithBreak calls the given function for each eventID and value in the map.
-// If the function retruns true, the iteration is stopped.
-func (m *MapEventIDs[V]) AllWithBreak(f func(eventID, V) bool) {
-	for k, v := range m.elems {
-		halt := f(bytesToEventID(k), v)
-		if halt {
+		if f(k, v) {
 			break
 		}
 	}
 }
 
 // AllValues calls the given function for each value in the map.
-func (m *MapEventIDs[V]) AllValues(f func(V)) {
+func (m *MapInts[K, V]) AllValues(f func(V)) {
 	for _, v := range m.elems {
 		f(v)
 	}
 }
 
-// Size returns the number of eventIDs in the map.
-func (m *MapEventIDs[V]) Size() int {
+// Find calls the given function for each key and value in the map and returns the first requestID and value for which the function returns true.
+func (m *MapInts[K, V]) Find(check func(K, V) bool) (K, bool) {
+	for k, v := range m.elems {
+		if check(k, v) {
+			return k, true
+		}
+	}
+	var zero K
+	return zero, false
+}
+
+// Size returns the number of requestIDs in the map.
+func (m *MapInts[K, V]) Size() int {
 	return len(m.elems)
 }
 

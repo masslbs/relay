@@ -24,8 +24,8 @@ import (
 
 // PaymentWaiter is a struct that holds the state of a order that is waiting for payment.
 type PaymentWaiter struct {
-	waiterID         requestID
-	orderID          eventID
+	shopID           shopID
+	orderID          uint64
 	orderFinalizedAt time.Time
 	chainID          uint64
 	purchaseAddr     common.Address
@@ -36,14 +36,110 @@ type PaymentWaiter struct {
 
 	// (optional) contract of the erc20 that we are looking for
 	erc20TokenAddr *common.Address
-
-	// set if order was payed
 }
 
 var (
 	eventSignatureTransferErc20 = crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)"))
 	eventSignaturePaymentMade   = crypto.Keccak256Hash([]byte("PaymentMade(uint256)"))
+	eventSignatureUserAdded     = crypto.Keccak256Hash([]byte("UserAdded(uint256,address,uint256)"))
+	eventSignatureUserRemoved   = crypto.Keccak256Hash([]byte("UserRemoved(uint256,address)"))
+	// TODO
+	//eventSignaturePermissionAdded   = crypto.Keccak256Hash([]byte("PermissionAdded(uint256,address,uint8)"))
+	//eventSignaturePermissionRemoved = crypto.Keccak256Hash([]byte("PermissionRemoved(uint256,address,uint8)"))
 )
+
+// OnChain account actions
+func (r *Relay) subscribeAccountEvents(geth *ethClient) error {
+	log("watcher.subscribeAccountEvents.start chainID=%d", geth.chainID)
+
+	var start = now()
+
+	ctx := context.Background()
+
+	gethClient, err := geth.getWebsocketRPC()
+	if err != nil {
+		return repeat.HintTemporary(err)
+	}
+
+	qry := ethereum.FilterQuery{
+		Addresses: []common.Address{
+			geth.contractAddresses.ShopRegistry,
+		},
+		Topics: [][]common.Hash{
+			{eventSignatureUserAdded, eventSignatureUserRemoved},
+		},
+	}
+
+	ch := make(chan types.Log)
+	sub, err := gethClient.SubscribeFilterLogs(ctx, qry, ch)
+	if err != nil {
+		err = fmt.Errorf("watcher.subscribeAccountEvents.ethSubscribeFailed err=%s", err)
+		return repeat.HintTemporary(err)
+	}
+	defer sub.Unsubscribe()
+	errch := sub.Err()
+	i := 0
+
+watch:
+	for {
+		select {
+		case err := <-errch:
+			log("watcher.subscribeAccountEvents.subscribeFilterLogsBroke err=%s", err)
+			break watch
+		case vLog := <-ch:
+			debug("watcher.subscribeAccountEvents.newLog i=%d block_tx=%s", i, vLog.BlockHash.Hex())
+			eventName := "undefined"
+			isAdd := vLog.Topics[0].Cmp(eventSignatureUserAdded) == 0
+			isRemove := vLog.Topics[0].Cmp(eventSignatureUserRemoved) == 0
+			if isAdd {
+				eventName = "UserAdded"
+			} else if isRemove {
+				eventName = "UserRemoved"
+			} else {
+				return fmt.Errorf("unhandeld event type: %s", vLog.Topics[0].Hex())
+			}
+			shopId := new(big.Int).SetBytes(vLog.Topics[1].Bytes())
+			debug("watcher.subscribeAccountEvents add=%v rm=%v shop=%s", isAdd, isRemove, shopId)
+
+			evts, err := geth.shopRegContractABI.Unpack(eventName, vLog.Data)
+			if err != nil {
+				err = fmt.Errorf("watcher.subscribeAccountEvents.failedToUnpack event=%s tx=%s err=%s", eventName, vLog.TxHash.Hex(), err)
+				return repeat.HintTemporary(err)
+			}
+
+			// check if we are serving this store
+			var dbShopID shopID
+			err = r.connPool.QueryRow(ctx, `select id from shops where tokenId = $1`, shopId.String()).Scan(&dbShopID)
+			if err == pgx.ErrNoRows {
+				continue watch // not for this relay
+			} else if err != nil {
+				check(err)
+			}
+
+			//spew.Dump(evts)
+
+			userAddr, ok := evts[0].(common.Address)
+			if !ok {
+				err = fmt.Errorf("watcher.subscribeAccountEvents.castOfEventFailed event=%s type=%T tx=%s", eventName, evts[0], vLog.TxHash.Hex())
+				return repeat.HintTemporary(err)
+			}
+
+			op := &OnchainActionInternalOp{
+				shopID: dbShopID,
+				user:   userAddr,
+				add:    isAdd,
+				txHash: vLog.TxHash,
+			}
+			r.opsInternal <- op
+			log("watcher.subscribeAccountEvents.%s user=%s shop=%s", eventName, userAddr, shopId)
+
+			i++
+		}
+	}
+
+	log("watcher.subscribeAccountEvents.exited i=%d took=%d", i, took(start))
+	return nil
+}
 
 // direct contract calls, done via pay() that emit PaymentMade events
 func (r *Relay) subscribeFilterLogsPaymentsMade(geth *ethClient) error {
@@ -68,12 +164,12 @@ func (r *Relay) subscribeFilterLogsPaymentsMade(geth *ethClient) error {
 	}
 
 	ch := make(chan types.Log)
-	subscribeFilterLogsion, err := gethClient.SubscribeFilterLogs(ctx, qry, ch)
+	sub, err := gethClient.SubscribeFilterLogs(ctx, qry, ch)
 	if err != nil {
 		return fmt.Errorf("watcher.subscribeFilterLogsPaymentsMade.ethSubscribeFailed err=%s", err)
 	}
-	defer subscribeFilterLogsion.Unsubscribe()
-	errch := subscribeFilterLogsion.Err()
+	defer sub.Unsubscribe()
+	errch := sub.Err()
 	i := 0
 
 watch:
@@ -89,14 +185,14 @@ watch:
 			var paymentIdHash = vLog.Topics[1]
 
 			var waiter PaymentWaiter
-			openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt
-FROM payments
-WHERE
-orderPayedAt IS NULL
-AND orderFinalizedAt >= NOW() - INTERVAL '1 day'
-AND paymentId = $1
-AND chainId = $2`
-			err := r.connPool.QueryRow(ctx, openPaymentsQry, paymentIdHash.Bytes(), geth.chainID).Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt)
+			openPaymentsQry := `SELECT shopId, orderId, orderFinalizedAt
+					FROM payments
+					WHERE
+					orderPayedAt IS NULL
+					AND orderFinalizedAt >= NOW() - INTERVAL '1 day'
+					AND paymentId = $1
+					AND chainId = $2`
+			err := r.connPool.QueryRow(ctx, openPaymentsQry, paymentIdHash.Bytes(), geth.chainID).Scan(&waiter.shopID, &waiter.orderID, &waiter.orderFinalizedAt)
 			if err == pgx.ErrNoRows {
 				continue
 			} else if err != nil {
@@ -107,17 +203,18 @@ AND chainId = $2`
 			log("watcher.subscribeFilterLogsPaymentsMade.found orderId=%s txHash=%x", orderID, vLog.TxHash)
 
 			_, has := r.ordersByOrderID.get(orderID)
-			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
+			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%d", orderID))
 
 			op := PaymentFoundInternalOp{
-				orderID: orderID,
-				txHash:  vLog.TxHash,
+				shopID:  waiter.shopID,
+				orderID: waiter.orderID,
+				txHash:  &Hash{Raw: vLog.TxHash.Bytes()},
 				done:    make(chan struct{}),
 			}
 			r.opsInternal <- &op
 			<-op.done // block until op was processed by server loop
 
-			log("watcher.subscribeFilterLogsPaymentsMade.completed cartId=%s txHash=%x", orderID, vLog.TxHash)
+			log("watcher.subscribeFilterLogsPaymentsMade.completed orderId=%d txHash=%x", orderID, vLog.TxHash)
 		}
 	}
 
@@ -136,19 +233,19 @@ func (r *Relay) subscribeFilterLogsERC20Transfers(geth *ethClient) error {
 		erc20AddressSet = make(map[common.Address]struct{})
 	)
 
-	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr
-		FROM payments
-		WHERE orderPayedAt IS NULL
-			AND erc20TokenAddr IS NOT NULL -- see subscribeFilterLogsERC20Transfers()
-			AND orderFinalizedAt >= NOW() - INTERVAL '1 day'
-            AND chainId = $1
-ORDER BY lastBlockNo asc;`
+	openPaymentsQry := `SELECT shopId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr
+				FROM payments
+				WHERE orderPayedAt IS NULL
+					AND erc20TokenAddr IS NOT NULL -- see subscribeFilterLogsERC20Transfers()
+					AND orderFinalizedAt >= NOW() - INTERVAL '1 day'
+		            AND chainId = $1
+		ORDER BY lastBlockNo asc;`
 	rows, err := r.connPool.Query(ctx, openPaymentsQry, geth.chainID)
 	check(err)
 	defer rows.Close()
 	for rows.Next() {
 		var waiter PaymentWaiter
-		err := rows.Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal, &waiter.erc20TokenAddr)
+		err := rows.Scan(&waiter.shopID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal, &waiter.erc20TokenAddr)
 		check(err)
 
 		erc20AddressSet[*waiter.erc20TokenAddr] = struct{}{}
@@ -220,7 +317,7 @@ watch:
 				orderID := waiter.orderID
 
 				_, has := r.ordersByOrderID.get(orderID)
-				assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
+				assertWithMessage(has, fmt.Sprintf("order not found for orderId=%d", orderID))
 
 				evts, err := geth.erc20ContractABI.Unpack("Transfer", vLog.Data)
 				if err != nil {
@@ -237,15 +334,16 @@ watch:
 					// it is larger or equal
 
 					op := PaymentFoundInternalOp{
-						orderID: orderID,
-						txHash:  vLog.TxHash,
+						shopID:  waiter.shopID,
+						orderID: waiter.orderID,
+						txHash:  &Hash{Raw: vLog.TxHash.Bytes()},
 						done:    make(chan struct{}),
 					}
 					r.opsInternal <- &op
 					<-op.done
 
 					delete(waiters, toHash)
-					log("watcher.subscribeFilterLogsERC20Transfers.completed orderId=%s", orderID)
+					log("watcher.subscribeFilterLogsERC20Transfers.completed orderId=%d", orderID)
 
 				} else {
 					// it is still smaller
@@ -264,6 +362,7 @@ watch:
 	debug("watcher.subscribeFilterLogsERC20Transfers.finish took=%d openWaiters=%d", took(start), stillWaiting)
 	r.metric.emit("relay_payments_erc20_open", uint64(stillWaiting))
 	return returnErr
+
 }
 
 func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
@@ -276,19 +375,19 @@ func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
 
 	var waiters = make(map[common.Address]PaymentWaiter)
 
-	openPaymentsQry := `SELECT waiterId, orderId, orderFinalizedAt, purchaseAddr, coinsTotal
-	FROM payments
-	WHERE orderPayedAt IS NULL
-		AND erc20TokenAddr IS NULL -- see watchErc20Payments()
-		AND orderFinalizedAt >= NOW() - INTERVAL '1 day'
-        AND chainId = $1
- ORDER BY lastBlockNo asc;`
+	openPaymentsQry := `SELECT shopId, orderId, orderFinalizedAt, purchaseAddr, coinsTotal
+			FROM payments
+			WHERE orderPayedAt IS NULL
+				AND erc20TokenAddr IS NULL -- see watchErc20Payments()
+				AND orderFinalizedAt >= NOW() - INTERVAL '1 day'
+		        AND chainId = $1
+		 ORDER BY lastBlockNo asc;`
 	rows, err := r.connPool.Query(ctx, openPaymentsQry, client.chainID)
 	check(err)
 	defer rows.Close()
 	for rows.Next() {
 		var waiter PaymentWaiter
-		err := rows.Scan(&waiter.waiterID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.purchaseAddr, &waiter.coinsTotal)
+		err := rows.Scan(&waiter.shopID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.purchaseAddr, &waiter.coinsTotal)
 		check(err)
 
 		waiters[waiter.purchaseAddr] = waiter
@@ -347,19 +446,19 @@ func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
 			debug("watcher.subscribeNewHeadsForEther.checkTx checkingBlock=%s to=%s", newHead.Hash().Hex(), addr.Hex())
 			orderID := waiter.orderID
 			_, has := r.ordersByOrderID.get(orderID)
-			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%s", orderID))
+			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%d", orderID))
 
 			op := PaymentFoundInternalOp{
-				orderID: orderID,
-				// TODO: this is actually the block hash
-				txHash: newHead.Hash(),
-				done:   make(chan struct{}),
+				shopID:    waiter.shopID,
+				orderID:   orderID,
+				blockHash: &Hash{Raw: newHead.Hash().Bytes()},
+				done:      make(chan struct{}),
 			}
 			r.opsInternal <- &op
 			<-op.done // wait for write
 
 			delete(waiters, waiter.purchaseAddr)
-			log("watcher.subscribeNewHeadsForEther.completed orderId=%s", orderID)
+			log("watcher.subscribeNewHeadsForEther.completed orderId=%d", orderID)
 		}
 	}
 
