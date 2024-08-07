@@ -10,6 +10,7 @@ import (
 	"context"
 	crand "crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +32,7 @@ import (
 
 	"github.com/cockroachdb/apd"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
 	ipfsFiles "github.com/ipfs/boxo/files"
@@ -44,6 +46,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
+	"github.com/spruceid/siwe-go"
 	"github.com/ssgreg/repeat"
 	"golang.org/x/crypto/sha3"
 	"google.golang.org/protobuf/proto"
@@ -1485,6 +1488,8 @@ type Relay struct {
 	blobUploadTokens   map[string]struct{}
 	blobUploadTokensMu *sync.Mutex
 
+	baseURL *url.URL
+
 	watcherContextERC20       context.Context
 	watcherContextERC20Cancel context.CancelFunc
 
@@ -1510,6 +1515,10 @@ type Relay struct {
 
 func newRelay(metric *Metric) *Relay {
 	r := &Relay{}
+
+	var err error
+	r.baseURL, err = url.Parse(mustGetEnvString("RELAY_BASE_URL"))
+	check(err)
 
 	r.ethereum = newEthRPCService()
 	r.watcherContextERC20, r.watcherContextERC20Cancel = context.WithCancel(context.Background())
@@ -3028,19 +3037,7 @@ func (op *CommitItemsToOrderOp) process(r *Relay) {
 	r.sendSessionOp(sessionState, op)
 }
 
-var (
-	blobUplodBaseURL         *url.URL
-	initblobUplodBaseURLOnce sync.Once
-)
-
-func initblobUplodBaseURL() {
-	var err error
-	blobUplodBaseURL, err = url.Parse(mustGetEnvString("BLOB_UPLOAD_ENDPOINT"))
-	check(err)
-}
-
 func (op *GetBlobUploadURLOp) process(r *Relay) {
-	initblobUplodBaseURLOnce.Do(initblobUplodBaseURL)
 	sessionID := op.sessionID
 	requestID := op.im.RequestId
 	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
@@ -3073,7 +3070,7 @@ func (op *GetBlobUploadURLOp) process(r *Relay) {
 	r.blobUploadTokensMu.Unlock()
 
 	var uploadURL url.URL
-	uploadURL = *blobUplodBaseURL
+	uploadURL = *r.baseURL
 	uploadURL.Path = fmt.Sprintf("/v%d/upload_blob", currentRelayVersion)
 	uploadURL.RawQuery = "token=" + token
 	op.uploadURL = &uploadURL
@@ -3935,7 +3932,7 @@ func uploadBlobHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.Requ
 			}()
 		}
 
-		var dlURL = *blobUplodBaseURL
+		var dlURL = *r.baseURL
 		dlURL.Path = uploadedCid.String()
 
 		const status = http.StatusCreated
@@ -4009,9 +4006,8 @@ func ipfsCatHandleFunc() func(http.ResponseWriter, *http.Request) {
 // once a user is registered, they need to sign their keycard
 func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.Request) {
 	type requestData struct {
-		KeyCardPublicKey []byte `json:"key_card"`
-		Signature        []byte `json:"signature"`
-		ShopTokenID      []byte `json:"shop_token_id"`
+		Message   string `json:"message"`
+		Signature []byte `json:"signature"`
 	}
 
 	fn := func(w http.ResponseWriter, req *http.Request) (int, error) {
@@ -4021,42 +4017,137 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			return http.StatusBadRequest, fmt.Errorf("invalid json: %w", err)
 		}
 
-		if len(data.ShopTokenID) != 32 {
-			return http.StatusBadRequest, errors.New("invalid shopTokenID")
-		}
-
-		userWallet, err := verifyKeyCardEnroll(data.KeyCardPublicKey, data.Signature)
+		recoveredPubKey, err := ecrecoverEIP191([]byte(data.Message), data.Signature)
 		if err != nil {
-			return http.StatusForbidden, fmt.Errorf("invalid signature: %w", err)
+			return http.StatusBadRequest, fmt.Errorf("invalid signature: %w", err)
 		}
 
-		var bigTokenID big.Int
-		bigTokenID.SetBytes(data.ShopTokenID)
+		recoveredECDSAPubKey, err := crypto.UnmarshalPubkey(recoveredPubKey)
+		if err != nil {
+			return http.StatusBadRequest, fmt.Errorf("unmarshalPubkey failed: %w", err)
+		}
+		userWallet := crypto.PubkeyToAddress(*recoveredECDSAPubKey)
+
+		msg, err := siwe.ParseMessage(data.Message)
+		if err != nil {
+			return http.StatusBadRequest, fmt.Errorf("invalid ERC-4361 message: %w", err)
+		}
+
+		referer := req.Referer()
+		if referer != "" {
+			// website logging into the relay as a remote service
+			refererURL, err := url.Parse(referer)
+			if err != nil {
+				return http.StatusBadRequest, fmt.Errorf("bad referer")
+			}
+
+			// assuming the enrollment is directly on the relay
+			if msg.GetDomain() != refererURL.Host {
+				return http.StatusBadRequest, fmt.Errorf("referered domain did not match")
+			}
+
+			siweUri := msg.GetURI()
+			if siweUri.Host != refererURL.Host {
+				return http.StatusBadRequest, fmt.Errorf("refered URI did not match")
+			}
+
+			/* TODO: not sure how to scope this
+			if siweUri.Path != req.URL.Path {
+				return http.StatusBadRequest, fmt.Errorf("URI path did not match")
+			}
+			*/
+
+		} else {
+			// assuming the enrollment is directly on the relay
+			if msg.GetDomain() != r.baseURL.Host {
+				return http.StatusBadRequest, fmt.Errorf("domain did not match")
+			}
+
+			siweUri := msg.GetURI()
+			if siweUri.Host != r.baseURL.Host {
+				return http.StatusBadRequest, fmt.Errorf("domain did not match")
+			}
+
+			if siweUri.Path != req.URL.Path {
+				return http.StatusBadRequest, fmt.Errorf("URI path did not match")
+			}
+		}
+
+		if userWallet.Cmp(msg.GetAddress()) != 0 {
+			return http.StatusBadRequest, fmt.Errorf("recovered and supplied address dont match")
+		}
+
+		if msg.GetNonce() != "00000000" {
+			return http.StatusBadRequest, fmt.Errorf("invalid nonce")
+		}
+
+		resources := msg.GetResources()
+		if n := len(resources); n != 3 {
+			return http.StatusBadRequest, fmt.Errorf("expected 3 resources but got %d", n)
+		}
+
+		resRelayID := resources[0]
+		if resRelayID.Scheme != "mass-relayid" {
+			return http.StatusBadRequest, fmt.Errorf("unexpected url scheme for relayid")
+		}
+		var relayShopID big.Int
+		_, ok := relayShopID.SetString(resRelayID.Opaque, 10)
+		if !ok {
+			return http.StatusBadRequest, fmt.Errorf("invalid relayID")
+		}
+		if relayShopID.Cmp(r.ethereum.relayTokenID) != 0 {
+			return http.StatusBadRequest, fmt.Errorf("request is not for this relay")
+		}
+
+		resShopID := resources[1]
+		if resShopID.Scheme != "mass-shopid" {
+			return http.StatusBadRequest, fmt.Errorf("unexpected url scheme for shopid")
+		}
+		var shopTokenID big.Int
+		_, ok = shopTokenID.SetString(resShopID.Opaque, 10)
+		if !ok {
+			return http.StatusBadRequest, fmt.Errorf("invalid shopID")
+		}
+
+		resKeyCard := resources[2]
+		if resKeyCard.Scheme != "mass-keycard" {
+			return http.StatusBadRequest, fmt.Errorf("unexpected url scheme for keyCard")
+		}
+
+		keyCardStr := strings.TrimPrefix(resKeyCard.Opaque, "0x")
+		keyCardPublicKey, err := hex.DecodeString(keyCardStr)
+		if err != nil {
+			return http.StatusBadRequest, fmt.Errorf("invalid hex encoding of keycard: %w", err)
+		}
+
+		if n := len(keyCardPublicKey); n != 64 {
+			return http.StatusBadRequest, fmt.Errorf("keyCardPublicKey length is not 64 but %d", n)
+		}
 
 		//  check if shop exists
-		_, err = r.ethereum.GetOwnerOfShop(&bigTokenID)
+		_, err = r.ethereum.GetOwnerOfShop(&shopTokenID)
 		if err != nil {
 			return http.StatusBadRequest, fmt.Errorf("no owner for shop: %w", err)
 		}
 
 		var isGuest bool = req.URL.Query().Get("guest") == "1"
 		if !isGuest {
-			has, err := r.ethereum.ClerkHasAccess(&bigTokenID, userWallet)
+			has, err := r.ethereum.ClerkHasAccess(&shopTokenID, userWallet)
 			if err != nil {
 				return http.StatusInternalServerError, fmt.Errorf("contract call error: %w", err)
 			}
-			log("relay.enrollKeyCard.verifyAccess shopTokenID=%s userWallet=%s has=%v", bigTokenID.String(), userWallet.Hex(), has)
+			log("relay.enrollKeyCard.verifyAccess shopTokenID=%s userWallet=%s has=%v", shopTokenID.String(), userWallet.Hex(), has)
 			if !has {
 				return http.StatusForbidden, errors.New("access denied")
 			}
 		}
 
 		dbCtx := context.Background()
-		shopID := r.getOrCreateInternalShopID(bigTokenID)
+		shopID := r.getOrCreateInternalShopID(shopTokenID)
 		newKeyCardID := newRequestID()
 		const insertKeyCard = `insert into keyCards (id, shopId, cardPublicKey, userWalletAddr, linkedAt, lastAckedKCSeq, lastSeenAt, lastVersion, isGuest)
 		VALUES ($1, $2, $3, $4, now(), 0, now(), $5, $6)`
-		_, err = r.connPool.Exec(dbCtx, insertKeyCard, newKeyCardID, shopID, data.KeyCardPublicKey, userWallet, currentRelayVersion, isGuest)
+		_, err = r.connPool.Exec(dbCtx, insertKeyCard, newKeyCardID, shopID, keyCardPublicKey, userWallet, currentRelayVersion, isGuest)
 		check(err)
 
 		w.WriteHeader(http.StatusCreated)
@@ -4074,7 +4165,7 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			shopID:            shopID,
 			keyCardIsGuest:    isGuest,
 			keyCardDatabaseID: newKeyCardID,
-			keyCardPublicKey:  data.KeyCardPublicKey,
+			keyCardPublicKey:  keyCardPublicKey,
 			userWallet:        userWallet,
 			done:              make(chan struct{}),
 		}
