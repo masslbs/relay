@@ -218,7 +218,7 @@ func (tc *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int
 		tok *erc20Metadata
 	)
 	// get decimals count for erc20s
-	// TODO: since this is a contract we could cache it when adding the token
+	// TODO: since this is a contract we should be able cache it when adding the token..?
 	if basedInErc20 {
 		tok, err = tc.ethereum.GetERC20Metadata(a.ChainID, a.Addr)
 		if err != nil {
@@ -233,8 +233,6 @@ func (tc *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int
 		decimalsBased = tok.decimals
 
 		basePrice, err = tc.GetERC20Price(a)
-		// TODO: convert price to token decimals
-
 	} else {
 		// TODO: might need a scary table here for some fringe coins
 		decimalsBased = 18
@@ -258,7 +256,6 @@ func (tc *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int
 		decimalsChosen = tok.decimals
 
 		chosenPrice, err = tc.GetERC20Price(b)
-
 	} else {
 		// TODO: might need a scary table here for some fringe coins
 		decimalsChosen = 18
@@ -269,33 +266,19 @@ func (tc *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int
 	}
 	result := new(big.Int)
 
-	// convert price to same base
-	log("TODO/convert total=%s", amount.String())
-	log("TODO/convert based_erc20=%v chosen_erc20=%v", basedInErc20, chosenIsErc20)
-
-	log("TODO/convert/base   dec=%d price_base=%s", decimalsBased, basePrice.String())
-	log("TODO/convert/chosen dec=%d price_chosen=%s", decimalsChosen, chosenPrice.String())
-
+	// convert price to same decimal point base
 	correction := int64(coinConversionDecimalBase) - int64(decimalsBased)
 	if correction > 0 {
 		result.Mul(amount, new(big.Int).Exp(big.NewInt(10), big.NewInt(correction), nil))
 	} else {
 		result.Div(amount, new(big.Int).Exp(big.NewInt(10), big.NewInt(-correction), nil))
 	}
-	log("TODO/convert/shiftIn correction=%d corrected=%s", correction, result.String())
 
 	result.Mul(result, basePrice)
 	result.Div(result, chosenPrice)
-	log("TODO/convert result=%s", result.String())
 
 	correction = int64(coinConversionDecimalBase) - int64(decimalsChosen)
-	if correction < 0 {
-		return nil, fmt.Errorf("TODO: add tests")
-		result.Mul(result, new(big.Int).Exp(big.NewInt(10), big.NewInt(-correction), nil))
-	} else {
-		result.Div(result, new(big.Int).Exp(big.NewInt(10), big.NewInt(correction), nil))
-	}
-	log("TODO/convert/shiftOut correction=%d amount=%s", correction, result.String())
+	result.Mul(result, new(big.Int).Exp(big.NewInt(10), big.NewInt(correction), nil))
 
 	return result, nil
 }

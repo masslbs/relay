@@ -1,4 +1,4 @@
-// Generated from /nix/store/r14cbryys0jdmf9msi39arssgc13851p-source/network-schema/authentication.proto at version v3 (5ac728e84c6ed53e4aea4c58dee94ad539169b0b)
+// Generated from /nix/store/rdpaa1lrs48krjy4vx3rxdvyd5z212mf-source/network-schema/authentication.proto at version v3 (720858d10f0c437cc96bad59eb3968cebeb73790)
 
 // SPDX-FileCopyrightText: 2024 Mass Labs
 //

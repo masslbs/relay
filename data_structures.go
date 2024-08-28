@@ -30,40 +30,6 @@ func subslice[T any](original []T, subsliceSize int) [][]T {
 // server functionality should be defined next to that functionality or just
 // inline.
 
-type eventIDSlice []eventID
-
-func (ids eventIDSlice) has(x eventID) bool {
-	for _, i := range ids {
-		if i == x {
-			return true
-		}
-	}
-	return false
-}
-
-func (ids eventIDSlice) Len() int {
-	return len(ids)
-}
-
-func (ids eventIDSlice) Less(a, b int) bool {
-	return ids[a] < ids[b]
-}
-
-func (ids eventIDSlice) Swap(a, b int) {
-	ids[a], ids[b] = ids[b], ids[a]
-}
-
-type requestIDSlice []int64
-
-func (ids requestIDSlice) has(x int64) bool {
-	for _, i := range ids {
-		if i == x {
-			return true
-		}
-	}
-	return false
-}
-
 // Use a sentinel instead of a bool to save one byte of space per map value.
 var exists = struct{}{}
 
