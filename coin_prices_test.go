@@ -7,7 +7,10 @@ package main
 import (
 	"math/big"
 	"os"
+	"strings"
 	"testing"
+
+	"encoding/json"
 
 	"github.com/ethereum/go-ethereum/common"
 	tassert "github.com/stretchr/testify/assert"
@@ -148,4 +151,51 @@ func TestCoinGeckoConvertERC20ToCoin(t *testing.T) {
 		diff      = result.Sub(circa, result)
 	)
 	a.Equal(-1, diff.CmpAbs(deviation), "diff: %s", diff)
+}
+
+func TestJsonToBigInt(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+		hasError bool
+	}{
+		{`"1"`, "1" + strings.Repeat("0", coinConversionDecimalBase), false},
+		{`"12345"`, "12345" + strings.Repeat("0", coinConversionDecimalBase), false},
+		{`"0.12345"`, "12345" + strings.Repeat("0", coinConversionDecimalBase-5), false},
+		{`".0001"`, "1" + strings.Repeat("0", coinConversionDecimalBase-4), false},
+
+		// Very large number
+		{`"1000000000000000000"`, "1000000000000000000" + strings.Repeat("0", coinConversionDecimalBase), false},
+		// Negative number
+		{`"-123.456"`, "-123456" + strings.Repeat("0", coinConversionDecimalBase-3), false},
+		// More decimal places than coinConversionDecimalBase
+		{`"0.1234567890123456789"`, "1234567890123456", false},
+		// Exactly coinConversionDecimalBase decimal places
+		{`"0.1234567890123456"`, "1234567890123456", false},
+		// Fewer decimal places than coinConversionDecimalBase
+		{`"0.123"`, "123" + strings.Repeat("0", coinConversionDecimalBase-3), false},
+		// Integer part with leading zeros
+		{`"000123.456"`, "123456" + strings.Repeat("0", coinConversionDecimalBase-3), false},
+		// Fractional part with trailing zeros
+		{`"123.45600"`, "12345600" + strings.Repeat("0", coinConversionDecimalBase-5), false},
+
+		{`""`, "", true},
+		{`"invalid"`, "", true},
+		{`"."`, "", true},
+		{`"1.2.3"`, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			a := tassert.New(t)
+			var raw json.RawMessage = json.RawMessage(tt.input)
+			result, err := jsonToBigInt(raw)
+			if tt.hasError {
+				a.Error(err)
+			} else {
+				a.NoError(err)
+				a.Equal(tt.expected, result.String())
+			}
+		})
+	}
 }

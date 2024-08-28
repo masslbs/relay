@@ -360,7 +360,7 @@ watch:
 	}
 	stillWaiting := len(waiters)
 	debug("watcher.subscribeFilterLogsERC20Transfers.finish took=%d openWaiters=%d", took(start), stillWaiting)
-	r.metric.emit("relay_payments_erc20_open", uint64(stillWaiting))
+	r.metric.gaugeSet("relay_payments_erc20_open", float64(stillWaiting))
 	return returnErr
 
 }
@@ -464,6 +464,6 @@ func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
 
 	stillWaiting := len(waiters)
 	debug("watcher.subscribeNewHeadsForEther.finish took=%d openWaiters=%d", took(start), stillWaiting)
-	r.metric.emit("relay_payments_eth_open", uint64(stillWaiting))
+	r.metric.gaugeSet("relay_payments_eth_open", float64(stillWaiting))
 	return nil
 }

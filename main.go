@@ -209,9 +209,10 @@ func (e *Envelope) isRequest() (requestMessage, bool) {
 	case *Envelope_Response:
 		return nil, false
 
-	// Later
-	//case *Envelope_SubscriptionRequest:
-	//return tv.SubscriptionCancel, true
+	case *Envelope_SubscriptionRequest:
+		return tv.SubscriptionRequest, true
+	case *Envelope_SubscriptionCancelRequest:
+		return tv.SubscriptionCancelRequest, true
 
 	case *Envelope_EventWriteRequest:
 		return tv.EventWriteRequest, true
@@ -285,9 +286,9 @@ type ChallengeSolvedOp struct {
 
 // SyncStatusOp sends a SyncStatusRequest to the client
 type SyncStatusOp struct {
-	sessionID sessionID
-	err       *Error
-
+	sessionID      sessionID
+	subscriptionID uint16
+	err            *Error
 	unpushedEvents uint64
 }
 
@@ -301,11 +302,27 @@ type EventWriteOp struct {
 	err            *Error
 }
 
-// SubscripitionPushOp sends an EventPushRequest to the client
-type SubscripitionPushOp struct {
-	sessionID   sessionID
-	eventStates []*EventState
-	err         *Error
+type SubscriptionRequestOp struct {
+	sessionID      sessionID
+	requestID      *RequestId
+	im             *SubscriptionRequest
+	subscriptionID uint16
+	err            *Error
+}
+
+type SubscriptionCancelOp struct {
+	sessionID sessionID
+	requestID *RequestId
+	im        *SubscriptionCancelRequest
+	err       *Error
+}
+
+// SubscriptionPushOp sends an EventPushRequest to the client
+type SubscriptionPushOp struct {
+	sessionID      sessionID
+	subscriptionID uint16
+	eventStates    []*EventState
+	err            *Error
 }
 
 // GetBlobUploadURLOp processes a GetBlobUploadURLRequest from the client
@@ -484,7 +501,7 @@ func (sess *Session) writeResponse(reqID *RequestId, resp *Envelope_GenericRespo
 
 	// Emit overall time the request took to process, from reading the request
 	// to writing the response.
-	sess.metric.emit("sessions_messages_write_elapsed", uint64(took(started)))
+	sess.metric.counterAdd("sessions_messages_write_elapsed", float64(took(started)))
 
 	// If we're sending an error, log it for our own visibility.
 	responseErr := resp.GetError()
@@ -650,8 +667,10 @@ func (sess *Session) handleMessage(im *Envelope) {
 	case *Envelope_EventWriteRequest:
 		tv.EventWriteRequest.handle(sess, im.RequestId)
 
-	// case *Envelope_SubscriptionRequest:
-	// 	tv.SubscriptionRequest
+	case *Envelope_SubscriptionRequest:
+		tv.SubscriptionRequest.handle(sess, im.RequestId)
+	case *Envelope_SubscriptionCancelRequest:
+		tv.SubscriptionCancelRequest.handle(sess, im.RequestId)
 
 	default:
 		panic(fmt.Sprintf("envelope.handle: unhandled message type! %T", tv))
@@ -781,12 +800,15 @@ func (op *GetBlobUploadURLOp) handle(sess *Session) {
 	sess.writeResponse(op.requestID, resp)
 }
 
-func (op *SubscripitionPushOp) handle(sess *Session) {
+func (op *SubscriptionPushOp) handle(sess *Session) {
 	assertLTE(len(op.eventStates), limitMaxOutBatchSize)
-	events := make([]*SignedEvent, len(op.eventStates))
+	events := make([]*SubscriptionPushRequest_SequencedEvent, len(op.eventStates))
 	for i, eventState := range op.eventStates {
 		assert(eventState.seq != 0)
-		events[i] = &eventState.encodedEvent
+		events[i] = &SubscriptionPushRequest_SequencedEvent{
+			Event: &eventState.encodedEvent,
+			SeqNo: eventState.seq,
+		}
 		assert(eventState.encodedEvent.Event != nil)
 	}
 	spr := &Envelope_SubscriptionPushRequest{
@@ -799,7 +821,7 @@ func (op *SubscripitionPushOp) handle(sess *Session) {
 
 func handleSubscriptionPushResponse(sess *Session, reqID *RequestId, resp *Envelope_GenericResponse) {
 	assertNilError(resp.GetError())
-	op := sess.activePushes.Get(reqID.Raw).(*SubscripitionPushOp)
+	op := sess.activePushes.Get(reqID.Raw).(*SubscriptionPushOp)
 	sess.activePushes.Delete(reqID.Raw)
 	sess.sendDatabaseOp(op)
 }
@@ -830,7 +852,7 @@ func validateUpdateManifest(_ uint, event *UpdateManifest) *Error {
 	errs := []*Error{}
 	hasOpt := false
 	if adds := event.AddAcceptedCurrencies; len(adds) > 0 {
-		// TODO: validate chain ids?
+		// TODO: chain id allow list..?
 		for i, add := range adds {
 			field := fmt.Sprintf("add_accepted_currency[%d].addr", i)
 			errs = append(errs, add.Address.validate(field))
@@ -1019,8 +1041,10 @@ func validateUpdateOrder(v uint, event *UpdateOrder) *Error {
 		errs = append(errs, validateUpdateShippingDetails(v, tv.InvoiceAddress))
 	case *UpdateOrder_ShippingAddress:
 		errs = append(errs, validateUpdateShippingDetails(v, tv.ShippingAddress))
-	case *UpdateOrder_Commit:
-		errs = append(errs, validateUpdateOrderCommit(v, tv.Commit))
+	case *UpdateOrder_CommitItems_:
+		// noop
+	case *UpdateOrder_ChoosePayment:
+		errs = append(errs, validateUpdateOrderPaymentMenthod(v, tv.ChoosePayment))
 	case *UpdateOrder_PaymentDetails:
 		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "PaymentDetails can not bet written in EventWriteRequest"})
 	}
@@ -1029,14 +1053,15 @@ func validateUpdateOrder(v uint, event *UpdateOrder) *Error {
 
 func validateOrderCanceled(_ uint, event *UpdateOrder_Canceled) *Error {
 	if event.CanceldAt == nil {
+		return &Error{Code: ErrorCodes_INVALID, Message: "timestamp can't be unset"}
+	}
+	if event.CanceldAt.Seconds == 0 {
 		return &Error{Code: ErrorCodes_INVALID, Message: "timestamp can't be 0"}
 	}
-	/* TODO: more validity?
-	 */
 	return nil
 }
 
-func validateUpdateOrderCommit(version uint, im *UpdateOrder_CommitItems) *Error {
+func validateUpdateOrderPaymentMenthod(version uint, im *UpdateOrder_ChoosePaymentMethod) *Error {
 	if version < 3 {
 		return minimumVersionError
 	}
@@ -1139,6 +1164,55 @@ func (op *EventWriteOp) handle(sess *Session) {
 	sess.writeResponse(op.requestID, om)
 }
 
+func (im *SubscriptionRequest) validate(version uint) *Error {
+	errs := []*Error{
+		validateBytes(im.ShopId.Raw, "shop_id", 32),
+	}
+	for _, f := range im.Filters {
+		if f.ObjectType == ObjectType_OBJECT_TYPE_UNSPECIFIED {
+			errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "filter object type invalid"})
+		}
+	}
+	return coalesce(errs...)
+}
+
+func (im *SubscriptionRequest) handle(sess *Session, reqID *RequestId) {
+	op := &SubscriptionRequestOp{
+		requestID: reqID,
+		sessionID: sess.id,
+		im:        im,
+	}
+	sess.sendDatabaseOp(op)
+}
+
+func (op *SubscriptionRequestOp) handle(sess *Session) {
+	om := newGenericResponse(op.err)
+	if op.err == nil {
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, op.subscriptionID)
+		om.Response = &Envelope_GenericResponse_Payload{buf}
+	}
+	sess.writeResponse(op.requestID, om)
+}
+
+func (im *SubscriptionCancelRequest) validate(version uint) *Error {
+	return validateBytes(im.SubscriptionId, "subscription_id", 2)
+}
+
+func (im *SubscriptionCancelRequest) handle(sess *Session, reqID *RequestId) {
+	op := &SubscriptionCancelOp{
+		requestID: reqID,
+		sessionID: sess.id,
+		im:        im,
+	}
+	sess.sendDatabaseOp(op)
+}
+
+func (op *SubscriptionCancelOp) handle(sess *Session) {
+	om := newGenericResponse(op.err)
+	sess.writeResponse(op.requestID, om)
+}
+
 func (sess *Session) run() {
 	sess.metric.counterAdd("sessions_start", 1)
 	logS(sess.id, "session.run.start version=%d", sess.version)
@@ -1180,12 +1254,19 @@ type EventState struct {
 
 // SessionState represents the state of a client in the database.
 type SessionState struct {
-	version             uint
-	authChallenge       []byte
-	sessionOps          chan SessionOp
-	keyCardID           keyCardID
-	keyCardPublicKey    []byte
-	keyCardOfAGuest     bool
+	version           uint
+	authChallenge     []byte
+	sessionOps        chan SessionOp
+	keyCardID         keyCardID
+	keyCardPublicKey  []byte
+	keyCardOfAGuest   bool
+	shopID            shopID
+	lastSeenAt        time.Time
+	lastSeenAtFlushed time.Time
+	subscriptions     map[uint16]*SubscriptionState
+}
+
+type SubscriptionState struct {
 	shopID              shopID
 	buffer              []*EventState
 	initialStatus       bool
@@ -1195,8 +1276,7 @@ type SessionState struct {
 	nextPushIndex       int
 	lastAckedSeq        uint64
 	lastAckedSeqFlushed uint64
-	lastSeenAt          time.Time
-	lastSeenAtFlushed   time.Time
+	whereFragment       string
 }
 
 // CachedMetadata represents data cached which is common to all events
@@ -1205,10 +1285,8 @@ type CachedMetadata struct {
 	createdByShopID         shopID
 	createdByKeyCardID      keyCardID
 	createdByNetworkVersion uint16
-	createdAt               uint64 // TODO: maybe change to time.Time
-	// TODO: updatedAt uint64
-	serverSeq uint64
-	shopSeq   uint64
+	serverSeq               uint64
+	shopSeq                 uint64
 
 	// helper fields
 	writtenByRelay bool
@@ -1315,17 +1393,8 @@ func (current *CachedShopManifest) update(union *ShopEvent, meta CachedMetadata)
 		if p := um.RemovePayee; p != nil {
 			delete(current.payees, p.Name)
 		}
-	case *ShopEvent_Account:
-		/* TODO:
-		acc := union.GetAccount()
-		nkc := acc.GetEnrollKeycard()
-		current.CachedMetadata = meta
-		current.validKeyCardPublicKeys = append(current.validKeyCardPublicKeys, nkc.KeycardPubkey)
-		*/
 	}
 }
-
-type objectID uint64
 
 // CachedItem is the latest reduction of an Item.
 // It combines the initial CreateItem and all UpdateItems
@@ -1847,26 +1916,26 @@ func (r *Relay) bulkInsert(table string, columns []string, rows [][]interface{})
 	return insertedRows, conflictingRows
 }
 
-func (r *Relay) assertCursors(sid sessionID, shopState *ShopState, sessionState *SessionState) {
-	err := r.checkCursors(sid, shopState, sessionState)
+func (r *Relay) assertCursors(sid sessionID, shopState *ShopState, state *SubscriptionState) {
+	err := r.checkCursors(sid, shopState, state)
 	check(err)
 }
 
-func (r *Relay) checkCursors(sid sessionID, shopState *ShopState, sessionState *SessionState) error {
+func (r *Relay) checkCursors(sid sessionID, shopState *ShopState, state *SubscriptionState) error {
 	if shopState.lastUsedSeq < shopState.lastWrittenSeq {
 		return fmt.Errorf("cursor[%d]: lastUsedShopSeq(%d) < lastWrittenShopSeq(%d)", sid, shopState.lastUsedSeq, shopState.lastWrittenSeq)
 	}
-	if shopState.lastWrittenSeq < sessionState.lastStatusedSeq {
-		return fmt.Errorf("cursor[%d]: lastWrittenSeq(%d) < lastStatusedSeq(%d)", sid, shopState.lastWrittenSeq, sessionState.lastStatusedSeq)
+	if shopState.lastWrittenSeq < state.lastStatusedSeq {
+		return fmt.Errorf("cursor[%d]: lastWrittenSeq(%d) < lastStatusedSeq(%d)", sid, shopState.lastWrittenSeq, state.lastStatusedSeq)
 	}
-	if sessionState.lastStatusedSeq < sessionState.lastBufferedSeq {
-		return fmt.Errorf("cursor[%d]: lastStatusedSeq(%d) < lastBufferedSeq(%d)", sid, sessionState.lastStatusedSeq, sessionState.lastBufferedSeq)
+	if state.lastStatusedSeq < state.lastBufferedSeq {
+		return fmt.Errorf("cursor[%d]: lastStatusedSeq(%d) < lastBufferedSeq(%d)", sid, state.lastStatusedSeq, state.lastBufferedSeq)
 	}
-	if sessionState.lastBufferedSeq < sessionState.lastPushedSeq {
-		return fmt.Errorf("cursor[%d]: lastBufferedSeq(%d) < lastPushedSeq(%d)", sid, sessionState.lastBufferedSeq, sessionState.lastPushedSeq)
+	if state.lastBufferedSeq < state.lastPushedSeq {
+		return fmt.Errorf("cursor[%d]: lastBufferedSeq(%d) < lastPushedSeq(%d)", sid, state.lastBufferedSeq, state.lastPushedSeq)
 	}
-	if sessionState.lastPushedSeq < sessionState.lastAckedSeq {
-		return fmt.Errorf("cursor[%d]: lastPushedSeq(%d) < lastAckedSeq(%d)", sid, sessionState.lastPushedSeq, sessionState.lastAckedSeq)
+	if state.lastPushedSeq < state.lastAckedSeq {
+		return fmt.Errorf("cursor[%d]: lastPushedSeq(%d) < lastAckedSeq(%d)", sid, state.lastPushedSeq, state.lastAckedSeq)
 	}
 	return nil
 }
@@ -2027,7 +2096,6 @@ from events where %s order by serverSeq asc`, whereFragment)
 		)
 		err := rows.Scan(&m.serverSeq, &m.shopSeq, &m.objectID, &eventType, &m.createdByKeyCardID, &m.createdByShopID, &createdAt, &m.createdByNetworkVersion, &encoded)
 		check(err)
-		m.createdAt = uint64(createdAt.Unix())
 		var e ShopEvent
 		err = proto.Unmarshal(encoded, &e)
 		check(err)
@@ -2046,7 +2114,6 @@ type EventInsert struct {
 }
 
 func newEventInsert(evt *ShopEvent, meta CachedMetadata, abstract *SignedEvent) *EventInsert {
-	meta.createdAt = uint64(now().Unix())
 	return &EventInsert{
 		CachedMetadata: meta,
 		evt:            evt,
@@ -2231,21 +2298,6 @@ func (r *Relay) flushEvents() {
 	log("relay.flushEvents.finish took=%d", took(start))
 }
 
-// returns true if the event is owned by the passed shop and keyCard
-func (r *Relay) doesSessionOwnEvent(session *SessionState, objectID uint64) bool {
-	ctx := context.Background()
-
-	// crawl all keyCards of this shop
-	const checkOrderOwnershipQuery = `select count(*) from events
-where createdByKeyCardId in (select id from keycards where userWalletAddr = (select userWalletAddr from keyCards where id = $1))
-and createdByShopId = $2
-and objectID = $3`
-	var found int
-	err := r.connPool.QueryRow(ctx, checkOrderOwnershipQuery, session.keyCardID, session.shopID, objectID).Scan(&found)
-	check(err)
-	return found == 1
-}
-
 // Loader is an interface for all loaders.
 // Loaders represent the read-through cache layer.
 
@@ -2325,9 +2377,9 @@ func (op *StartOp) process(r *Relay) {
 	assert(op.sessionOps != nil)
 	logS(op.sessionID, "relay.startOp.start")
 	sessionState := &SessionState{
-		version:    op.sessionVersion,
-		sessionOps: op.sessionOps,
-		buffer:     make([]*EventState, 0),
+		version:       op.sessionVersion,
+		sessionOps:    op.sessionOps,
+		subscriptions: make(map[uint16]*SubscriptionState),
 	}
 	r.sessionIDsToSessionStates.Set(op.sessionID, sessionState)
 	r.lastSeenAtTouch(sessionState)
@@ -2491,34 +2543,12 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 	logS(op.sessionID, "relay.challengeSolvedOp.existingDevice")
 	// update sessionState
 	sessionState.keyCardOfAGuest = isGuestKeyCard
-	sessionState.lastStatusedSeq = dbLastAckedSeq
-	sessionState.lastBufferedSeq = dbLastAckedSeq
-	sessionState.lastPushedSeq = dbLastAckedSeq
-	sessionState.lastAckedSeq = dbLastAckedSeq
-	sessionState.lastAckedSeqFlushed = dbLastAckedSeq
 	query = `update keyCards set lastVersion = $1, lastSeenAt = $2 where id = $3`
 	_, err = r.connPool.Exec(ctx, query, sessionState.version, sessionState.lastSeenAt, sessionState.keyCardID)
 	check(err)
 
 	sessionState.shopID = shopID
-	sessionState.initialStatus = false
-	sessionState.nextPushIndex = 0
 	sessionState.keyCardPublicKey = keyCardPublicKey
-
-	// Establish shop seq.
-	r.hydrateShops(NewSetInts(sessionState.shopID))
-	shopState := r.shopIdsToShopState.MustGet(sessionState.shopID)
-
-	// Verify we have valid seq cursor relationships. We will check this whenever we move a cursor.
-	err = r.checkCursors(op.sessionID, shopState, sessionState)
-	logS(op.sessionID, "relay.challengeSolvedOp.checkCursors lastWrittenSeq=%d lastUsedSeq=%d lastStatusedSeq=%d lastBufferedSeq=%d lastPushedSeq=%d lastAckedSeq=%d error=%t",
-		shopState.lastWrittenSeq, shopState.lastUsedSeq, sessionState.lastStatusedSeq, sessionState.lastBufferedSeq, sessionState.lastPushedSeq, sessionState.lastAckedSeq, err != nil)
-	if err != nil {
-		logS(op.sessionID, "relay.challengeSolvedOp.brokenCursor err=%s", err.Error())
-		op.err = notFoundError
-		r.sendSessionOp(sessionState, op)
-		return
-	}
 
 	// At this point we know authentication was successful and seqs validated, so indicate by removing authChallenge.
 	sessionState.authChallenge = nil
@@ -2531,7 +2561,7 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 //
 // until we need to verify proofs this is a pretty simple merkle tree with three intermediary nodes
 // 1. the manifest
-// 2. all published items (TODO: other tags?)
+// 2. all published items
 // 3. the stock counts
 func (r *Relay) shopRootHash(_ shopID) []byte {
 	//start := now()
@@ -2547,30 +2577,13 @@ func (r *Relay) shopRootHash(_ shopID) []byte {
 	manifestHash.Write(shopManifest.publishedTagID)
 	//log("relay.shopRootHash manifest=%x", manifestHash.Sum(nil))
 
-	// 2. all items in the published set
-	publishedItemsHash := sha3.NewLegacyKeccak256()
-	publishedTag, has := r.tagsByTagID.get(shopManifest.publishedTagID)
-	if has {
-		// iterating over sets is randomized in Go, sort them for consistency
-		publishedItemIds := publishedTag.items.Slice()
-		sort.Sort(publishedItemIds)
-
-		for _, itemID := range publishedItemIds {
-			item, has := r.itemsByItemID.get(itemID)
-			assertWithMessage(has, fmt.Sprintf("failed to load published itemId=%s", itemID))
-			publishedItemsHash.Write(item.itemID)
-		}
-		//log("relay.shopRootHash published=%x", publishedItemsHash.Sum(nil))
-	}
-
-	// TODO: other tags
+	// 2. all items in tags
 
 	// 3. the stock
 	stockHash := sha3.NewLegacyKeccak256()
 	stock, has := r.stockByShopID.get(shopID)
 	//assertWithMessage(has, "stock unavailable")
 	if has {
-		// TODO: we should probably always have a stock that's just empty
 		//log("relay.shopRootHash.hasStock shopId=%s", shopID)
 		// see above
 		stockIds := stock.inventory.Keys()
@@ -2606,7 +2619,7 @@ func (op *EventWriteOp) process(r *Relay) {
 	if sessionState == nil {
 		logSR("relay.eventWriteOp.drain", sessionID, requestID)
 		return
-	} else if sessionState.keyCardID == 0 {
+	} else if sessionState.shopID == 0 {
 		logSR("relay.eventWriteOp.notAuthenticated", sessionID, requestID)
 		op.err = notAuthenticatedError
 		r.sendSessionOp(sessionState, op)
@@ -2636,8 +2649,8 @@ func (op *EventWriteOp) process(r *Relay) {
 	r.writeEvent(op.decodedShopEvt, meta, op.im.Events[0])
 
 	if uo := op.decodedShopEvt.GetUpdateOrder(); uo != nil {
-		if commit := uo.GetCommit(); commit != nil {
-			err := r.processPaymentDetailsForOrder(sessionID, uo.Id, commit)
+		if p := uo.GetChoosePayment(); p != nil {
+			err := r.processPaymentDetailsForOrder(sessionID, uo.Id, p)
 			if err != nil {
 				op.err = err
 				r.sendSessionOp(sessionState, op)
@@ -2803,7 +2816,7 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 			// find option for variation
 		lookForVar:
 			for optID, opt := range item.options {
-				for varID, _ := range opt {
+				for varID := range opt {
 					if wantVarID == varID {
 						found = optID
 						break lookForVar
@@ -2893,7 +2906,8 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 		if order.createdByShopID != sess.shopID { // not allow to alter data from other shops
 			return notFoundError
 		}
-		if sess.keyCardOfAGuest && !r.doesSessionOwnEvent(sess, evt.Id) {
+
+		if sess.keyCardOfAGuest && order.createdByKeyCardID != sess.keyCardID {
 			return notFoundError
 		}
 
@@ -2944,36 +2958,50 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 					return &Error{Code: ErrorCodes_INVALID, Message: "not enough items in order"}
 				}
 			}
+
+		case *UpdateOrder_CommitItems_:
+			// noop
+
+		case *UpdateOrder_InvoiceAddress:
+			// noop
+
+		case *UpdateOrder_ShippingAddress:
+			// noop
+
 		case *UpdateOrder_Canceled_:
 			if order.order.State < Order_STATE_COMMITED {
 				return &Error{Code: ErrorCodes_INVALID, Message: "order is not finalized"}
 			}
 
-		case *UpdateOrder_Commit:
+		case *UpdateOrder_ChoosePayment:
 			if order.order.State >= Order_STATE_COMMITED {
 				return &Error{Code: ErrorCodes_INVALID, Message: "order is already finalized"}
 			}
 			if order.items.Size() == 0 {
 				return &Error{Code: ErrorCodes_INVALID, Message: "order is empty"}
 			}
-			commit := act.Commit
-			p, has := manifest.payees[commit.Payee.Name]
+			method := act.ChoosePayment
+			p, has := manifest.payees[method.Payee.Name]
 			if !has {
 				return &Error{Code: ErrorCodes_INVALID, Message: "no such payee"}
 			}
 
-			if p.ChainId != commit.Payee.ChainId || !bytes.Equal(p.Address.Raw, commit.Payee.Address.Raw) {
+			if p.ChainId != method.Payee.ChainId || !bytes.Equal(p.Address.Raw, method.Payee.Address.Raw) {
 				return &Error{Code: ErrorCodes_INVALID, Message: "payee missmatch"}
 			}
 
 			chosenCurrency := cachedShopCurrency{
-				common.Address(commit.Currency.Address.Raw),
-				commit.Currency.ChainId,
+				common.Address(method.Currency.Address.Raw),
+				method.Currency.ChainId,
 			}
 			_, has = manifest.acceptedCurrencies[chosenCurrency]
 			if !has {
 				return &Error{Code: ErrorCodes_INVALID, Message: "chosen currency not available"}
 			}
+		default:
+			log("relay.checkEventWrite.updateOrder action=%T", act)
+			return &Error{Code: ErrorCodes_INVALID, Message: "no action on updateOrder"}
+
 		}
 
 	default:
@@ -2982,7 +3010,7 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 	return nil
 }
 
-func (r *Relay) processPaymentDetailsForOrder(sessionID sessionID, orderID uint64, commit *UpdateOrder_CommitItems) *Error {
+func (r *Relay) processPaymentDetailsForOrder(sessionID sessionID, orderID uint64, method *UpdateOrder_ChoosePaymentMethod) *Error {
 	ctx := context.Background()
 	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
 
@@ -3001,10 +3029,8 @@ func (r *Relay) processPaymentDetailsForOrder(sessionID sessionID, orderID uint6
 		return notFoundError
 	}
 	// check ownership of the cart if it is a guest
-	if sessionState.keyCardOfAGuest {
-		if !r.doesSessionOwnEvent(sessionState, orderID) {
-			return notFoundError
-		}
+	if sessionState.keyCardOfAGuest && order.createdByKeyCardID != sessionState.keyCardID {
+		return notFoundError
 	}
 	shopID := order.createdByShopID
 	shop, has := r.shopManifestsByShopID.get(uint64(shopID))
@@ -3207,8 +3233,8 @@ where shopId = $1
 	// create payment address for order content
 	var (
 		chosenCurrency = cachedShopCurrency{
-			common.Address(commit.Currency.Address.Raw),
-			commit.Currency.ChainId,
+			common.Address(method.Currency.Address.Raw),
+			method.Currency.ChainId,
 		}
 	)
 	if !chosenCurrency.Equal(shop.baseCurrency) {
@@ -3228,7 +3254,7 @@ where shopId = $1
 		return &Error{Code: ErrorCodes_INVALID, Message: err.Error()}
 	}
 
-	if commit.Payee.ChainId != chosenCurrency.ChainID {
+	if method.Payee.ChainId != chosenCurrency.ChainID {
 		return &Error{Code: ErrorCodes_INVALID, Message: "payee and chosenCurrency chain_id mismatch"}
 	}
 
@@ -3247,13 +3273,13 @@ where shopId = $1
 	}
 
 	var pr = PaymentRequest{}
-	pr.ChainId = new(big.Int).SetUint64(commit.Payee.ChainId)
+	pr.ChainId = new(big.Int).SetUint64(method.Payee.ChainId)
 	pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
 	pr.Order = orderHash
 	pr.Currency = chosenCurrency.Addr
 	pr.Amount = bigTotal
-	pr.PayeeAddress = common.Address(commit.Payee.Address.Raw)
-	pr.IsPaymentEndpoint = commit.Payee.CallAsContract
+	pr.PayeeAddress = common.Address(method.Payee.Address.Raw)
+	pr.IsPaymentEndpoint = method.Payee.CallAsContract
 	pr.ShopId = bigShopTokenID
 	// TODO: calculate signature
 	pr.ShopSignature = bytes.Repeat([]byte{0}, 64)
@@ -3326,7 +3352,154 @@ where shopId = $1
 	return nil
 }
 
-func (op *SubscripitionPushOp) process(r *Relay) {
+func (op *SubscriptionRequestOp) process(r *Relay) {
+	start := now()
+	ctx := context.Background()
+	sessionID := op.sessionID
+	requestID := op.requestID.Raw
+	session := r.sessionIDsToSessionStates.Get(sessionID)
+	if session == nil {
+		logSR("relay.subscriptionRequestOp.drain", sessionID, requestID)
+		return
+	}
+	logSR("relay.subscriptionRequestOp.process", sessionID, requestID)
+	r.lastSeenAtTouch(session)
+
+	if len(session.subscriptions) > 0 {
+		// To not yield confusing ordering of events, until we have a better implementation, we only support one at a time
+		// https://www.notion.so/massmarket/V3-Subscription-Constraints-54de7804cc504e5d8caf43b85002b5b2?pvs=4
+		op.err = &Error{Code: ErrorCodes_INVALID, Message: "only one subscription"}
+		r.sendSessionOp(session, op)
+		return
+	}
+
+	var (
+		verifyOrderIds []uint64
+
+		startSeqNo   = op.im.StartShopSeqNo
+		subscription SubscriptionState
+
+		shopTokenID = new(big.Int).SetBytes(op.im.ShopId.Raw)
+	)
+
+	err := r.connPool.QueryRow(ctx, `select id from shops where tokenId = $1`, shopTokenID.String()).Scan(&subscription.shopID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			op.err = notFoundError
+			r.sendSessionOp(session, op)
+			return
+		}
+		check(err)
+	}
+
+	subscription.lastStatusedSeq = startSeqNo
+	subscription.lastBufferedSeq = startSeqNo
+	subscription.lastPushedSeq = startSeqNo
+	subscription.lastAckedSeq = startSeqNo
+	subscription.lastAckedSeqFlushed = startSeqNo
+
+	subscription.initialStatus = false
+	subscription.nextPushIndex = 0
+
+	// build WHERE fragment used for pushing events
+	var wheres []string
+	for _, filter := range op.im.Filters {
+		// we only support queries for public content to other shops then the authenticated one
+		if subscription.shopID != session.shopID &&
+			(filter.ObjectType == ObjectType_OBJECT_TYPE_INVENTORY ||
+				filter.ObjectType == ObjectType_OBJECT_TYPE_ORDER ||
+				filter.ObjectType == ObjectType_OBJECT_TYPE_ACCOUNT) {
+			logSR("relay.subscriptionRequestOp.notAllowed why=\"other shop\" filter=%s",
+				sessionID, requestID, filter.ObjectType.String())
+			op.err = &Error{Code: ErrorCodes_INVALID, Message: "not allowed"}
+			r.sendSessionOp(session, op)
+			return
+		}
+
+		// guests are only allowed to access their own orders
+		if session.keyCardOfAGuest {
+			switch filter.ObjectType {
+			case ObjectType_OBJECT_TYPE_ORDER:
+				// we only need to verify orders queried by guests
+				if id := filter.GetObjectId(); id > 0 {
+					verifyOrderIds = append(verifyOrderIds, id)
+				}
+			case ObjectType_OBJECT_TYPE_INVENTORY:
+				logSR("relay.subscriptionRequestOp.notAllowed filter=%s",
+					sessionID, requestID, filter.ObjectType.String())
+				op.err = &Error{Code: ErrorCodes_INVALID, Message: "not allowed"}
+				r.sendSessionOp(session, op)
+				return
+			}
+		}
+
+		var where string
+		switch filter.ObjectType {
+		case ObjectType_OBJECT_TYPE_MANIFEST:
+			where = ` (eventType='manifest' OR eventType='updateManifest')`
+		case ObjectType_OBJECT_TYPE_ACCOUNT:
+			where = ` (eventType='account')`
+		case ObjectType_OBJECT_TYPE_INVENTORY:
+			where = ` (eventType='changeInventory')`
+		case ObjectType_OBJECT_TYPE_LISTING:
+			where = ` (eventType='listing' OR eventType='updateListing')`
+		case ObjectType_OBJECT_TYPE_TAG:
+			where = ` (eventType='tag' OR eventType='updateTag')`
+		case ObjectType_OBJECT_TYPE_ORDER:
+			where = ` (eventType='createOrder' OR eventType='updateOrder')`
+			if session.keyCardOfAGuest {
+				where = where + fmt.Sprintf(" AND createdByKeyCardId=%d", session.keyCardID)
+			}
+		}
+		if id := filter.ObjectId; id != nil && *id != 0 {
+			where = "(" + where + fmt.Sprintf(" AND objectId = %d)", *filter.ObjectId)
+		}
+		wheres = append(wheres, where)
+	}
+	subscription.whereFragment = strings.Join(wheres, " OR ")
+
+	if n := len(verifyOrderIds); n > 0 {
+		// check that all orders belong to the same person
+		var count int
+		const checkQry = `select count(*) from events
+where eventType="createOrder"
+and createdByShopId = $1
+and createdByKeyCardId = $2
+and objectId = any($3)`
+		err = r.connPool.QueryRow(ctx, checkQry, session.shopID, session.keyCardID, verifyOrderIds).Scan(&count)
+		check(err)
+		if count != n {
+			logSR("relay.subscriptionRequestOp.notAuthenticated", sessionID, requestID)
+			op.err = notAuthenticatedError
+			r.sendSessionOp(session, op)
+			return
+		}
+	}
+
+	// Establish shop seq.
+	r.hydrateShops(NewSetInts(subscription.shopID))
+	shopState := r.shopIdsToShopState.MustGet(subscription.shopID)
+
+	// Verify we have valid seq cursor relationships. We will check this whenever we move a cursor.
+	err = r.checkCursors(op.sessionID, shopState, &subscription)
+	logS(op.sessionID, "relay.subscriptionRequestOp.checkCursors lastWrittenSeq=%d lastUsedSeq=%d lastStatusedSeq=%d lastBufferedSeq=%d lastPushedSeq=%d lastAckedSeq=%d error=%t",
+		shopState.lastWrittenSeq, shopState.lastUsedSeq, subscription.lastStatusedSeq, subscription.lastBufferedSeq, subscription.lastPushedSeq, subscription.lastAckedSeq, err != nil)
+	if err != nil {
+		logS(op.sessionID, "relay.subscriptionRequestOp.brokenCursor err=%s", err.Error())
+		op.err = notFoundError
+		r.sendSessionOp(session, op)
+		return
+	}
+
+	// catalog subscriptionID and save it
+	op.subscriptionID = uint16(len(session.subscriptions) + 1)
+	session.subscriptions[op.subscriptionID] = &subscription
+
+	r.sendSessionOp(session, op)
+	logS(op.sessionID, "relay.subscriptionRequestOp.finish took=%d", took(start))
+}
+
+func (op *SubscriptionPushOp) process(r *Relay) {
 	sessionState := r.sessionIDsToSessionStates.Get(op.sessionID)
 	if sessionState == nil {
 		logS(op.sessionID, "relay.eventPushOp.drain")
@@ -3338,6 +3511,35 @@ func (op *SubscripitionPushOp) process(r *Relay) {
 	}
 }
 
+func (op *SubscriptionCancelOp) process(r *Relay) {
+	start := now()
+	ctx := context.Background()
+	_ = ctx
+	sessionID := op.sessionID
+	requestID := op.requestID.Raw
+	session := r.sessionIDsToSessionStates.Get(sessionID)
+	if session == nil {
+		logSR("relay.subscriptionCancelOp.drain", sessionID, requestID)
+		return
+	}
+	logSR("relay.subscriptionCancelOp.process", sessionID, requestID)
+	r.lastSeenAtTouch(session)
+
+	// check if the subscription id exists
+	subID := binary.BigEndian.Uint16(op.im.SubscriptionId)
+	_, has := session.subscriptions[subID]
+	if !has {
+		op.err = notFoundError
+		r.sendSessionOp(session, op)
+		return
+	}
+
+	delete(session.subscriptions, subID)
+
+	r.sendSessionOp(session, op)
+	logS(op.sessionID, "relay.subscriptionCancelOp.finish took=%d", took(start))
+}
+
 func (op *GetBlobUploadURLOp) process(r *Relay) {
 	sessionID := op.sessionID
 	requestID := op.requestID.Raw
@@ -3345,7 +3547,7 @@ func (op *GetBlobUploadURLOp) process(r *Relay) {
 	if sessionState == nil {
 		logS(sessionID, "relay.getBlobUploadURLOp.drain")
 		return
-	} else if sessionState.keyCardID == 0 {
+	} else if sessionState.shopID == 0 {
 		logSR("relay.getBlobUploadURLOp.notAuthenticated", sessionID, requestID)
 		op.err = notAuthenticatedError
 		r.sendSessionOp(sessionState, op)
@@ -3540,198 +3742,190 @@ func (r *Relay) debounceSessions() {
 	// Process each session.
 	// Only log if there is substantial activity because this is polling constantly and usually a no-op.
 	start := now()
-	ctx := context.Background()
 
-	r.sessionIDsToSessionStates.All(func(sid sessionID, sessionState *SessionState) bool {
+	r.sessionIDsToSessionStates.All(func(sessionID sessionID, sessionState *SessionState) bool {
 		// Kick the session if we haven't received any recent messages from it, including ping responses.
 		if time.Since(sessionState.lastSeenAt) > sessionKickTimeout {
 			r.metric.counterAdd("sessions_kick", 1)
-			logS(sid, "relay.debounceSessions.kick")
-			op := &StopOp{sessionID: sid}
+			logS(sessionID, "relay.debounceSessions.kick")
+			op := &StopOp{sessionID: sessionID}
 			r.sendSessionOp(sessionState, op)
 			return false
 		}
 
-		// Don't try to do anything else if the session isn't even authenticated yet.
-		if sessionState.shopID == 0 {
-			return false
+		for subID, subscription := range sessionState.subscriptions {
+			r.pushOutShopLog(sessionID, sessionState, subID, subscription)
 		}
-
-		// If the session is authenticated, we can get user info.
-		shopState := r.shopIdsToShopState.MustGet(sessionState.shopID)
-		r.assertCursors(sid, shopState, sessionState)
-
-		// Calculate the new keyCard seq up to which the device has acked all pushes.
-		// Slice the buffer to drop such entries as they have completed their lifecycle.
-		// Do this all first to trim down the buffer before reading more, if possible.
-		var (
-			advancedFrom uint64
-			advancedTo   uint64
-			i            = 0
-		)
-		for ; i < len(sessionState.buffer); i++ {
-			entryState := sessionState.buffer[i]
-			if !entryState.acked {
-				break
-			}
-			assert(entryState.seq > sessionState.lastAckedSeq)
-			if i == 0 {
-				advancedFrom = sessionState.lastAckedSeq
-			}
-			sessionState.lastAckedSeq = entryState.seq
-			advancedTo = entryState.seq
-		}
-		if i != 0 {
-			sessionState.buffer = sessionState.buffer[i:]
-			sessionState.nextPushIndex -= i
-			logS(sid, "relay.debounceSessions.advanceSeq reason=entries from=%d to=%d", advancedFrom, advancedTo)
-			r.assertCursors(sid, shopState, sessionState)
-		}
-
-		// Check if a sync status is needed, and if so query and send it.
-		// Use the boolean to ensure we always send an initial sync status for the session,
-		// including if the user has no writes yet.
-		// If everything for the device has been pushed, advance the buffered and pushed cursors too.
-		if !sessionState.initialStatus || sessionState.lastStatusedSeq < shopState.lastWrittenSeq {
-			syncStatusStart := now()
-			op := &SyncStatusOp{sessionID: sid}
-			// Index: events(createdByShopId, shopSeq)
-			query := `select count(*) from events
-			where createdByShopId = $1 and shopSeq > $2
-			  and createdByKeyCardId != $3`
-			err := r.connPool.QueryRow(ctx, query, sessionState.shopID, sessionState.lastPushedSeq, sessionState.keyCardID).
-				Scan(&op.unpushedEvents)
-			if err != pgx.ErrNoRows {
-				check(err)
-			}
-			r.sendSessionOp(sessionState, op)
-			sessionState.initialStatus = true
-			sessionState.lastStatusedSeq = shopState.lastWrittenSeq
-			if op.unpushedEvents == 0 {
-				sessionState.lastBufferedSeq = sessionState.lastStatusedSeq
-				sessionState.lastPushedSeq = sessionState.lastStatusedSeq
-			}
-			logS(sid, "relay.debounceSessions.syncStatus initialStatus=%t unpushedEvents=%d elapsed=%d", sessionState.initialStatus, op.unpushedEvents, took(syncStatusStart))
-			r.assertCursors(sid, shopState, sessionState)
-		}
-
-		// Check if more buffering is needed, and if so fill buffer.
-		writesNotBuffered := sessionState.lastBufferedSeq < shopState.lastWrittenSeq
-		var readsAllowed int
-		if len(sessionState.buffer) >= sessionBufferSizeRefill {
-			readsAllowed = 0
-		} else {
-			readsAllowed = sessionBufferSizeMax - len(sessionState.buffer)
-		}
-		if writesNotBuffered && readsAllowed > 0 {
-			readStart := now()
-			reads := 0
-			// Index: events(shopId, shopSeq)
-			query := `select e.shopSeq, e.encoded, e.signature
-			from events e
-			where e.createdByShopId = $1
-			    and e.shopSeq > $2
-				and e.createdByKeyCardId != $3
-			order by e.shopSeq asc limit $4`
-			rows, err := r.connPool.Query(ctx, query, sessionState.shopID, sessionState.lastPushedSeq, sessionState.keyCardID, readsAllowed)
-			check(err)
-			defer rows.Close()
-			for rows.Next() {
-				var (
-					eventState         = &EventState{}
-					encoded, signature []byte
-				)
-				err := rows.Scan(&eventState.seq, &encoded, &signature)
-				check(err)
-				reads++
-				// log("relay.debounceSessions.debug event=%x", eventState.eventID)
-
-				eventState.acked = false
-				sessionState.buffer = append(sessionState.buffer, eventState)
-				assert(eventState.seq > sessionState.lastBufferedSeq)
-				sessionState.lastBufferedSeq = eventState.seq
-
-				// re-create pb object from encoded database data
-				eventState.encodedEvent.Event = &anypb.Any{
-					// TODO: would prever to not craft this manually
-					TypeUrl: shopEventTypeURL,
-					Value:   encoded,
-				}
-				eventState.encodedEvent.Signature = &Signature{Raw: signature}
-			}
-			check(rows.Err())
-
-			// If the read rows didn't use the full limit, that means we must be at the end
-			// of this user's writes.
-			if reads < readsAllowed {
-				sessionState.lastBufferedSeq = shopState.lastWrittenSeq
-			}
-
-			logS(sid, "relay.debounceSessions.read shopId=%d reads=%d readsAllowed=%d bufferLen=%d lastWrittenSeq=%d, lastBufferedSeq=%d elapsed=%d", sessionState.shopID, reads, readsAllowed, len(sessionState.buffer), shopState.lastWrittenSeq, sessionState.lastBufferedSeq, took(readStart))
-			r.metric.counterAdd("relay_events_read", float64(reads))
-		}
-		r.assertCursors(sid, shopState, sessionState)
-
-		// Push any events as needed.
-		const maxPushes = limitMaxOutRequests * limitMaxOutBatchSize
-		pushes := 0
-		var eventPushOp *SubscripitionPushOp
-		pushOps := make([]SessionOp, 0)
-		for ; sessionState.nextPushIndex < len(sessionState.buffer) && sessionState.nextPushIndex < maxPushes; sessionState.nextPushIndex++ {
-			entryState := sessionState.buffer[sessionState.nextPushIndex]
-			if eventPushOp != nil && len(eventPushOp.eventStates) == limitMaxOutBatchSize {
-				eventPushOp = nil
-			}
-			if eventPushOp == nil {
-				eventPushOp = &SubscripitionPushOp{
-					sessionID:   sid,
-					eventStates: make([]*EventState, 0),
-				}
-				pushOps = append(pushOps, eventPushOp)
-			}
-			eventPushOp.eventStates = append(eventPushOp.eventStates, entryState)
-			sessionState.lastPushedSeq = entryState.seq
-			pushes++
-		}
-		for _, pushOp := range pushOps {
-			r.sendSessionOp(sessionState, pushOp)
-		}
-		if pushes > 0 {
-			logS(sid, "relay.debounce.push pushes=%d ops=%d", pushes, len(pushOps))
-		}
-		r.assertCursors(sid, shopState, sessionState)
-
-		// If there are no buffered events at this point, it's safe to advance the acked pointer.
-		if len(sessionState.buffer) == 0 && sessionState.lastAckedSeq < sessionState.lastPushedSeq {
-			logS(sid, "relay.debounceSessions.advanceSeq reason=emptyBuffer from=%d to=%d", sessionState.lastAckedSeq, sessionState.lastPushedSeq)
-			sessionState.lastAckedSeq = sessionState.lastPushedSeq
-		}
-		r.assertCursors(sid, shopState, sessionState)
-
-		// Flush session state if sufficiently advanced.
-		lastAckedSeqNeedsFlush := sessionState.lastAckedSeq-sessionState.lastAckedSeqFlushed > sessionLastAckedSeqFlushLimit
-		lastSeenAtNeedsFlush := sessionState.lastSeenAt.Sub(sessionState.lastSeenAtFlushed) > sessionLastSeenAtFlushLimit
-		if lastAckedSeqNeedsFlush || lastSeenAtNeedsFlush {
-			flushStart := now()
-			// Index: keyCards(id)
-			query := `update keyCards set lastAckedSeq = $1, lastSeenAt = $2 where id = $3`
-			_, err := r.connPool.Exec(ctx, query, sessionState.lastAckedSeq, sessionState.lastSeenAt, sessionState.keyCardID)
-			check(err)
-			sessionState.lastAckedSeqFlushed = sessionState.lastAckedSeq
-			sessionState.lastSeenAtFlushed = sessionState.lastSeenAt
-			logS(sid, "relay.debounceSessions.flush lastAckedSeqNeedsFlush=%t lastSeenAtNeedsFlush=%t lastAckedSeq=%d elapsed=%d", lastAckedSeqNeedsFlush, lastSeenAtNeedsFlush, sessionState.lastAckedSeq, took(flushStart))
-		}
-		// logS(sid, "relay.debounce.cursors lastWrittenSeq=%d lastStatusedshopSeq=%d lastBufferedshopSeq=%d lastPushedshopSeq=%d lastAckedSeq=%d", userState.lastWrittenSeq, sessionState.lastStatusedshopSeq, sessionState.lastBufferedshopSeq, sessionState.lastPushedshopSeq, sessionState.lastAckedSeq)
 
 		return false
 	})
 
 	// Since we're polling this loop constantly, only log if takes a non-trivial amount of time.
-	debounceSessionsElapsed := took(start)
-	if debounceSessionsElapsed > 0 {
-		r.metric.emit("relay.debounceSessions.elapsed", uint64(debounceSessionsElapsed))
-		log("relay.debounceSessions.finish sessions=%d elapsed=%d", r.sessionIDsToSessionStates.Size(), debounceSessionsElapsed)
+	debounceTook := took(start)
+	if debounceTook > 0 {
+		r.metric.counterAdd("relay_debounceSessions_took", float64(debounceTook))
+		log("relay.debounceSessions.finish sessions=%d elapsed=%d", r.sessionIDsToSessionStates.Size(), debounceTook)
 	}
+}
+
+func (r *Relay) pushOutShopLog(sessionID sessionID, session *SessionState, subID uint16, sub *SubscriptionState) {
+	ctx := context.Background()
+
+	// If the session is authenticated, we can get user info.
+	shopState := r.shopIdsToShopState.MustGet(sub.shopID)
+	r.assertCursors(sessionID, shopState, sub)
+
+	// Calculate the new keyCard seq up to which the device has acked all pushes.
+	// Slice the buffer to drop such entries as they have completed their lifecycle.
+	// Do this all first to trim down the buffer before reading more, if possible.
+	var (
+		advancedFrom uint64
+		advancedTo   uint64
+		i            = 0
+	)
+	for ; i < len(sub.buffer); i++ {
+		entryState := sub.buffer[i]
+		if !entryState.acked {
+			break
+		}
+		assert(entryState.seq > sub.lastAckedSeq)
+		if i == 0 {
+			advancedFrom = sub.lastAckedSeq
+		}
+		sub.lastAckedSeq = entryState.seq
+		advancedTo = entryState.seq
+	}
+	if i != 0 {
+		sub.buffer = sub.buffer[i:]
+		sub.nextPushIndex -= i
+		logS(sessionID, "relay.debounceSessions.advanceSeq reason=entries from=%d to=%d", advancedFrom, advancedTo)
+		r.assertCursors(sessionID, shopState, sub)
+	}
+
+	// Check if a sync status is needed, and if so query and send it.
+	// Use the boolean to ensure we always send an initial sync status for the session,
+	// including if the user has no writes yet.
+	// If everything for the device has been pushed, advance the buffered and pushed cursors too.
+	if !sub.initialStatus || sub.lastStatusedSeq < shopState.lastWrittenSeq {
+		syncStatusStart := now()
+		op := &SyncStatusOp{
+			sessionID:      sessionID,
+			subscriptionID: subID,
+		}
+		// Index: events(createdByShopId, shopSeq)
+		query := `select count(*) from events
+			where createdByShopId = $1 and shopSeq > $2
+			  and createdByKeyCardId != $3 and (` + sub.whereFragment + `)`
+		err := r.connPool.QueryRow(ctx, query, sub.shopID, sub.lastPushedSeq, session.keyCardID).
+			Scan(&op.unpushedEvents)
+		if err != pgx.ErrNoRows {
+			check(err)
+		}
+		r.sendSessionOp(session, op)
+		sub.initialStatus = true
+		sub.lastStatusedSeq = shopState.lastWrittenSeq
+		if op.unpushedEvents == 0 {
+			sub.lastBufferedSeq = sub.lastStatusedSeq
+			sub.lastPushedSeq = sub.lastStatusedSeq
+		}
+		logS(sessionID, "relay.debounceSessions.syncStatus initialStatus=%t unpushedEvents=%d elapsed=%d", sub.initialStatus, op.unpushedEvents, took(syncStatusStart))
+		r.assertCursors(sessionID, shopState, sub)
+	}
+
+	// Check if more buffering is needed, and if so fill buffer.
+	writesNotBuffered := sub.lastBufferedSeq < shopState.lastWrittenSeq
+	var readsAllowed int
+	if len(sub.buffer) >= sessionBufferSizeRefill {
+		readsAllowed = 0
+	} else {
+		readsAllowed = sessionBufferSizeMax - len(sub.buffer)
+	}
+	if writesNotBuffered && readsAllowed > 0 {
+		readStart := now()
+		reads := 0
+		// Index: events(shopId, shopSeq)
+		query := `select e.shopSeq, e.encoded, e.signature
+			from events e
+			where e.createdByShopId = $1
+			    and e.shopSeq > $2
+				and e.createdByKeyCardId != $3 and (` + sub.whereFragment + `) order by e.shopSeq asc limit $4`
+		rows, err := r.connPool.Query(ctx, query, sub.shopID, sub.lastPushedSeq, session.keyCardID, readsAllowed)
+		check(err)
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				eventState         = &EventState{}
+				encoded, signature []byte
+			)
+			err := rows.Scan(&eventState.seq, &encoded, &signature)
+			check(err)
+			reads++
+			// log("relay.debounceSessions.debug event=%x", eventState.eventID)
+
+			eventState.acked = false
+			sub.buffer = append(sub.buffer, eventState)
+			assert(eventState.seq > sub.lastBufferedSeq)
+			sub.lastBufferedSeq = eventState.seq
+
+			// re-create pb object from encoded database data
+			eventState.encodedEvent.Event = &anypb.Any{
+				// TODO: would prever to not craft this manually
+				TypeUrl: shopEventTypeURL,
+				Value:   encoded,
+			}
+			eventState.encodedEvent.Signature = &Signature{Raw: signature}
+		}
+		check(rows.Err())
+
+		// If the read rows didn't use the full limit, that means we must be at the end
+		// of this user's writes.
+		if reads < readsAllowed {
+			sub.lastBufferedSeq = shopState.lastWrittenSeq
+		}
+
+		logS(sessionID, "relay.debounceSessions.read shopId=%d reads=%d readsAllowed=%d bufferLen=%d lastWrittenSeq=%d, lastBufferedSeq=%d elapsed=%d", sub.shopID, reads, readsAllowed, len(sub.buffer), shopState.lastWrittenSeq, sub.lastBufferedSeq, took(readStart))
+		r.metric.counterAdd("relay_events_read", float64(reads))
+	}
+	r.assertCursors(sessionID, shopState, sub)
+
+	// Push any events as needed.
+	const maxPushes = limitMaxOutRequests * limitMaxOutBatchSize
+	pushes := 0
+	var eventPushOp *SubscriptionPushOp
+	pushOps := make([]SessionOp, 0)
+	for ; sub.nextPushIndex < len(sub.buffer) && sub.nextPushIndex < maxPushes; sub.nextPushIndex++ {
+		entryState := sub.buffer[sub.nextPushIndex]
+		if eventPushOp != nil && len(eventPushOp.eventStates) == limitMaxOutBatchSize {
+			eventPushOp = nil
+		}
+		if eventPushOp == nil {
+			eventPushOp = &SubscriptionPushOp{
+				sessionID:      sessionID,
+				subscriptionID: subID,
+				eventStates:    make([]*EventState, 0),
+			}
+			pushOps = append(pushOps, eventPushOp)
+		}
+		eventPushOp.eventStates = append(eventPushOp.eventStates, entryState)
+		sub.lastPushedSeq = entryState.seq
+		pushes++
+	}
+	for _, pushOp := range pushOps {
+		r.sendSessionOp(session, pushOp)
+	}
+	if pushes > 0 {
+		logS(sessionID, "relay.debounce.push pushes=%d ops=%d", pushes, len(pushOps))
+	}
+	r.assertCursors(sessionID, shopState, sub)
+
+	// If there are no buffered events at this point, it's safe to advance the acked pointer.
+	if len(sub.buffer) == 0 && sub.lastAckedSeq < sub.lastPushedSeq {
+		logS(sessionID, "relay.debounceSessions.advanceSeq reason=emptyBuffer from=%d to=%d", sub.lastAckedSeq, sub.lastPushedSeq)
+		sub.lastAckedSeq = sub.lastPushedSeq
+	}
+	r.assertCursors(sessionID, shopState, sub)
+
+	// logS(sessionID, "relay.debounce.cursors lastWrittenSeq=%d lastStatusedshopSeq=%d lastBufferedshopSeq=%d lastPushedshopSeq=%d lastAckedSeq=%d", userState.lastWrittenSeq, sessionState.lastStatusedshopSeq, sessionState.lastBufferedshopSeq, sessionState.lastPushedshopSeq, sessionState.lastAckedSeq)
 }
 
 func (r *Relay) memoryStats() {
@@ -3746,26 +3940,27 @@ func (r *Relay) memoryStats() {
 		sessionVersionCounts[sessionState.version] = sessionVersionCount + 1
 		return false
 	})
-	r.metric.emit("sessions.active", uint64(sessionCount))
+	r.metric.gaugeSet("sessions_active", float64(sessionCount))
 	for version, versionCount := range sessionVersionCounts {
-		r.metric.emit(fmt.Sprintf("sessions.active.version.%d", version), versionCount)
+		// TODO: vector?
+		r.metric.gaugeSet(fmt.Sprintf("sessions_active_version_%d", version), float64(versionCount))
 	}
-	r.metric.emit("relay.cached.shops", uint64(r.shopIdsToShopState.Size()))
+	r.metric.gaugeSet("relay_cached_shops", float64(r.shopIdsToShopState.Size()))
 
-	r.metric.emit("relay.ops.queued", uint64(len(r.ops)))
+	r.metric.gaugeSet("relay_ops_queued", float64(len(r.ops)))
 
-	// r.metric.emit("relay.cached.items", uint64(r.itemsByItemID.loaded.Size()))
-	// r.metric.emit("relay.cached.orders", uint64(r.ordersByOrderID.loaded.Size()))
+	// r.metric.emit("relay_cached_items", uint64(r.itemsByItemID.loaded.Size()))
+	// r.metric.emit("relay_cached_orders", uint64(r.ordersByOrderID.loaded.Size()))
 
 	// Go runtime memory information
 	var runtimeMemory runtime.MemStats
 	runtime.ReadMemStats(&runtimeMemory)
-	r.metric.emit("go.runtime.heapalloc", runtimeMemory.HeapAlloc)
-	r.metric.emit("go.runtime.inuse", runtimeMemory.HeapInuse)
-	r.metric.emit("go.runtime.gcpauses", runtimeMemory.PauseTotalNs)
+	r.metric.gaugeSet("go_runtime_heapalloc", float64(runtimeMemory.HeapAlloc))
+	r.metric.gaugeSet("go_runtime_inuse", float64(runtimeMemory.HeapInuse))
+	r.metric.gaugeSet("go_runtime_gcpauses", float64(runtimeMemory.PauseTotalNs))
 
 	memoryStatsTook := took(start)
-	r.metric.emit("relay.memoryStats.took", uint64(memoryStatsTook))
+	r.metric.gaugeSet("relay_memoryStats_took", float64(memoryStatsTook))
 	debug("relay.memoryStats.finish took=%d", memoryStatsTook)
 }
 
@@ -3849,7 +4044,7 @@ func (r *Relay) run() {
 			tickType, tickSelected = timeTick(ttTickStats)
 			for tt, e := range tickTypeToTooks {
 				if e.Milliseconds() > 0 {
-					r.metric.emit(fmt.Sprintf("relay.run.tick.%s.took", tt.String()), uint64(e.Milliseconds()))
+					r.metric.gaugeSet(fmt.Sprintf("relay_run_tick_%s_took", tt.String()), float64(e.Milliseconds()))
 				}
 				tickTypeToTooks[tt] = 0
 			}
@@ -3947,9 +4142,7 @@ func (m *Metric) connect() {
 	check(err)
 }
 
-// TODO: deprecate this function and use gauge / counter where appropriate
-func (m *Metric) emit(name string, value uint64) {
-	name = strings.Replace(name, ".", "_", -1)
+func (m *Metric) gaugeSet(name string, value float64) {
 	if logMetrics {
 		log("metric.emit name=%s value=%d", name, value)
 	}
@@ -3964,7 +4157,7 @@ func (m *Metric) emit(name string, value uint64) {
 		})
 	}
 
-	gauge.Set(float64(value))
+	gauge.Set(value)
 	if !has {
 		m.name2gauge[name] = gauge
 	}
@@ -4194,7 +4387,7 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			*/
 
 		} else {
-			// assuming the enrollment is directly on the relay
+			// assuming the enrollment is directly on the relay, without a website involved
 			if msg.GetDomain() != r.baseURL.Host {
 				return http.StatusBadRequest, fmt.Errorf("domain did not match")
 			}
@@ -4395,9 +4588,9 @@ func openPProfEndpoint() {
 func emitUptime(metric *Metric) {
 	start := now()
 	for {
-		uptime := uint64(time.Since(start).Milliseconds())
-		log("relay.emitUptime uptime=%d", uptime)
-		metric.emit("server.uptime", uptime)
+		uptime := float64(time.Since(start).Milliseconds())
+		log("relay.emitUptime uptime=%v", uptime)
+		metric.gaugeSet("server_uptime", uptime)
 		time.Sleep(emitUptimeInterval)
 	}
 }
@@ -4543,7 +4736,7 @@ func debugObject(eventType string) {
 		var lis Listing
 		err = proto.Unmarshal(pbData, &lis)
 		check(err)
-		spew.Dump(lis)
+		spew.Dump(&lis)
 	default:
 		fmt.Fprintln(os.Stderr, "unhandled event type:"+eventType)
 		os.Exit(1)

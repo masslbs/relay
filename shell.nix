@@ -64,6 +64,7 @@ in
         errcheck
         unconvert
         godef
+        clang
 
         # mass deps
         postgresql
