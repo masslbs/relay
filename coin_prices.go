@@ -12,12 +12,49 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-
-	"github.com/cockroachdb/apd"
 )
 
 type priceConverter interface {
 	Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int, error)
+}
+
+const coinConversionDecimalBase = 16
+
+// jsonToBigInt converts a JSON-encoded decimal string to a *big.Int by removing the decimal point and adjusting accordingly.
+func jsonToBigInt(r json.RawMessage) (*big.Int, error) {
+	// Convert JSON raw message to string
+	str := string(r)
+	str = strings.Trim(str, `"`) // Remove surrounding quotes if present
+	str = strings.TrimSpace(str)
+
+	// Split the string into integer and fractional parts
+	parts := strings.SplitN(str, ".", 2)
+	// intPart := parts[0]
+	fracPart := ""
+	if len(parts) > 1 {
+		fracPart = parts[1]
+	}
+
+	str = strings.Replace(str, ".", "", 1)
+
+	// Convert the string to a big.Int
+	n, ok := new(big.Int).SetString(str, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid number format: %s", str)
+	}
+
+	// Adjust to coinConversionDecimalBase
+	if len(fracPart) < coinConversionDecimalBase {
+		// If we have fewer decimal places than required, multiply
+		multiplier := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(coinConversionDecimalBase-len(fracPart))), nil)
+		n.Mul(n, multiplier)
+	} else if len(fracPart) > coinConversionDecimalBase {
+		// If we have more decimal places than required, divide
+		divisor := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(len(fracPart)-coinConversionDecimalBase)), nil)
+		n.Div(n, divisor)
+	}
+
+	return n, nil
 }
 
 // testingConverter is side-effect free for unit- and integration testing.
@@ -111,29 +148,6 @@ func (cg *coinGecko) lookupPlatform(chainId uint64) (coinGeckoPlatform, error) {
 	return name, nil
 }
 
-const coinConversionDecimalBase = 20
-
-func jsonToBigInt(r json.RawMessage) (*big.Int, error) {
-	// TODO: in theory we just need to splice the decimal point to a different position.
-	// but i had this decimals dependency laying around from the previous price stuff, so..
-	decimalCtx := apd.BaseContext.WithPrecision(50)
-
-	result, _, err := apd.NewFromString(string(r))
-	if err != nil {
-		return nil, err
-	}
-	_, err = decimalCtx.Mul(result, result, apd.New(1, coinConversionDecimalBase))
-	if err != nil {
-		return nil, err
-	}
-	inDecimals := result.Text('f')
-	bigResult, ok := new(big.Int).SetString(inDecimals, 10)
-	if !ok {
-		return nil, fmt.Errorf("failed to convert %q to bigInt: %s", string(r), inDecimals)
-	}
-	return bigResult, nil
-}
-
 func (cg *coinGecko) GetCoinPriceFromNetworkID(id uint64) (*big.Int, error) {
 	plat, err := cg.lookupPlatform(id)
 	if err != nil {
@@ -218,7 +232,7 @@ func (tc *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int
 		tok *erc20Metadata
 	)
 	// get decimals count for erc20s
-	// TODO: since this is a contract we could cache it when adding the token
+	// TODO: since this is a contract we should be able cache it when adding the token..?
 	if basedInErc20 {
 		tok, err = tc.ethereum.GetERC20Metadata(a.ChainID, a.Addr)
 		if err != nil {
@@ -233,8 +247,6 @@ func (tc *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int
 		decimalsBased = tok.decimals
 
 		basePrice, err = tc.GetERC20Price(a)
-		// TODO: convert price to token decimals
-
 	} else {
 		// TODO: might need a scary table here for some fringe coins
 		decimalsBased = 18
@@ -258,7 +270,6 @@ func (tc *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int
 		decimalsChosen = tok.decimals
 
 		chosenPrice, err = tc.GetERC20Price(b)
-
 	} else {
 		// TODO: might need a scary table here for some fringe coins
 		decimalsChosen = 18
@@ -269,33 +280,19 @@ func (tc *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int
 	}
 	result := new(big.Int)
 
-	// convert price to same base
-	log("TODO/convert total=%s", amount.String())
-	log("TODO/convert based_erc20=%v chosen_erc20=%v", basedInErc20, chosenIsErc20)
-
-	log("TODO/convert/base   dec=%d price_base=%s", decimalsBased, basePrice.String())
-	log("TODO/convert/chosen dec=%d price_chosen=%s", decimalsChosen, chosenPrice.String())
-
+	// convert price to same decimal point base
 	correction := int64(coinConversionDecimalBase) - int64(decimalsBased)
 	if correction > 0 {
 		result.Mul(amount, new(big.Int).Exp(big.NewInt(10), big.NewInt(correction), nil))
 	} else {
 		result.Div(amount, new(big.Int).Exp(big.NewInt(10), big.NewInt(-correction), nil))
 	}
-	log("TODO/convert/shiftIn correction=%d corrected=%s", correction, result.String())
 
 	result.Mul(result, basePrice)
 	result.Div(result, chosenPrice)
-	log("TODO/convert result=%s", result.String())
 
 	correction = int64(coinConversionDecimalBase) - int64(decimalsChosen)
-	if correction < 0 {
-		return nil, fmt.Errorf("TODO: add tests")
-		result.Mul(result, new(big.Int).Exp(big.NewInt(10), big.NewInt(-correction), nil))
-	} else {
-		result.Div(result, new(big.Int).Exp(big.NewInt(10), big.NewInt(correction), nil))
-	}
-	log("TODO/convert/shiftOut correction=%d amount=%s", correction, result.String())
+	result.Mul(result, new(big.Int).Exp(big.NewInt(10), big.NewInt(correction), nil))
 
 	return result, nil
 }

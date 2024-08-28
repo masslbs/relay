@@ -15,14 +15,15 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/accounts"
+	tassert "github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"google.golang.org/protobuf/proto"
 )
 
 func TestVerifyEventVectors(t *testing.T) {
 	r := require.New(t)
-	// TODO: clean up package global assert()
-	//a := assert.New(t)
+	a := tassert.New(t)
 	schemaPath := os.Getenv("MASS_SCHEMA")
 	if schemaPath == "" {
 		t.Skip()
@@ -46,7 +47,7 @@ func TestVerifyEventVectors(t *testing.T) {
 
 		hash := accounts.TextHash(vectEvt.Encoded)
 
-		r.Equal(true, bytes.Equal(vectEvt.Hash, hash))
+		a.Equal(true, bytes.Equal(vectEvt.Hash, hash))
 	}
 }
 
