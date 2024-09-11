@@ -12,12 +12,49 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-
-	"github.com/cockroachdb/apd"
 )
 
 type priceConverter interface {
 	Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int, error)
+}
+
+const coinConversionDecimalBase = 16
+
+// jsonToBigInt converts a JSON-encoded decimal string to a *big.Int by removing the decimal point and adjusting accordingly.
+func jsonToBigInt(r json.RawMessage) (*big.Int, error) {
+	// Convert JSON raw message to string
+	str := string(r)
+	str = strings.Trim(str, `"`) // Remove surrounding quotes if present
+	str = strings.TrimSpace(str)
+
+	// Split the string into integer and fractional parts
+	parts := strings.SplitN(str, ".", 2)
+	// intPart := parts[0]
+	fracPart := ""
+	if len(parts) > 1 {
+		fracPart = parts[1]
+	}
+
+	str = strings.Replace(str, ".", "", 1)
+
+	// Convert the string to a big.Int
+	n, ok := new(big.Int).SetString(str, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid number format: %s", str)
+	}
+
+	// Adjust to coinConversionDecimalBase
+	if len(fracPart) < coinConversionDecimalBase {
+		// If we have fewer decimal places than required, multiply
+		multiplier := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(coinConversionDecimalBase-len(fracPart))), nil)
+		n.Mul(n, multiplier)
+	} else if len(fracPart) > coinConversionDecimalBase {
+		// If we have more decimal places than required, divide
+		divisor := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(len(fracPart)-coinConversionDecimalBase)), nil)
+		n.Div(n, divisor)
+	}
+
+	return n, nil
 }
 
 // testingConverter is side-effect free for unit- and integration testing.
@@ -109,29 +146,6 @@ func (cg *coinGecko) lookupPlatform(chainId uint64) (coinGeckoPlatform, error) {
 		return name, errors.New("not found")
 	}
 	return name, nil
-}
-
-const coinConversionDecimalBase = 20
-
-func jsonToBigInt(r json.RawMessage) (*big.Int, error) {
-	// TODO: in theory we just need to splice the decimal point to a different position.
-	// but i had this decimals dependency laying around from the previous price stuff, so..
-	decimalCtx := apd.BaseContext.WithPrecision(50)
-
-	result, _, err := apd.NewFromString(string(r))
-	if err != nil {
-		return nil, err
-	}
-	_, err = decimalCtx.Mul(result, result, apd.New(1, coinConversionDecimalBase))
-	if err != nil {
-		return nil, err
-	}
-	inDecimals := result.Text('f')
-	bigResult, ok := new(big.Int).SetString(inDecimals, 10)
-	if !ok {
-		return nil, fmt.Errorf("failed to convert %q to bigInt: %s", string(r), inDecimals)
-	}
-	return bigResult, nil
 }
 
 func (cg *coinGecko) GetCoinPriceFromNetworkID(id uint64) (*big.Int, error) {
