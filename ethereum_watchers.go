@@ -200,7 +200,7 @@ watch:
 			}
 
 			orderID := waiter.orderID
-			log("watcher.subscribeFilterLogsPaymentsMade.found orderId=%s txHash=%x", orderID, vLog.TxHash)
+			log("watcher.subscribeFilterLogsPaymentsMade.found orderId=%d txHash=%x", orderID, vLog.TxHash)
 
 			_, has := r.ordersByOrderID.get(orderID)
 			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%d", orderID))
@@ -327,7 +327,7 @@ watch:
 
 				inTx, ok := evts[0].(*big.Int)
 				assertWithMessage(ok, fmt.Sprintf("unexpected unpack result for field 0 - type=%T", evts[0]))
-				debug("watcher.subscribeFilterLogsERC20Transfers.foundTransfer orderId=%s from=%s to=%s amount=%s", orderID, fromHash.Hex(), toHash.Hex(), inTx.String())
+				debug("watcher.subscribeFilterLogsERC20Transfers.foundTransfer orderId=%d from=%s to=%s amount=%s", orderID, fromHash.Hex(), toHash.Hex(), inTx.String())
 
 				waiter.coinsPayed.Add(&waiter.coinsPayed.Int, inTx)
 				if waiter.coinsPayed.Cmp(&waiter.coinsTotal.Int) != -1 {
@@ -347,7 +347,7 @@ watch:
 
 				} else {
 					// it is still smaller
-					log("watcher.subscribeFilterLogsERC20Transfers.partial orderId=%s inTx=%s subTotal=%s", orderID, inTx.String(), waiter.coinsPayed.String())
+					log("watcher.subscribeFilterLogsERC20Transfers.partial orderId=%d inTx=%s subTotal=%s", orderID, inTx.String(), waiter.coinsPayed.String())
 					// update subtotal
 					const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE orderId = $2;`
 					_, err = r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, orderID)

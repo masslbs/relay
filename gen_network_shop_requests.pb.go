@@ -1,4 +1,4 @@
-// Generated from /nix/store/g5rka5r6cgham9nh5021b2s31ahmcl4y-source/network-schema/shop_requests.proto at version v3 (feaeeb2a9b710beba309c58961f86519293d2956)
+// Generated from /nix/store/5dfwdy67n9ajlmmnww5pcka511dsw7s2-source/network-schema/shop_requests.proto at version v3 (b0883cf14857a2998c0c7039ca72fb2321b22ff8)
 
 // SPDX-FileCopyrightText: 2024 Mass Labs
 //
@@ -30,6 +30,8 @@ const (
 // Get an URL to upload a blob to.
 // This exists for future-proofing the protocol
 // and reduce stress on the websocket connection.
+// GenericResponse returns a single-use URL to upload a blob to.
+// The HTTP response will contain the blob's IPFS path.
 type GetBlobUploadURLRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -68,104 +70,14 @@ func (*GetBlobUploadURLRequest) Descriptor() ([]byte, []int) {
 	return file_shop_requests_proto_rawDescGZIP(), []int{0}
 }
 
-// Returns a single-use URL to upload a blob to.
-// The HTTP response will contain the blob's IPFS path.
-type GetBlobUploadURLResponse struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	// Types that are assignable to Result:
-	//
-	//	*GetBlobUploadURLResponse_Error
-	//	*GetBlobUploadURLResponse_Url
-	Result isGetBlobUploadURLResponse_Result `protobuf_oneof:"result"`
-}
-
-func (x *GetBlobUploadURLResponse) Reset() {
-	*x = GetBlobUploadURLResponse{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_shop_requests_proto_msgTypes[1]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *GetBlobUploadURLResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*GetBlobUploadURLResponse) ProtoMessage() {}
-
-func (x *GetBlobUploadURLResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_shop_requests_proto_msgTypes[1]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use GetBlobUploadURLResponse.ProtoReflect.Descriptor instead.
-func (*GetBlobUploadURLResponse) Descriptor() ([]byte, []int) {
-	return file_shop_requests_proto_rawDescGZIP(), []int{1}
-}
-
-func (m *GetBlobUploadURLResponse) GetResult() isGetBlobUploadURLResponse_Result {
-	if m != nil {
-		return m.Result
-	}
-	return nil
-}
-
-func (x *GetBlobUploadURLResponse) GetError() *Error {
-	if x, ok := x.GetResult().(*GetBlobUploadURLResponse_Error); ok {
-		return x.Error
-	}
-	return nil
-}
-
-func (x *GetBlobUploadURLResponse) GetUrl() string {
-	if x, ok := x.GetResult().(*GetBlobUploadURLResponse_Url); ok {
-		return x.Url
-	}
-	return ""
-}
-
-type isGetBlobUploadURLResponse_Result interface {
-	isGetBlobUploadURLResponse_Result()
-}
-
-type GetBlobUploadURLResponse_Error struct {
-	Error *Error `protobuf:"bytes,2,opt,name=error,proto3,oneof"`
-}
-
-type GetBlobUploadURLResponse_Url struct {
-	Url string `protobuf:"bytes,3,opt,name=url,proto3,oneof"`
-}
-
-func (*GetBlobUploadURLResponse_Error) isGetBlobUploadURLResponse_Result() {}
-
-func (*GetBlobUploadURLResponse_Url) isGetBlobUploadURLResponse_Result() {}
-
 var File_shop_requests_proto protoreflect.FileDescriptor
 
 var file_shop_requests_proto_rawDesc = []byte{
 	0x0a, 0x13, 0x73, 0x68, 0x6f, 0x70, 0x5f, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x2e,
 	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x0b, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x74, 0x2e, 0x6d, 0x61,
-	0x73, 0x73, 0x1a, 0x0b, 0x65, 0x72, 0x72, 0x6f, 0x72, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22,
-	0x19, 0x0a, 0x17, 0x47, 0x65, 0x74, 0x42, 0x6c, 0x6f, 0x62, 0x55, 0x70, 0x6c, 0x6f, 0x61, 0x64,
-	0x55, 0x52, 0x4c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x22, 0x64, 0x0a, 0x18, 0x47, 0x65,
-	0x74, 0x42, 0x6c, 0x6f, 0x62, 0x55, 0x70, 0x6c, 0x6f, 0x61, 0x64, 0x55, 0x52, 0x4c, 0x52, 0x65,
-	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x2a, 0x0a, 0x05, 0x65, 0x72, 0x72, 0x6f, 0x72, 0x18,
-	0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x12, 0x2e, 0x6d, 0x61, 0x72, 0x6b, 0x65, 0x74, 0x2e, 0x6d,
-	0x61, 0x73, 0x73, 0x2e, 0x45, 0x72, 0x72, 0x6f, 0x72, 0x48, 0x00, 0x52, 0x05, 0x65, 0x72, 0x72,
-	0x6f, 0x72, 0x12, 0x12, 0x0a, 0x03, 0x75, 0x72, 0x6c, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x48,
-	0x00, 0x52, 0x03, 0x75, 0x72, 0x6c, 0x42, 0x08, 0x0a, 0x06, 0x72, 0x65, 0x73, 0x75, 0x6c, 0x74,
-	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x73, 0x73, 0x22, 0x19, 0x0a, 0x17, 0x47, 0x65, 0x74, 0x42, 0x6c, 0x6f, 0x62, 0x55, 0x70, 0x6c,
+	0x6f, 0x61, 0x64, 0x55, 0x52, 0x4c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x62, 0x06, 0x70,
+	0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -180,19 +92,16 @@ func file_shop_requests_proto_rawDescGZIP() []byte {
 	return file_shop_requests_proto_rawDescData
 }
 
-var file_shop_requests_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_shop_requests_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_shop_requests_proto_goTypes = []interface{}{
-	(*GetBlobUploadURLRequest)(nil),  // 0: market.mass.GetBlobUploadURLRequest
-	(*GetBlobUploadURLResponse)(nil), // 1: market.mass.GetBlobUploadURLResponse
-	(*Error)(nil),                    // 2: market.mass.Error
+	(*GetBlobUploadURLRequest)(nil), // 0: market.mass.GetBlobUploadURLRequest
 }
 var file_shop_requests_proto_depIdxs = []int32{
-	2, // 0: market.mass.GetBlobUploadURLResponse.error:type_name -> market.mass.Error
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	0, // [0:0] is the sub-list for method output_type
+	0, // [0:0] is the sub-list for method input_type
+	0, // [0:0] is the sub-list for extension type_name
+	0, // [0:0] is the sub-list for extension extendee
+	0, // [0:0] is the sub-list for field type_name
 }
 
 func init() { file_shop_requests_proto_init() }
@@ -200,7 +109,6 @@ func file_shop_requests_proto_init() {
 	if File_shop_requests_proto != nil {
 		return
 	}
-	file_error_proto_init()
 	if !protoimpl.UnsafeEnabled {
 		file_shop_requests_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*GetBlobUploadURLRequest); i {
@@ -214,22 +122,6 @@ func file_shop_requests_proto_init() {
 				return nil
 			}
 		}
-		file_shop_requests_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*GetBlobUploadURLResponse); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-	}
-	file_shop_requests_proto_msgTypes[1].OneofWrappers = []interface{}{
-		(*GetBlobUploadURLResponse_Error)(nil),
-		(*GetBlobUploadURLResponse_Url)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -237,7 +129,7 @@ func file_shop_requests_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_shop_requests_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   1,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

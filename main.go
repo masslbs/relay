@@ -836,14 +836,22 @@ func validateShopManifest(_ uint, event *Manifest) *Error {
 		field := fmt.Sprintf("accepted_currency[%d].addr", i)
 		errs = append(errs, curr.Address.validate(field))
 	}
-	if base := event.BaseCurrency; base != nil {
-		errs = append(errs, base.Address.validate("base_currencty.addr"))
+	if base := event.PricingCurrency; base != nil {
+		errs = append(errs, base.Address.validate("pricing_currencty.addr"))
 	} else {
-		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "base_currency is required"})
+		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "pricing_currency is required"})
 	}
 	for i, payee := range event.Payees {
 		field := fmt.Sprintf("payee[%d].addr", i)
 		errs = append(errs, payee.validate(field))
+	}
+	for i, region := range event.ShippingRegions {
+		field := fmt.Sprintf("shipping_region[%d]", i)
+		errs = append(errs, region.validate(field))
+	}
+	for i, mod := range event.OrderPriceModifiers {
+		field := fmt.Sprintf("order_price_modifier[%d]", i)
+		errs = append(errs, mod.validate(field))
 	}
 	return coalesce(errs...)
 }
@@ -866,8 +874,8 @@ func validateUpdateManifest(_ uint, event *UpdateManifest) *Error {
 		}
 		hasOpt = true
 	}
-	if base := event.SetBaseCurrency; base != nil {
-		errs = append(errs, base.Address.validate("set_base_currencty.addr"))
+	if base := event.SetPricingCurrency; base != nil {
+		errs = append(errs, base.Address.validate("set_pricing_currencty.addr"))
 		hasOpt = true
 	}
 	if base := event.AddPayee; base != nil {
@@ -878,6 +886,35 @@ func validateUpdateManifest(_ uint, event *UpdateManifest) *Error {
 		errs = append(errs, base.validate("remove_payee"))
 		hasOpt = true
 	}
+	if adds := event.AddShippingRegions; len(adds) > 0 {
+		for i, add := range adds {
+			field := fmt.Sprintf("add_shipping_region[%d]", i)
+			errs = append(errs, add.validate(field))
+		}
+		hasOpt = true
+	}
+	if removes := event.RemoveShippingRegions; len(removes) > 0 {
+		for i, remove := range removes {
+			field := fmt.Sprintf("remove_shipping_region[%d]", i)
+			errs = append(errs, validateString(remove, field, 128))
+		}
+		hasOpt = true
+	}
+	if adds := event.AddOrderPriceModifiers; len(adds) > 0 {
+		for i, add := range adds {
+			field := fmt.Sprintf("add_order_price_modifier[%d]", i)
+			errs = append(errs, add.validate(field))
+		}
+		hasOpt = true
+	}
+	if removes := event.RemoveOrderPriceModifiers; len(removes) > 0 {
+		for i, remove := range removes {
+			field := fmt.Sprintf("remove_order_price_modifier[%d]", i)
+			errs = append(errs, validateObjectID(remove, field))
+		}
+		hasOpt = true
+	}
+
 	if !hasOpt {
 		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "updateManifest has no options set"})
 	}
@@ -887,11 +924,11 @@ func validateUpdateManifest(_ uint, event *UpdateManifest) *Error {
 func validateListing(_ uint, event *Listing) *Error {
 	errs := []*Error{
 		validateObjectID(event.Id, "id"),
-		validateBytes(event.BasePrice.Raw, "base_price", 32),
-		validateString(event.BaseInfo.Title, "base_info.title", 512),
-		validateString(event.BaseInfo.Description, "base_info.description", 16*1024),
+		event.Price.validate("base_price"),
+		validateString(event.Metadata.Title, "base_info.title", 512),
+		validateString(event.Metadata.Description, "base_info.description", 16*1024),
 	}
-	for i, u := range event.BaseInfo.Images {
+	for i, u := range event.Metadata.Images {
 		errs = append(errs, validateURL(u, fmt.Sprintf("base_info.images[%d]: invalid url", i)))
 	}
 	return coalesce(errs...)
@@ -902,16 +939,16 @@ func validateUpdateListing(_ uint, event *UpdateListing) *Error {
 		validateObjectID(event.Id, "id"),
 	}
 	hasOpt := false
-	if pr := event.BasePrice; pr != nil {
-		errs = append(errs, validateBytes(event.BasePrice.Raw, "base_price", 32))
+	if pr := event.Price; pr != nil {
+		errs = append(errs, validateBytes(event.Price.Raw, "base_price", 32))
 		hasOpt = true
 	}
-	if meta := event.BaseInfo; meta != nil {
+	if meta := event.Metadata; meta != nil {
 		if meta.Title != "" {
-			errs = append(errs, validateString(event.BaseInfo.Title, "base_info.title", 512))
+			errs = append(errs, validateString(event.Metadata.Title, "base_info.title", 512))
 		}
 		if meta.Description != "" {
-			errs = append(errs, validateString(event.BaseInfo.Description, "base_info.description", 16*1024))
+			errs = append(errs, validateString(event.Metadata.Description, "base_info.description", 16*1024))
 		}
 		for i, u := range meta.Images {
 			errs = append(errs, validateURL(u, fmt.Sprintf("base_info.images[%d]: invalid url", i)))
@@ -1329,7 +1366,9 @@ type CachedShopManifest struct {
 	shopTokenID        []byte
 	payees             map[string]*Payee
 	acceptedCurrencies cachedCurrenciesMap
-	baseCurrency       cachedShopCurrency
+	pricingCurrency    cachedShopCurrency
+	shippingRegions    map[string]*ShippingRegion
+	orderModifiers     map[uint64]*OrderPriceModifier
 
 	init sync.Once
 }
@@ -1338,6 +1377,8 @@ func (current *CachedShopManifest) update(union *ShopEvent, meta CachedMetadata)
 	current.init.Do(func() {
 		current.acceptedCurrencies = make(cachedCurrenciesMap)
 		current.payees = make(map[string]*Payee)
+		current.shippingRegions = make(map[string]*ShippingRegion)
+		current.orderModifiers = make(map[uint64]*OrderPriceModifier)
 	})
 	switch union.Union.(type) {
 	case *ShopEvent_Manifest:
@@ -1355,9 +1396,15 @@ func (current *CachedShopManifest) update(union *ShopEvent, meta CachedMetadata)
 			assert(!has)
 			current.payees[payee.Name] = payee
 		}
-		current.baseCurrency = cachedShopCurrency{
-			common.Address(sm.BaseCurrency.Address.Raw),
-			sm.BaseCurrency.ChainId,
+		current.pricingCurrency = cachedShopCurrency{
+			common.Address(sm.PricingCurrency.Address.Raw),
+			sm.PricingCurrency.ChainId,
+		}
+		for _, region := range sm.ShippingRegions {
+			current.shippingRegions[region.Name] = region
+		}
+		for _, mod := range sm.OrderPriceModifiers {
+			current.orderModifiers[mod.Id] = mod
 		}
 	case *ShopEvent_UpdateManifest:
 		um := union.GetUpdateManifest()
@@ -1379,8 +1426,8 @@ func (current *CachedShopManifest) update(union *ShopEvent, meta CachedMetadata)
 				delete(current.acceptedCurrencies, c)
 			}
 		}
-		if bc := um.SetBaseCurrency; bc != nil {
-			current.baseCurrency = cachedShopCurrency{
+		if bc := um.SetPricingCurrency; bc != nil {
+			current.pricingCurrency = cachedShopCurrency{
 				Addr:    common.Address(bc.Address.Raw),
 				ChainID: bc.ChainId,
 			}
@@ -1393,12 +1440,24 @@ func (current *CachedShopManifest) update(union *ShopEvent, meta CachedMetadata)
 		if p := um.RemovePayee; p != nil {
 			delete(current.payees, p.Name)
 		}
+		for _, add := range um.AddShippingRegions {
+			current.shippingRegions[add.Name] = add
+		}
+		for _, rm := range um.RemoveShippingRegions {
+			delete(current.shippingRegions, rm)
+		}
+		for _, add := range um.AddOrderPriceModifiers {
+			current.orderModifiers[add.Id] = add
+		}
+		for _, rm := range um.RemoveOrderPriceModifiers {
+			delete(current.orderModifiers, rm)
+		}
 	}
 }
 
-// CachedItem is the latest reduction of an Item.
+// CachedListing is the latest reduction of an Item.
 // It combines the initial CreateItem and all UpdateItems
-type CachedItem struct {
+type CachedListing struct {
 	CachedMetadata
 	inited bool
 
@@ -1409,7 +1468,7 @@ type CachedItem struct {
 	options map[uint64]map[uint64]*ListingVariation
 }
 
-func (current *CachedItem) update(union *ShopEvent, meta CachedMetadata) {
+func (current *CachedListing) update(union *ShopEvent, meta CachedMetadata) {
 	switch tv := union.Union.(type) {
 	case *ShopEvent_Listing:
 		assert(!current.inited)
@@ -1421,18 +1480,18 @@ func (current *CachedItem) update(union *ShopEvent, meta CachedMetadata) {
 		assert(current.inited)
 		current.CachedMetadata = meta
 		ui := tv.UpdateListing
-		if p := ui.BasePrice; p != nil {
-			current.value.BasePrice = p
+		if p := ui.Price; p != nil {
+			current.value.Price = p
 		}
-		if meta := ui.BaseInfo; meta != nil {
+		if meta := ui.Metadata; meta != nil {
 			if t := meta.Title; t != "" {
-				current.value.BaseInfo.Title = t
+				current.value.Metadata.Title = t
 			}
 			if d := meta.Description; d != "" {
-				current.value.BaseInfo.Description = d
+				current.value.Metadata.Description = d
 			}
 			if i := meta.Images; i != nil {
-				current.value.BaseInfo.Images = i
+				current.value.Metadata.Images = i
 			}
 		}
 		// TODO: the stuff below here is a pile of poo. we shouldn't reduce the amount of duplication here
@@ -1748,7 +1807,7 @@ type Relay struct {
 
 	// caching layer
 	shopManifestsByShopID *ReductionLoader[*CachedShopManifest]
-	itemsByItemID         *ReductionLoader[*CachedItem]
+	itemsByItemID         *ReductionLoader[*CachedListing]
 	stockByShopID         *ReductionLoader[*CachedStock]
 	tagsByTagID           *ReductionLoader[*CachedTag]
 	ordersByOrderID       *ReductionLoader[*CachedOrder]
@@ -1791,7 +1850,7 @@ func newRelay(metric *Metric) *Relay {
 		}
 		return 0
 	}
-	r.itemsByItemID = newReductionLoader[*CachedItem](r, itemsFieldFn, []eventType{eventTypeListing, eventTypeUpdateListing}, "objectID")
+	r.itemsByItemID = newReductionLoader[*CachedListing](r, itemsFieldFn, []eventType{eventTypeListing, eventTypeUpdateListing}, "objectID")
 	r.stockByShopID = newReductionLoader[*CachedStock](r, shopFieldFn, []eventType{eventTypeChangeInventory}, "createdByShopId")
 	tagsFieldFn := func(evt *ShopEvent, meta CachedMetadata) uint64 {
 		switch tv := evt.Union.(type) {
@@ -2684,6 +2743,46 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 		if shopManifestExists {
 			return &Error{Code: ErrorCodes_INVALID, Message: "shop already exists"}
 		}
+		m := tv.Manifest
+		usedNames := make(map[string]struct{})
+		for _, payee := range m.Payees {
+			_, has := usedNames[payee.Name]
+			if has {
+				return &Error{Code: ErrorCodes_INVALID, Message: "duplicate payee: " + payee.Name}
+			}
+			usedNames[payee.Name] = struct{}{}
+		}
+		usedCurrencies := make(map[cachedShopCurrency]struct{})
+		for _, curr := range m.AcceptedCurrencies {
+			k := curr.cached()
+			_, has := usedCurrencies[k]
+			if has {
+				return &Error{
+					Code:    ErrorCodes_INVALID,
+					Message: fmt.Sprintf("duplicate currency: %v", k),
+				}
+			}
+			usedCurrencies[k] = struct{}{}
+		}
+		usedNames = make(map[string]struct{})
+		for _, region := range m.ShippingRegions {
+			_, has := usedNames[region.Name]
+			if has {
+				return &Error{Code: ErrorCodes_INVALID, Message: "duplicate region name: " + region.Name}
+			}
+			usedNames[region.Name] = struct{}{}
+		}
+		usedIDs := make(map[uint64]struct{})
+		for _, mod := range m.OrderPriceModifiers {
+			_, has := usedIDs[mod.Id]
+			if has {
+				return &Error{
+					Code:    ErrorCodes_INVALID,
+					Message: "duplicate order modifier: " + strconv.FormatUint(mod.Id, 10),
+				}
+			}
+			usedIDs[mod.Id] = struct{}{}
+		}
 
 	case *ShopEvent_UpdateManifest:
 		if !shopManifestExists {
@@ -2692,7 +2791,9 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 		if sess.keyCardOfAGuest {
 			return notFoundError
 		}
-		if p := tv.UpdateManifest.AddPayee; p != nil {
+		um := tv.UpdateManifest
+		// this feels like a pre-op validation step but we dont have access to the relay there
+		if p := um.AddPayee; p != nil {
 			if _, has := manifest.payees[p.Name]; has {
 				return &Error{Code: ErrorCodes_INVALID, Message: "payee nickname already taken"}
 			}
@@ -2702,39 +2803,73 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 				}
 			}
 		}
-		if p := tv.UpdateManifest.RemovePayee; p != nil {
+		if p := um.RemovePayee; p != nil {
 			if _, has := manifest.payees[p.Name]; !has {
 				return notFoundError
 			}
 		}
-		// this feels like a pre-op validation step but we dont have access to the relay there
-		if adds := tv.UpdateManifest.AddAcceptedCurrencies; len(adds) > 0 {
-			for _, add := range adds {
-				// check if already assigned
-				c := cachedShopCurrency{
-					common.Address(add.Address.Raw),
-					add.ChainId,
-				}
-				if _, has := manifest.acceptedCurrencies[c]; has {
-					return &Error{Code: ErrorCodes_INVALID, Message: "currency already in use"}
-				}
-				if !bytes.Equal(ZeroAddress[:], add.Address.Raw) {
-					// validate existance of contract
-					err := r.ethereum.CheckValidERC20Metadata(add.ChainId, common.Address(add.Address.Raw))
-					if err != nil {
-						return err
-					}
-				}
+		for _, add := range um.AddAcceptedCurrencies {
+			// check if already assigned
+			c := cachedShopCurrency{
+				common.Address(add.Address.Raw),
+				add.ChainId,
 			}
-		}
-		if base := tv.UpdateManifest.SetBaseCurrency; base != nil {
-			if !bytes.Equal(ZeroAddress[:], base.Address.Raw) {
-				err := r.ethereum.CheckValidERC20Metadata(base.ChainId, common.Address(base.Address.Raw))
+			if _, has := manifest.acceptedCurrencies[c]; has {
+				return &Error{Code: ErrorCodes_INVALID, Message: "currency already in use"}
+			}
+			if !bytes.Equal(ZeroAddress[:], add.Address.Raw) {
+				// validate existance of contract
+				err := r.ethereum.CheckValidERC20Metadata(add.ChainId, common.Address(add.Address.Raw))
 				if err != nil {
 					return err
 				}
 			}
 		}
+		if curr := um.SetPricingCurrency; curr != nil {
+			if !bytes.Equal(ZeroAddress[:], curr.Address.Raw) {
+				err := r.ethereum.CheckValidERC20Metadata(curr.ChainId, common.Address(curr.Address.Raw))
+				if err != nil {
+					return err
+				}
+			}
+		}
+		for _, add := range um.AddShippingRegions {
+			_, has := manifest.shippingRegions[add.Name]
+			if has {
+				return &Error{
+					Code:    ErrorCodes_INVALID,
+					Message: "name for shipping region already taken",
+				}
+			}
+		}
+		for _, rm := range um.RemoveShippingRegions {
+			_, has := manifest.shippingRegions[rm]
+			if !has {
+				return &Error{
+					Code:    ErrorCodes_INVALID,
+					Message: "unknown shipping region",
+				}
+			}
+		}
+		for _, add := range um.AddOrderPriceModifiers {
+			_, has := manifest.orderModifiers[add.Id]
+			if has {
+				return &Error{
+					Code:    ErrorCodes_INVALID,
+					Message: "order price modifier id already taken",
+				}
+			}
+		}
+		for _, rm := range um.RemoveOrderPriceModifiers {
+			_, has := manifest.orderModifiers[rm]
+			if !has {
+				return &Error{
+					Code:    ErrorCodes_INVALID,
+					Message: "unknown order price modifier",
+				}
+			}
+		}
+
 	case *ShopEvent_Listing:
 		if !shopManifestExists || sess.keyCardOfAGuest {
 			log("relay.checkEventWrite.createItem manifestExists=%v isGuest=%v", shopManifestExists, sess.keyCardOfAGuest)
@@ -3010,6 +3145,8 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 	return nil
 }
 
+var big100 = new(big.Int).SetInt64(100)
+
 func (r *Relay) processPaymentDetailsForOrder(sessionID sessionID, orderID uint64, method *UpdateOrder_ChoosePaymentMethod) *Error {
 	ctx := context.Background()
 	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
@@ -3040,6 +3177,20 @@ func (r *Relay) processPaymentDetailsForOrder(sessionID sessionID, orderID uint6
 	stock, has := r.stockByShopID.get(uint64(shopID))
 	if !has {
 		return notFoundError
+	}
+
+	shippingAddr := order.order.ShippingAddress
+	if shippingAddr == nil {
+		shippingAddr = order.order.InvoiceAddress
+	}
+
+	if shippingAddr == nil {
+		return &Error{Code: ErrorCodes_INVALID, Message: "no shipping address chosen"}
+	}
+
+	region, err := ScoreRegions(shop.shippingRegions, shippingAddr)
+	if err != nil {
+		return &Error{Code: ErrorCodes_INVALID, Message: "unable to determin shipping region"}
 	}
 
 	// get all other orders that haven't been paid yet
@@ -3082,8 +3233,8 @@ where shopId = $1
 		versioned ipfsPath.ImmutablePath
 	}
 	var (
-		bigTotal   = new(big.Int)
-		invalidErr *Error
+		bigSubtotal = new(big.Int)
+		invalidErr  *Error
 
 		orderHash [32]byte
 		hasher    = sha3.NewLegacyKeccak256()
@@ -3096,7 +3247,7 @@ where shopId = $1
 	// worker to save an listing to ipfs an pin it
 	// TODO: we are saving the hole listing each call, irrespective of variations, etc.
 	// we know the variations from the order, so it's okay but we should be able to de-duplicate it
-	mkSnapshot := func(cid combinedID, item *CachedItem) func() error {
+	mkSnapshot := func(cid combinedID, item *CachedListing) func() error {
 		return func() error {
 			data, err := proto.Marshal(item.value)
 			if err != nil {
@@ -3159,7 +3310,7 @@ where shopId = $1
 		bigQuant := big.NewInt(int64(quantity))
 
 		bigPrice := new(big.Int)
-		bigPrice.SetBytes(item.value.BasePrice.Raw)
+		bigPrice.SetBytes(item.value.Price.Raw)
 
 		chosenVars := cid.Variations()
 		found := 0
@@ -3168,12 +3319,12 @@ where shopId = $1
 			for _, availableVars := range item.options {
 				for varID, variation := range availableVars {
 					if varID == chosen {
-						if diff := variation.PriceDiff; diff != nil {
+						if diff := variation.Diff; diff != nil {
 							found++
 							bigPriceDiff := new(big.Int)
-							bigPriceDiff.SetBytes(diff.Raw)
+							bigPriceDiff.SetBytes(diff.Diff.Raw)
 
-							if variation.PriceDiffSign {
+							if variation.Diff.PlusSign {
 								bigPrice.Add(bigPrice, bigPriceDiff)
 							} else {
 								bigPrice.Sub(bigPrice, bigPriceDiff)
@@ -3190,7 +3341,7 @@ where shopId = $1
 
 		bigQuant.Mul(bigQuant, bigPrice)
 
-		bigTotal.Add(bigTotal, bigQuant)
+		bigSubtotal.Add(bigSubtotal, bigQuant)
 		return false
 	})
 	if invalidErr != nil {
@@ -3230,6 +3381,33 @@ where shopId = $1
 	close(savedCIDs) // savers are done
 	<-done           // wait for consumer to create orderHash
 
+	// add taxes and shipping
+	bigTotal := new(big.Int).Set(bigSubtotal)
+	diff := new(big.Int)
+
+	for _, modID := range region.OrderPriceModifierIds {
+		mod, has := shop.orderModifiers[modID]
+		if !has {
+			logS(sessionID, "relay.commitOrderOp.priceModifierNotFound order_id=%d modifier_id=%d", order.order.Id, modID)
+			return &Error{Code: ErrorCodes_INVALID, Message: "failed to calculate total price"}
+		}
+		switch tv := mod.Modification.(type) {
+		case *OrderPriceModifier_Absolute:
+			abs := tv.Absolute
+			diff.SetBytes(abs.Diff.Raw)
+			if abs.PlusSign {
+				bigTotal.Add(bigTotal, diff)
+			} else {
+				bigTotal.Sub(bigTotal, diff)
+			}
+		case *OrderPriceModifier_Percentage:
+			perc := tv.Percentage
+			diff.SetBytes(perc.Raw)
+			bigTotal.Mul(bigTotal, diff)
+			bigTotal.Div(bigTotal, big100)
+		}
+	}
+
 	// create payment address for order content
 	var (
 		chosenCurrency = cachedShopCurrency{
@@ -3237,9 +3415,9 @@ where shopId = $1
 			method.Currency.ChainId,
 		}
 	)
-	if !chosenCurrency.Equal(shop.baseCurrency) {
+	if !chosenCurrency.Equal(shop.pricingCurrency) {
 		// convert base to chosen currency
-		bigTotal, err = r.prices.Convert(shop.baseCurrency, chosenCurrency, bigTotal)
+		bigTotal, err = r.prices.Convert(shop.pricingCurrency, chosenCurrency, bigTotal)
 		if err != nil {
 			logS(sessionID, "relay.commitOrderOp.priceConversion err=%s", err)
 			return &Error{Code: ErrorCodes_INVALID, Message: "failed to establish conversion price"}
@@ -3297,6 +3475,7 @@ where shopId = $1
 		w   PaymentWaiter
 	)
 	fin.PaymentId = &Hash{Raw: paymentId}
+	fin.ShippingRegion = region
 	fin.Ttl = pr.Ttl.String()
 
 	fin.ListingHashes = make([]*IPFSAddress, len(items))
@@ -3351,6 +3530,65 @@ where shopId = $1
 	logS(sessionID, "relay.commitOrderOp.finish took=%d", took(start))
 	return nil
 }
+
+// TODO: move
+
+// ScoreRegions compares all configured regions to a chosen address and picks the one most applicable.
+func ScoreRegions(configured map[string]*ShippingRegion, chosen *AddressDetails) (*ShippingRegion, error) {
+	type score struct {
+		Name   string
+		Points int
+	}
+	var scores []score
+
+	for k, r := range configured {
+		var s = score{
+			Name: k,
+		}
+
+		if r.Country == chosen.Country || r.Country == "" {
+			if r.Country == "" {
+				s.Points += 1
+			} else {
+				s.Points += 10
+			}
+			if r.PostalCode == chosen.PostalCode {
+				s.Points += 100
+				if r.City == chosen.City {
+					s.Points += 1000
+				}
+			}
+
+			scores = append(scores, s)
+		}
+	}
+
+	if len(scores) == 0 {
+		return nil, fmt.Errorf("no shipping region matched")
+	}
+
+	//spew.Dump(scores)
+
+	if len(scores) > 1 {
+		// sort highest points first
+		slices.SortFunc(scores, func(a, b score) int {
+			if a.Points > b.Points {
+				return -1
+			}
+			if a.Points < b.Points {
+				return 1
+			}
+			// eq
+			return 0
+		})
+	}
+
+	reg, has := configured[scores[0].Name]
+	assert(has)
+	return reg, nil
+}
+
+// </move>
 
 func (op *SubscriptionRequestOp) process(r *Relay) {
 	start := now()
@@ -4588,9 +4826,9 @@ func openPProfEndpoint() {
 func emitUptime(metric *Metric) {
 	start := now()
 	for {
-		uptime := float64(time.Since(start).Milliseconds())
+		uptime := time.Since(start).Milliseconds()
 		log("relay.emitUptime uptime=%v", uptime)
-		metric.gaugeSet("server_uptime", uptime)
+		metric.gaugeSet("server_uptime", float64(uptime))
 		time.Sleep(emitUptimeInterval)
 	}
 }

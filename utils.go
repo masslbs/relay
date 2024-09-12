@@ -177,6 +177,50 @@ func (lm *ListingMetadata) validate(field string) *Error {
 	return coalesce(errs...)
 }
 
+func (region *ShippingRegion) validate(field string) *Error {
+	errs := []*Error{
+		validateString(region.Name, field+".name", 128),
+	}
+	// if city is non-empty, the fields before it also have to be non-empty, etc.
+	if region.PostalCode != "" && region.Country == "" {
+		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + ": country needs to be set if postal_code is"})
+	}
+
+	if region.City != "" && (region.PostalCode == "" || region.Country == "") {
+		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + ": country and postal_code need to be set if city is"})
+	}
+	for i, id := range region.OrderPriceModifierIds {
+		if id == 0 {
+			idField := field + fmt.Sprintf(".order_price_modifier_id[%d]", i)
+			errs = append(errs, validateObjectID(id, idField))
+		}
+	}
+	return coalesce(errs...)
+}
+
+func (mod *OrderPriceModifier) validate(field string) *Error {
+	errs := []*Error{
+		validateObjectID(mod.Id, field+".id"),
+		validateString(mod.Title, field+".title", 128),
+	}
+	switch tv := mod.Modification.(type) {
+	case *OrderPriceModifier_Absolute:
+		abs := tv.Absolute
+		errs = append(errs, abs.Diff.validate(field+".modification/absolute.diff"))
+	case *OrderPriceModifier_Percentage:
+		perc := tv.Percentage
+		errs = append(errs, perc.validate(field+".modification/percentage"))
+	default:
+		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + fmt.Sprintf(".modification: unhandled type: %T", tv)})
+	}
+
+	return coalesce(errs...)
+}
+
+func (i *Uint256) validate(field string) *Error {
+	return validateBytes(i.Raw, field, 32)
+}
+
 func validateURL(k string, field string) *Error {
 	if _, err := url.Parse(k); err != nil {
 		return &Error{
