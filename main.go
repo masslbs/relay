@@ -808,6 +808,8 @@ func validateShopManifest(_ uint, event *Manifest) *Error {
 	}
 	if base := event.BaseCurrency; base != nil {
 		errs = append(errs, base.Address.validate("base_currencty.addr"))
+	} else {
+		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "base_currency is required"})
 	}
 	for i, payee := range event.Payees {
 		field := fmt.Sprintf("payee[%d].addr", i)
