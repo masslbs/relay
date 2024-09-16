@@ -459,6 +459,9 @@ func (sess *Session) readerReadMessage() (*Envelope, error) {
 	if envl.Message == nil {
 		return nil, fmt.Errorf("envelope without a message")
 	}
+	if envl.RequestId == nil || envl.RequestId.Raw == 0 {
+		return nil, fmt.Errorf("invalid request ID")
+	}
 
 	sess.metric.counterAdd("sessions_messages_read", 1)
 	sess.metric.counterAdd("sessions_messages_read_bytes", float64(len(bytes)))
