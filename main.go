@@ -455,6 +455,11 @@ func (sess *Session) readerReadMessage() (*Envelope, error) {
 	if logMessages {
 		logS(sess.id, "session.reader.readMessage requestId=%d type=%T length=%d", envl.RequestId.Raw, envl.Message, len(bytes))
 	}
+
+	if envl.Message == nil {
+		return nil, fmt.Errorf("envelope without a message")
+	}
+
 	sess.metric.counterAdd("sessions_messages_read", 1)
 	sess.metric.counterAdd("sessions_messages_read_bytes", float64(len(bytes)))
 	typeName := strings.TrimPrefix(fmt.Sprintf("%T", envl.Message), "*main.Envelope_")
