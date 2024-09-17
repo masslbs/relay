@@ -1646,10 +1646,15 @@ func (current *CachedOrder) update(evt *ShopEvent, meta CachedMetadata) {
 			for _, id := range ci.Removes {
 				sid := newCombinedID(id.ListingId, id.VariationIds...)
 				count := current.items.Get(sid)
-				assert(count > id.Quantity)
-				count -= id.Quantity
+				if id.Quantity > count {
+					count = 0
+				} else {
+					count -= id.Quantity
+				}
 				current.items.Set(sid, count)
 			}
+		case *UpdateOrder_CommitItems_:
+			current.order.State = Order_STATE_COMMITED
 		case *UpdateOrder_InvoiceAddress:
 			current.order.InvoiceAddress = action.InvoiceAddress
 		case *UpdateOrder_ShippingAddress:
@@ -1657,7 +1662,7 @@ func (current *CachedOrder) update(evt *ShopEvent, meta CachedMetadata) {
 		case *UpdateOrder_PaymentDetails:
 			fin := action.PaymentDetails
 			current.paymentId = fin.PaymentId.Raw
-			current.order.State = Order_STATE_COMMITED
+			current.order.State = Order_STATE_UNPAID
 		case *UpdateOrder_Canceled_:
 			current.order.State = Order_STATE_CANCELED
 		case *UpdateOrder_Paid:
@@ -2708,15 +2713,20 @@ func (op *EventWriteOp) process(r *Relay) {
 	r.writeEvent(op.decodedShopEvt, meta, op.im.Events[0])
 
 	if uo := op.decodedShopEvt.GetUpdateOrder(); uo != nil {
-		if p := uo.GetChoosePayment(); p != nil {
-			err := r.processPaymentDetailsForOrder(sessionID, uo.Id, p)
-			if err != nil {
-				op.err = err
-				r.sendSessionOp(sessionState, op)
-				r.rollbackSyncTransaction()
-				return
-			}
+		var err *Error
+		if ci := uo.GetCommitItems(); ci != nil {
+			err = r.processOrderItemsCommitment(sessionID, uo.Id)
 		}
+		if p := uo.GetChoosePayment(); p != nil {
+			err = r.processOrderPaymentChoice(sessionID, uo.Id, p)
+		}
+		if err != nil {
+			op.err = err
+			r.sendSessionOp(sessionState, op)
+			r.rollbackSyncTransaction()
+			return
+		}
+
 	}
 
 	r.commitSyncTransaction()
@@ -3058,8 +3068,27 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 				if !itemExists {
 					return notFoundError
 				}
-				if obj.createdByShopID != sess.shopID { // not allow to alter data from other shops
+				// not allow to use items from other shops
+				if obj.createdByShopID != sess.shopID {
 					return notFoundError
+				}
+				// check variation exists
+
+				if n := len(item.VariationIds); n > 0 {
+					var found int
+					for _, want := range item.VariationIds {
+						// TODO: find a better way to index these
+						for _, opt := range obj.value.Options {
+							for _, has := range opt.Variations {
+								if has.Id == want {
+									found += 1
+								}
+							}
+						}
+					}
+					if found != n {
+						return notFoundError
+					}
 				}
 				sid := newCombinedID(item.ListingId, item.VariationIds...)
 				changes.Set(sid, int64(item.Quantity))
@@ -3069,33 +3098,38 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 				if !itemExists {
 					return notFoundError
 				}
-				if obj.createdByShopID != sess.shopID { // not allow to alter data from other shops
+				// not allow to use items from other shops
+				if obj.createdByShopID != sess.shopID {
 					return notFoundError
 				}
 				sid := newCombinedID(item.ListingId, item.VariationIds...)
 				changes.Set(sid, -int64(item.Quantity))
 			}
-			for _, stockID := range changes.Keys() {
-				change := changes.Get(stockID)
-
-				stock, has := r.stockByShopID.get(uint64(m.createdByShopID))
-				if !has {
-					return &Error{Code: ErrorCodes_INVALID, Message: "not enough stock"}
-				}
-				if change > 0 {
-					inStock, has := stock.inventory.GetHas(stockID)
-					if !has || int64(inStock) < change {
-						return &Error{Code: ErrorCodes_INVALID, Message: "not enough stock"}
-					}
-				}
-				inOrder := order.items.Get(stockID)
-				if int64(inOrder)+change < 0 {
-					return &Error{Code: ErrorCodes_INVALID, Message: "not enough items in order"}
-				}
-			}
 
 		case *UpdateOrder_CommitItems_:
-			// noop
+			stock, has := r.stockByShopID.get(uint64(m.createdByShopID))
+			if !has {
+				return &Error{Code: ErrorCodes_INVALID, Message: "no stock for shop"}
+			}
+			items := order.items.Keys()
+			if len(items) == 0 {
+				return &Error{Code: ErrorCodes_INVALID, Message: "order is empty"}
+			}
+			for _, stockID := range items {
+				_, has := r.itemsByItemID.get(stockID.listingID)
+				if !has {
+					return notFoundError
+				}
+				// TODO: check variation exists?
+				inStock, has := stock.inventory.GetHas(stockID)
+				if !has || inStock == 0 {
+					return &Error{Code: ErrorCodes_INVALID, Message: "not in stock"}
+				}
+				inOrder := order.items.Get(stockID)
+				if inOrder > uint32(inStock) {
+					return &Error{Code: ErrorCodes_INVALID, Message: "not enough items in stock for order"}
+				}
+			}
 
 		case *UpdateOrder_InvoiceAddress:
 			// noop
@@ -3109,8 +3143,11 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 			}
 
 		case *UpdateOrder_ChoosePayment:
-			if order.order.State >= Order_STATE_COMMITED {
-				return &Error{Code: ErrorCodes_INVALID, Message: "order is already finalized"}
+			if order.order.State != Order_STATE_COMMITED {
+				return &Error{Code: ErrorCodes_INVALID, Message: "order is not yet commited"}
+			}
+			if order.order.ShippingAddress == nil && order.order.InvoiceAddress == nil {
+				return &Error{Code: ErrorCodes_INVALID, Message: "no shipping address chosen"}
 			}
 			if order.items.Size() == 0 {
 				return &Error{Code: ErrorCodes_INVALID, Message: "order is empty"}
@@ -3120,11 +3157,12 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 			if !has {
 				return &Error{Code: ErrorCodes_INVALID, Message: "no such payee"}
 			}
-
 			if p.ChainId != method.Payee.ChainId || !bytes.Equal(p.Address.Raw, method.Payee.Address.Raw) {
 				return &Error{Code: ErrorCodes_INVALID, Message: "payee missmatch"}
 			}
-
+			if method.Payee.ChainId != method.Currency.ChainId {
+				return &Error{Code: ErrorCodes_INVALID, Message: "payee and chosenCurrency chain_id mismatch"}
+			}
 			chosenCurrency := cachedShopCurrency{
 				common.Address(method.Currency.Address.Raw),
 				method.Currency.ChainId,
@@ -3133,6 +3171,7 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 			if !has {
 				return &Error{Code: ErrorCodes_INVALID, Message: "chosen currency not available"}
 			}
+
 		default:
 			log("relay.checkEventWrite.updateOrder action=%T", act)
 			return &Error{Code: ErrorCodes_INVALID, Message: "no action on updateOrder"}
@@ -3147,58 +3186,32 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 
 var big100 = new(big.Int).SetInt64(100)
 
-func (r *Relay) processPaymentDetailsForOrder(sessionID sessionID, orderID uint64, method *UpdateOrder_ChoosePaymentMethod) *Error {
+func (r *Relay) processOrderItemsCommitment(sessionID sessionID, orderID uint64) *Error {
 	ctx := context.Background()
 	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
 
 	start := now()
-	logS(sessionID, "relay.commitOrderOp.process order=%d", orderID)
+	logS(sessionID, "relay.orderCommitItemsOp.process order=%d", orderID)
 
-	ipfsClient, err := getIpfsClient(ctx, 0, nil)
-	if err != nil {
-		logS(sessionID, "relay.commitOrderOp.ipfsClientFailed error=%s", err)
-		return &Error{Code: ErrorCodes_INVALID, Message: "internal error"}
-	}
-
-	// sum up order content
+	// load realted data
 	order, has := r.ordersByOrderID.get(orderID)
-	if !has {
-		return notFoundError
-	}
-	// check ownership of the cart if it is a guest
-	if sessionState.keyCardOfAGuest && order.createdByKeyCardID != sessionState.keyCardID {
-		return notFoundError
-	}
+	assert(has)
+
 	shopID := order.createdByShopID
-	shop, has := r.shopManifestsByShopID.get(uint64(shopID))
-	if !has {
-		return notFoundError
-	}
+
+	// shop, has := r.shopManifestsByShopID.get(uint64(shopID))
+	// assert(has)
+
 	stock, has := r.stockByShopID.get(uint64(shopID))
-	if !has {
-		return notFoundError
-	}
-
-	shippingAddr := order.order.ShippingAddress
-	if shippingAddr == nil {
-		shippingAddr = order.order.InvoiceAddress
-	}
-
-	if shippingAddr == nil {
-		return &Error{Code: ErrorCodes_INVALID, Message: "no shipping address chosen"}
-	}
-
-	region, err := ScoreRegions(shop.shippingRegions, shippingAddr)
-	if err != nil {
-		return &Error{Code: ErrorCodes_INVALID, Message: "unable to determin shipping region"}
-	}
+	assert(has)
 
 	// get all other orders that haven't been paid yet
+	// TODO: configure timeout?
 	otherOrderRows, err := r.syncTx.Query(ctx, `select orderId from payments
 where shopId = $1
   and orderId != $2
-  and orderPayedAt is null
-  and orderFinalizedAt >= now() - interval '1 day'`, sessionState.shopID, orderID)
+  and payedAt is null
+  and itemsLockedAt >= now() - interval '1 day'`, sessionState.shopID, orderID)
 	check(err)
 	defer otherOrderRows.Close()
 
@@ -3212,7 +3225,7 @@ where shopId = $1
 	}
 	check(otherOrderRows.Err())
 
-	// for convenience, sum up all items in the  other orders
+	// for convenience, sum up all items in the other orders
 	otherOrderItemQuantities := NewMapInts[combinedID, uint32]()
 	otherOrderIds.All(func(_ uint64, order *CachedOrder) bool {
 		if order.order.State == Order_STATE_CANCELED {
@@ -3226,6 +3239,70 @@ where shopId = $1
 		})
 		return false
 	})
+
+	// iterate over this order
+	var invalidErr *Error
+	order.items.All(func(cid combinedID, quantity uint32) bool {
+		stockItems, has := stock.inventory.GetHas(cid)
+		if !has {
+			invalidErr = &Error{Code: ErrorCodes_OUT_OF_STOCK, Message: "not enough stock"}
+			return true
+		}
+
+		usedInOtherOrders := otherOrderItemQuantities.Get(cid)
+		if stockItems < 0 || uint32(stockItems)-usedInOtherOrders < quantity {
+			invalidErr = &Error{Code: ErrorCodes_OUT_OF_STOCK, Message: "not enough stock"}
+			return true
+		}
+
+		return false
+	})
+	if invalidErr != nil {
+		return invalidErr
+	}
+
+	shopState := r.shopIdsToShopState.MustGet(sessionState.shopID)
+	const insertPaymentQuery = `insert into payments (shopSeqNo, shopId, orderId, itemsLockedAt)
+	VALUES ($1, $2, $3, now())`
+	_, err = r.syncTx.Exec(ctx, insertPaymentQuery, shopState.lastUsedSeq, shopID, orderID)
+	check(err)
+
+	logS(sessionID, "relay.orderCommitItemsOp.finish took=%d", took(start))
+	return nil
+}
+
+func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID uint64, method *UpdateOrder_ChoosePaymentMethod) *Error {
+	ctx := context.Background()
+	//sessionState := r.sessionIDsToSessionStates.Get(sessionID)
+
+	start := now()
+	logS(sessionID, "relay.orderPaymentChoiceOp.process order=%d", orderID)
+
+	ipfsClient, err := getIpfsClient(ctx, 0, nil)
+	if err != nil {
+		logS(sessionID, "relay.orderPaymentChoiceOp.ipfsClientFailed error=%s", err)
+		return &Error{Code: ErrorCodes_INVALID, Message: "internal error"}
+	}
+
+	// load realted data
+	order, has := r.ordersByOrderID.get(orderID)
+	assert(has)
+
+	shopID := order.createdByShopID
+
+	shop, has := r.shopManifestsByShopID.get(uint64(shopID))
+	assert(has)
+
+	shippingAddr := order.order.ShippingAddress
+	if shippingAddr == nil {
+		shippingAddr = order.order.InvoiceAddress
+	}
+
+	region, err := ScoreRegions(shop.shippingRegions, shippingAddr)
+	if err != nil {
+		logS(sessionID, "relay.orderPaymentChoiceOp.scoreRegions regions=%d err=%s", len(shop.shippingRegions), err)
+		return &Error{Code: ErrorCodes_INVALID, Message: "unable to determin shipping region"}
+	}
 
 	// determain total price and create snapshot of items
 	type savedItem struct {
@@ -3284,23 +3361,6 @@ where shopId = $1
 		item, has := r.itemsByItemID.get(cid.listingID)
 		if !has {
 			invalidErr = notFoundError
-			return true
-		}
-
-		if item.createdByShopID != sessionState.shopID { // not allow to alter data from other shops
-			invalidErr = notFoundError
-			return true
-		}
-
-		stockItems, has := stock.inventory.GetHas(cid)
-		if !has {
-			invalidErr = &Error{Code: ErrorCodes_OUT_OF_STOCK, Message: "not enough stock"}
-			return true
-		}
-
-		usedInOtherOrders := otherOrderItemQuantities.Get(cid)
-		if stockItems < 0 || uint32(stockItems)-usedInOtherOrders < quantity {
-			invalidErr = &Error{Code: ErrorCodes_OUT_OF_STOCK, Message: "not enough stock"}
 			return true
 		}
 
@@ -3366,7 +3426,7 @@ where shopId = $1
 
 		for _, it := range items {
 			h := it.cid.Hash()
-			log("DEBUG/itemHash id=%v hash=%s ipfs=%s", it.cid, h.Hex(), it.versioned)
+			//debug("DEBUG/itemHash id=%v hash=%s ipfs=%s", it.cid, h.Hex(), it.versioned)
 			hasher.Write(h.Bytes())
 		}
 		hs := hasher.Sum(nil)
@@ -3375,7 +3435,7 @@ where shopId = $1
 	}()
 	err = listingSnapshots.Wait()
 	if err != nil {
-		logS(sessionID, "relay.commitOrderOp.itemSnapshots err=%s", err)
+		logS(sessionID, "relay.orderPaymentChoiceOp.itemSnapshots err=%s", err)
 		return &Error{Code: ErrorCodes_INVALID, Message: "failed to snapshot items"}
 	}
 	close(savedCIDs) // savers are done
@@ -3388,7 +3448,7 @@ where shopId = $1
 	for _, modID := range region.OrderPriceModifierIds {
 		mod, has := shop.orderModifiers[modID]
 		if !has {
-			logS(sessionID, "relay.commitOrderOp.priceModifierNotFound order_id=%d modifier_id=%d", order.order.Id, modID)
+			logS(sessionID, "relay.orderPaymentChoiceOp.priceModifierNotFound order_id=%d modifier_id=%d", order.order.Id, modID)
 			return &Error{Code: ErrorCodes_INVALID, Message: "failed to calculate total price"}
 		}
 		switch tv := mod.Modification.(type) {
@@ -3419,7 +3479,7 @@ where shopId = $1
 		// convert base to chosen currency
 		bigTotal, err = r.prices.Convert(shop.pricingCurrency, chosenCurrency, bigTotal)
 		if err != nil {
-			logS(sessionID, "relay.commitOrderOp.priceConversion err=%s", err)
+			logS(sessionID, "relay.orderPaymentChoiceOp.priceConversion err=%s", err)
 			return &Error{Code: ErrorCodes_INVALID, Message: "failed to establish conversion price"}
 		}
 	}
@@ -3429,24 +3489,21 @@ where shopId = $1
 	// fallback for paymentAddr
 	ownerAddr, err := r.ethereum.GetOwnerOfShop(bigShopTokenID)
 	if err != nil {
-		return &Error{Code: ErrorCodes_INVALID, Message: err.Error()}
-	}
-
-	if method.Payee.ChainId != chosenCurrency.ChainID {
-		return &Error{Code: ErrorCodes_INVALID, Message: "payee and chosenCurrency chain_id mismatch"}
+		logS(sessionID, "relay.orderPaymentChoiceOp.shopOwnerFailed err=%s", err)
+		return &Error{Code: ErrorCodes_INVALID, Message: "failed to get shop owner"}
 	}
 
 	// ttl
 	blockNo, err := r.ethereum.GetCurrentBlockNumber(chosenCurrency.ChainID)
 	if err != nil {
-		logS(sessionID, "relay.commitOrderOp.blockNumberFailed err=%s", err)
+		logS(sessionID, "relay.orderPaymentChoiceOp.blockNumberFailed err=%s", err)
 		return &Error{Code: ErrorCodes_INVALID, Message: "failed to get current block number"}
 	}
 	bigBlockNo := new(big.Int).SetInt64(int64(blockNo))
 
 	block, err := r.ethereum.GetBlockByNumber(chosenCurrency.ChainID, bigBlockNo)
 	if err != nil {
-		logS(sessionID, "relay.commitOrderOp.blockByNumberFailed block=%d err=%s", blockNo, err)
+		logS(sessionID, "relay.orderPaymentChoiceOp.blockByNumberFailed block=%d err=%s", blockNo, err)
 		return &Error{Code: ErrorCodes_INVALID, Message: "failed to get block by number"}
 	}
 
@@ -3464,10 +3521,11 @@ where shopId = $1
 
 	paymentId, paymentAddr, err := r.ethereum.GetPaymentIDAndAddress(chosenCurrency.ChainID, &pr, ownerAddr)
 	if err != nil {
-		return &Error{Code: ErrorCodes_INVALID, Message: err.Error()}
+		logS(sessionID, "relay.orderPaymentChoiceOp.paymentIDandAddrFailed order=%d err=%s", orderID, err)
+		return &Error{Code: ErrorCodes_INVALID, Message: "failed to get paymentID"}
 	}
 
-	logS(sessionID, "relay.commitOrderOp.paymentRequest id=%x addr=%x total=%s currentBlock=%d order_hash=%x", paymentId, paymentAddr, bigTotal.String(), blockNo, orderHash)
+	logS(sessionID, "relay.orderPaymentChoiceOp.paymentRequest id=%x addr=%x total=%s currentBlock=%d order_hash=%x", paymentId, paymentAddr, bigTotal.String(), blockNo, orderHash)
 
 	// mark order as finalized by creating the event and updating payments table
 	var (
@@ -3498,7 +3556,7 @@ where shopId = $1
 
 	w.shopID = shopID
 	w.orderID = order.order.Id
-	w.orderFinalizedAt = now()
+	w.paymentChosenAt = now()
 	w.purchaseAddr = paymentAddr
 	w.chainID = chosenCurrency.ChainID
 	w.lastBlockNo.SetInt64(int64(blockNo))
@@ -3511,11 +3569,18 @@ where shopId = $1
 		w.erc20TokenAddr = &chosenCurrency.Addr
 	}
 
-	seqPair := r.shopIdsToShopState.MustGet(sessionState.shopID)
-	const insertPaymentWaiterQuery = `insert into payments (shopSeqNo, shopId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr, paymentId, chainId)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
-	_, err = r.syncTx.Exec(ctx, insertPaymentWaiterQuery,
-		seqPair.lastUsedSeq, w.shopID, w.orderID, w.orderFinalizedAt, w.purchaseAddr.Bytes(), w.lastBlockNo, w.coinsPayed, w.coinsTotal, w.erc20TokenAddr, w.paymentId, w.chainID)
+	const insertPaymentWaiterQuery = `update payments set
+paymentChosenAt = $3,
+purchaseAddr = $4,
+lastBlockNo = $5,
+coinsPayed = $6,
+coinsTotal = $7,
+erc20TokenAddr = $8,
+paymentId = $9,
+chainId = $10
+WHERE shopId = $1
+AND orderId = $2`
+	_, err = r.syncTx.Exec(ctx, insertPaymentWaiterQuery, w.shopID, w.orderID, w.paymentChosenAt, w.purchaseAddr.Bytes(), w.lastBlockNo, w.coinsPayed, w.coinsTotal, w.erc20TokenAddr, w.paymentId, w.chainID)
 	check(err)
 
 	ctx = context.Background()
@@ -3527,7 +3592,7 @@ where shopId = $1
 		r.watcherContextEther, r.watcherContextEtherCancel = context.WithCancel(ctx)
 	}
 
-	logS(sessionID, "relay.commitOrderOp.finish took=%d", took(start))
+	logS(sessionID, "relay.orderPaymentChoiceOp.finish took=%d", took(start))
 	return nil
 }
 
@@ -3930,9 +3995,9 @@ func (op *PaymentFoundInternalOp) process(r *Relay) {
 	}
 
 	const markOrderAsPayedQuery = `UPDATE payments SET
-orderPayedAt = NOW(),
-orderPayedTx = $1,
-orderPayedBlock = $2
+payedAt = NOW(),
+payedTx = $1,
+payedBlock = $2
 WHERE shopID = $3 and orderId = $4;`
 	_, err := r.syncTx.Exec(context.Background(), markOrderAsPayedQuery, txHash, blockHash, op.shopID, op.orderID)
 	check(err)

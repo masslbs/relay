@@ -77,27 +77,39 @@ CREATE TABLE payments (
     orderId          bigint NOT NULL,
     shopId           bigint NOT NULL,
     shopSeqNo        bigint not null, -- the seqNo of shop when the order was finalized
-    paymentId        bytea NOT NULL, -- uint256
-    orderFinalizedAt TIMESTAMP NOT NULL,
-    purchaseAddr     bytea NOT NULL,
-    chainId          integer not null,
-    lastBlockNo      NUMERIC(80,0) NOT NULL,
-    coinsPayed       NUMERIC(80,0) NOT NULL,
-    coinsTotal       NUMERIC(80,0) NOT NULL,
+    itemsLockedAt TIMESTAMP NOT NULL,
+
+    -- set once payment method was chosen
+    paymentChosenAt TIMESTAMP,
+    paymentId        bytea, -- uint256
+    purchaseAddr     bytea,
+    chainId          integer,
+    lastBlockNo      NUMERIC(80,0),
+    coinsPayed       NUMERIC(80,0),
+    coinsTotal       NUMERIC(80,0),
     -- (optional) set if the order is payed with an erc20 token
     erc20TokenAddr   bytea,
+
     -- set once payed
-    orderPayedAt     TIMESTAMP,
-    orderPayedTx     bytea,
-    orderPayedBlock  bytea
+    payedAt     TIMESTAMP,
+    payedTx     bytea,
+    payedBlock  bytea
 
 );
 alter table payments add constraint paymentIdLength check (octet_length(paymentId) = 32);
-alter table payments add constraint erc20TokenAddrCheck check (erc20TokenAddr is null or octet_length(erc20TokenAddr) = 20);
-alter table payments add constraint paidHash check (orderPayedAt is null or (
-    orderPayedTx is not null OR orderPayedBlock is not null
+alter table payments add constraint erc20TokenAddrCheck check (erc20TokenAddr is null OR octet_length(erc20TokenAddr) = 20);
+alter table payments add constraint paymentChosen check (paymentChosenAt is null OR (
+    paymentId is not null OR
+    purchaseAddr is not null OR
+    chainId is not null OR
+    lastBlockNo is not null OR
+    coinsPayed  is not null OR
+    coinsTotal  is not null
+));
+alter table payments add constraint paidHash check (payedAt is null or (
+    payedTx is not null OR payedBlock is not null
 ));
 
 CREATE UNIQUE INDEX paymentsOrderId ON payments (shopId, orderId);
-CREATE INDEX paymentsOrderFinalizedAt ON payments (orderFinalizedAt);
-CREATE INDEX paymentsOrderPayedAt ON payments (orderPayedAt);
+CREATE INDEX paymentsOrderFinalizedAt ON payments (paymentChosenAt);
+CREATE INDEX paymentsPayedAt ON payments (payedAt);

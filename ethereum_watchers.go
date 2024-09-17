@@ -24,15 +24,16 @@ import (
 
 // PaymentWaiter is a struct that holds the state of a order that is waiting for payment.
 type PaymentWaiter struct {
-	shopID           shopID
-	orderID          uint64
-	orderFinalizedAt time.Time
-	chainID          uint64
-	purchaseAddr     common.Address
-	lastBlockNo      SQLStringBigInt
-	coinsPayed       SQLStringBigInt
-	coinsTotal       SQLStringBigInt
-	paymentId        []byte
+	shopID          shopID
+	orderID         uint64
+	itemsLockedAt   time.Time
+	paymentChosenAt time.Time
+	chainID         uint64
+	purchaseAddr    common.Address
+	lastBlockNo     SQLStringBigInt
+	coinsPayed      SQLStringBigInt
+	coinsTotal      SQLStringBigInt
+	paymentId       []byte
 
 	// (optional) contract of the erc20 that we are looking for
 	erc20TokenAddr *common.Address
@@ -185,14 +186,14 @@ watch:
 			var paymentIdHash = vLog.Topics[1]
 
 			var waiter PaymentWaiter
-			openPaymentsQry := `SELECT shopId, orderId, orderFinalizedAt
+			openPaymentsQry := `SELECT shopId, orderId, paymentChosenAt
 					FROM payments
 					WHERE
-					orderPayedAt IS NULL
-					AND orderFinalizedAt >= NOW() - INTERVAL '1 day'
+					payedAt IS NULL
+					AND paymentChosenAt >= NOW() - INTERVAL '1 day'
 					AND paymentId = $1
 					AND chainId = $2`
-			err := r.connPool.QueryRow(ctx, openPaymentsQry, paymentIdHash.Bytes(), geth.chainID).Scan(&waiter.shopID, &waiter.orderID, &waiter.orderFinalizedAt)
+			err := r.connPool.QueryRow(ctx, openPaymentsQry, paymentIdHash.Bytes(), geth.chainID).Scan(&waiter.shopID, &waiter.orderID, &waiter.paymentChosenAt)
 			if err == pgx.ErrNoRows {
 				continue
 			} else if err != nil {
@@ -233,11 +234,11 @@ func (r *Relay) subscribeFilterLogsERC20Transfers(geth *ethClient) error {
 		erc20AddressSet = make(map[common.Address]struct{})
 	)
 
-	openPaymentsQry := `SELECT shopId, orderId, orderFinalizedAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr
+	openPaymentsQry := `SELECT shopId, orderId, paymentChosenAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr
 				FROM payments
-				WHERE orderPayedAt IS NULL
+				WHERE payedAt IS NULL
 					AND erc20TokenAddr IS NOT NULL -- see subscribeFilterLogsERC20Transfers()
-					AND orderFinalizedAt >= NOW() - INTERVAL '1 day'
+					AND paymentChosenAt >= NOW() - INTERVAL '1 day'
 		            AND chainId = $1
 		ORDER BY lastBlockNo asc;`
 	rows, err := r.connPool.Query(ctx, openPaymentsQry, geth.chainID)
@@ -245,7 +246,7 @@ func (r *Relay) subscribeFilterLogsERC20Transfers(geth *ethClient) error {
 	defer rows.Close()
 	for rows.Next() {
 		var waiter PaymentWaiter
-		err := rows.Scan(&waiter.shopID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal, &waiter.erc20TokenAddr)
+		err := rows.Scan(&waiter.shopID, &waiter.orderID, &waiter.paymentChosenAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal, &waiter.erc20TokenAddr)
 		check(err)
 
 		erc20AddressSet[*waiter.erc20TokenAddr] = struct{}{}
@@ -375,11 +376,11 @@ func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
 
 	var waiters = make(map[common.Address]PaymentWaiter)
 
-	openPaymentsQry := `SELECT shopId, orderId, orderFinalizedAt, purchaseAddr, coinsTotal
+	openPaymentsQry := `SELECT shopId, orderId, paymentChosenAt, purchaseAddr, coinsTotal
 			FROM payments
-			WHERE orderPayedAt IS NULL
+			WHERE payedAt IS NULL
 				AND erc20TokenAddr IS NULL -- see watchErc20Payments()
-				AND orderFinalizedAt >= NOW() - INTERVAL '1 day'
+				AND paymentChosenAt >= NOW() - INTERVAL '1 day'
 		        AND chainId = $1
 		 ORDER BY lastBlockNo asc;`
 	rows, err := r.connPool.Query(ctx, openPaymentsQry, client.chainID)
@@ -387,7 +388,7 @@ func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
 	defer rows.Close()
 	for rows.Next() {
 		var waiter PaymentWaiter
-		err := rows.Scan(&waiter.shopID, &waiter.orderID, &waiter.orderFinalizedAt, &waiter.purchaseAddr, &waiter.coinsTotal)
+		err := rows.Scan(&waiter.shopID, &waiter.orderID, &waiter.paymentChosenAt, &waiter.purchaseAddr, &waiter.coinsTotal)
 		check(err)
 
 		waiters[waiter.purchaseAddr] = waiter
