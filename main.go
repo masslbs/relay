@@ -1812,7 +1812,7 @@ type Relay struct {
 
 	// caching layer
 	shopManifestsByShopID *ReductionLoader[*CachedShopManifest]
-	itemsByItemID         *ReductionLoader[*CachedListing]
+	listingsByListingID   *ReductionLoader[*CachedListing]
 	stockByShopID         *ReductionLoader[*CachedStock]
 	tagsByTagID           *ReductionLoader[*CachedTag]
 	ordersByOrderID       *ReductionLoader[*CachedOrder]
@@ -1855,7 +1855,7 @@ func newRelay(metric *Metric) *Relay {
 		}
 		return 0
 	}
-	r.itemsByItemID = newReductionLoader[*CachedListing](r, itemsFieldFn, []eventType{eventTypeListing, eventTypeUpdateListing}, "objectID")
+	r.listingsByListingID = newReductionLoader[*CachedListing](r, itemsFieldFn, []eventType{eventTypeListing, eventTypeUpdateListing}, "objectID")
 	r.stockByShopID = newReductionLoader[*CachedStock](r, shopFieldFn, []eventType{eventTypeChangeInventory}, "createdByShopId")
 	tagsFieldFn := func(evt *ShopEvent, meta CachedMetadata) uint64 {
 		switch tv := evt.Union.(type) {
@@ -2204,12 +2204,10 @@ func (r *Relay) writeEvent(evt *ShopEvent, cm CachedMetadata, abstract *SignedEv
 func (r *Relay) createRelayEvent(shopID shopID, event isShopEvent_Union) {
 	shopState := r.shopIdsToShopState.MustGet(shopID)
 	evt := &ShopEvent{
-		Nonce:  shopState.nextRelayEventNonce(),
-		ShopId: &shopState.shopTokenID,
-		Timestamp: &timestamppb.Timestamp{
-			Seconds: now().Unix(),
-		},
-		Union: event,
+		Nonce:     shopState.nextRelayEventNonce(),
+		ShopId:    &shopState.shopTokenID,
+		Timestamp: timestamppb.Now(),
+		Union:     event,
 	}
 
 	var sigEvt SignedEvent
@@ -2712,23 +2710,26 @@ func (op *EventWriteOp) process(r *Relay) {
 	r.beginSyncTransaction()
 	r.writeEvent(op.decodedShopEvt, meta, op.im.Events[0])
 
+	// post processing for side-effects
+	var err *Error
+	if ul := op.decodedShopEvt.GetUpdateListing(); ul != nil &&
+		(len(ul.RemoveVariations) > 0 || len(ul.RemoveOptions) > 0) {
+		err = r.processRemoveVariation(sessionID, ul)
+	}
 	if uo := op.decodedShopEvt.GetUpdateOrder(); uo != nil {
-		var err *Error
 		if ci := uo.GetCommitItems(); ci != nil {
 			err = r.processOrderItemsCommitment(sessionID, uo.Id)
 		}
 		if p := uo.GetChoosePayment(); p != nil {
 			err = r.processOrderPaymentChoice(sessionID, uo.Id, p)
 		}
-		if err != nil {
-			op.err = err
-			r.sendSessionOp(sessionState, op)
-			r.rollbackSyncTransaction()
-			return
-		}
-
 	}
-
+	if err != nil {
+		op.err = err
+		r.sendSessionOp(sessionState, op)
+		r.rollbackSyncTransaction()
+		return
+	}
 	r.commitSyncTransaction()
 
 	// compute resulting hash
@@ -2886,7 +2887,7 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 			return notFoundError
 		}
 		evt := tv.Listing
-		_, itemExists := r.itemsByItemID.get(evt.Id)
+		_, itemExists := r.listingsByListingID.get(evt.Id)
 		if itemExists {
 			return &Error{Code: ErrorCodes_INVALID, Message: "item already exists"}
 		}
@@ -2897,7 +2898,7 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 			return notFoundError
 		}
 		evt := tv.UpdateListing
-		item, itemExists := r.itemsByItemID.get(evt.Id)
+		item, itemExists := r.listingsByListingID.get(evt.Id)
 		if !itemExists {
 			return notFoundError
 		}
@@ -2946,7 +2947,7 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 		evt := tv.ChangeInventory
 		itemID := evt.Id
 		change := evt.Diff
-		item, itemExists := r.itemsByItemID.get(itemID)
+		item, itemExists := r.listingsByListingID.get(itemID)
 		if !itemExists {
 			return notFoundError
 		}
@@ -3008,7 +3009,7 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 			return notFoundError
 		}
 		for _, id := range evt.AddListingIds {
-			item, itemExists := r.itemsByItemID.get(id)
+			item, itemExists := r.listingsByListingID.get(id)
 			if !itemExists {
 				return notFoundError
 			}
@@ -3017,7 +3018,7 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 			}
 		}
 		for _, id := range evt.RemoveListingIds {
-			item, itemExists := r.itemsByItemID.get(id)
+			item, itemExists := r.listingsByListingID.get(id)
 			if !itemExists {
 				return notFoundError
 			}
@@ -3025,7 +3026,7 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 				return notFoundError
 			}
 		}
-		if d := evt.Delete; d != nil && *d == false {
+		if d := evt.Delete; d != nil && !*d {
 			return &Error{Code: ErrorCodes_INVALID, Message: "Can't undelete a tag"}
 		}
 
@@ -3064,7 +3065,7 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 			}
 			changes := NewMapInts[combinedID, int64]()
 			for _, item := range ci.Adds {
-				obj, itemExists := r.itemsByItemID.get(item.ListingId)
+				obj, itemExists := r.listingsByListingID.get(item.ListingId)
 				if !itemExists {
 					return notFoundError
 				}
@@ -3094,7 +3095,7 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 				changes.Set(sid, int64(item.Quantity))
 			}
 			for _, item := range ci.Removes {
-				obj, itemExists := r.itemsByItemID.get(item.ListingId)
+				obj, itemExists := r.listingsByListingID.get(item.ListingId)
 				if !itemExists {
 					return notFoundError
 				}
@@ -3116,7 +3117,7 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 				return &Error{Code: ErrorCodes_INVALID, Message: "order is empty"}
 			}
 			for _, stockID := range items {
-				_, has := r.itemsByItemID.get(stockID.listingID)
+				_, has := r.listingsByListingID.get(stockID.listingID)
 				if !has {
 					return notFoundError
 				}
@@ -3184,7 +3185,95 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 	return nil
 }
 
-var big100 = new(big.Int).SetInt64(100)
+// if we remove a variation from an unpayed order, we need to cancel open orders for it to avoid edge cases
+func (r *Relay) processRemoveVariation(sessionID sessionID, listingUpdate *UpdateListing) *Error {
+	ctx := context.Background()
+	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
+	listingID := listingUpdate.Id
+	listing, has := r.listingsByListingID.get(listingID)
+	assert(has)
+
+	// collect all variation IDs from both remove option(s) and remove variation(s)
+	variations := NewSetInts[uint64]()
+	for _, vid := range listingUpdate.RemoveVariations {
+		variations.Add(vid)
+	}
+	for _, optID := range listingUpdate.RemoveOptions {
+		for _, opt := range listing.value.Options {
+			if opt.Id == optID {
+				for _, variation := range opt.Variations {
+					variations.Add(variation.Id)
+				}
+			}
+		}
+	}
+
+	start := now()
+	logS(sessionID, "relay.removeVariation.process listing=%d variations=%v", listingID, variations)
+
+	otherOrderRows, err := r.syncTx.Query(ctx, `select orderId from payments
+where shopId = $1
+  and payedAt is null
+  and itemsLockedAt >= now() - interval '1 day'`, sessionState.shopID)
+	check(err)
+	defer otherOrderRows.Close()
+
+	otherOrderIds := NewMapInts[uint64, *CachedOrder]()
+	for otherOrderRows.Next() {
+		var otherOrderID uint64
+		check(otherOrderRows.Scan(&otherOrderID))
+		otherOrder, has := r.ordersByOrderID.get(otherOrderID)
+		assert(has)
+		otherOrderIds.Set(otherOrderID, otherOrder)
+	}
+	check(otherOrderRows.Err())
+
+	// see if any orders include this listing and variation
+	matchingOrders := NewSetInts[uint64]()
+	otherOrderIds.All(func(orderID uint64, order *CachedOrder) bool {
+		order.items.All(func(ci combinedID, u uint32) bool {
+			if ci.listingID == listingID {
+				for _, vid := range ci.Variations() {
+					if variations.Has(vid) {
+						matchingOrders.Add(orderID)
+						return true
+					}
+				}
+			}
+			return false
+		})
+		return false
+	})
+
+	if matchingOrders.Size() == 0 {
+		logS(sessionID, "relay.removeVariation.noMatchingOrders took=%d", took(start))
+		return nil
+	}
+
+	// cancel open orders
+	now := timestamppb.Now()
+	orderIDslice := matchingOrders.Slice()
+	const paymentsUpdateQry = `update payments set canceledAt=$3 where shopId=$1 and orderId=any($2)`
+	_, err = r.syncTx.Exec(ctx, paymentsUpdateQry, sessionState.shopID, orderIDslice, now.AsTime())
+	check(err)
+	for _, orderID := range orderIDslice {
+		r.createRelayEvent(sessionState.shopID,
+			&ShopEvent_UpdateOrder{
+				&UpdateOrder{
+					Id: orderID,
+					Action: &UpdateOrder_Canceled_{
+						&UpdateOrder_Canceled{
+							CanceldAt: now,
+						},
+					},
+				},
+			},
+		)
+	}
+
+	logS(sessionID, "relay.removeVariation.finish took=%d", took(start))
+	return nil
+}
 
 func (r *Relay) processOrderItemsCommitment(sessionID sessionID, orderID uint64) *Error {
 	ctx := context.Background()
@@ -3271,6 +3360,8 @@ where shopId = $1
 	return nil
 }
 
+var big100 = new(big.Int).SetInt64(100)
+
 func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID uint64, method *UpdateOrder_ChoosePaymentMethod) *Error {
 	ctx := context.Background()
 	//sessionState := r.sessionIDsToSessionStates.Get(sessionID)
@@ -3284,7 +3375,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID uint64, m
 		return &Error{Code: ErrorCodes_INVALID, Message: "internal error"}
 	}
 
-	// load realted data
+	// load related data
 	order, has := r.ordersByOrderID.get(orderID)
 	assert(has)
 
@@ -3358,7 +3449,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID uint64, m
 
 	// iterate over this order
 	order.items.All(func(cid combinedID, quantity uint32) bool {
-		item, has := r.itemsByItemID.get(cid.listingID)
+		item, has := r.listingsByListingID.get(cid.listingID)
 		if !has {
 			invalidErr = notFoundError
 			return true
@@ -4252,7 +4343,7 @@ func (r *Relay) memoryStats() {
 
 	r.metric.gaugeSet("relay_ops_queued", float64(len(r.ops)))
 
-	// r.metric.emit("relay_cached_items", uint64(r.itemsByItemID.loaded.Size()))
+	// r.metric.emit("relay_cached_items", uint64(r.listingsByListingID.loaded.Size()))
 	// r.metric.emit("relay_cached_orders", uint64(r.ordersByOrderID.loaded.Size()))
 
 	// Go runtime memory information
