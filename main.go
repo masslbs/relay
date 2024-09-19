@@ -48,8 +48,6 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"os/signal"
-	"syscall"
 )
 
 // Server configuration.
@@ -4881,15 +4879,6 @@ func main() {
 	cmd := os.Args[1]
 	cmdArgs := os.Args[2:]
 	if cmd == "server" && len(cmdArgs) == 0 {
-		// TODO: need clean shutdown for coverage reports
-		signalChan := make(chan os.Signal, 1)
-		signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
-		go func() {
-			for sig := range signalChan {
-				fmt.Printf("\nReceived signal: %s. Initiating shutdown...\n", sig)
-				os.Exit(0)
-			}
-		}()
 		server()
 	} else if cmd == "debug-obj" && len(cmdArgs) == 1 {
 		debugObject(cmdArgs[0])

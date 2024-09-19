@@ -216,9 +216,10 @@ func newListingSnapshotter(m *Metric, shopID shopID) (*listingSnapshotter, <-cha
 	}
 	ch := make(chan savedItem)
 	return &listingSnapshotter{
-		items:  ch,
+		metric: m,
 		client: c,
 		shopID: shopID,
+		items:  ch,
 	}, ch, nil
 }
 
@@ -259,7 +260,7 @@ func (ls *listingSnapshotter) save(cid combinedID, item *CachedListing) {
 }
 
 func (ls *listingSnapshotter) Wait() error {
-	err := ls.Wait()
+	err := ls.Group.Wait()
 	if err != nil {
 		return err
 	}
