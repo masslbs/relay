@@ -19,6 +19,7 @@ func TestCombinedID(t *testing.T) {
 		{},
 		{[]uint64{1}},
 		{[]uint64{1, 2, 3}},
+		{[]uint64{1, 3, 2}},
 	}
 
 	for _, tc := range tests {
