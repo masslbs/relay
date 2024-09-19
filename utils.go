@@ -6,6 +6,7 @@ package main
 
 import (
 	"database/sql/driver"
+	"encoding/binary"
 	"fmt"
 	"math/big"
 	"net/url"
@@ -327,6 +328,39 @@ func (bi *SQLStringBigInt) Scan(src interface{}) error {
 		bi.SetBytes(src)
 	default:
 		return fmt.Errorf("unsupported Scan source type: %T", src)
+	}
+	return nil
+}
+
+// SQLUint64 turns uint64 into big-endian byte array.
+// This circumvents a shortcomming of postgresql, which doesn't have native unsigned integer types.
+type SQLUint64 struct {
+	Uint uint64
+}
+
+func uint64ToBytes(v uint64) []byte {
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, v)
+	return buf
+}
+
+// Value implements the driver.Valuer interface
+func (ui SQLUint64) Value() (driver.Value, error) {
+	return uint64ToBytes(ui.Uint), nil
+}
+
+// Scan implements the sql.Scanner interface
+func (ui *SQLUint64) Scan(src interface{}) error {
+	switch tv := src.(type) {
+	case int64:
+		ui.Uint = uint64(tv)
+	case []byte:
+		if n := len(tv); n != 8 {
+			return fmt.Errorf("expected 8 bytes for uint64 but got %d", n)
+		}
+		ui.Uint = binary.BigEndian.Uint64(tv)
+	default:
+		return fmt.Errorf("unsupported Scan source type: %T", tv)
 	}
 	return nil
 }

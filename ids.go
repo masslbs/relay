@@ -16,8 +16,6 @@ import (
 
 type sessionID uint64
 
-type shopID uint64
-
 type keyCardID uint64
 
 type objectID uint64

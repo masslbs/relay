@@ -24,14 +24,13 @@ import (
 
 // PaymentWaiter is a struct that holds the state of a order that is waiting for payment.
 type PaymentWaiter struct {
-	shopID          shopID
-	orderID         uint64
+	shopID          SQLUint64
+	orderID         SQLUint64
 	itemsLockedAt   time.Time
 	paymentChosenAt time.Time
 	chainID         uint64
 	purchaseAddr    common.Address
 	lastBlockNo     SQLStringBigInt
-	coinsPayed      SQLStringBigInt
 	coinsTotal      SQLStringBigInt
 	paymentId       []byte
 
@@ -109,7 +108,7 @@ watch:
 			}
 
 			// check if we are serving this store
-			var dbShopID shopID
+			var dbShopID uint64
 			err = r.connPool.QueryRow(ctx, `select id from shops where tokenId = $1`, shopId.String()).Scan(&dbShopID)
 			if err == pgx.ErrNoRows {
 				continue watch // not for this relay
@@ -184,9 +183,8 @@ watch:
 			i++
 
 			var paymentIdHash = vLog.Topics[1]
-
 			var waiter PaymentWaiter
-			openPaymentsQry := `SELECT shopId, orderId, paymentChosenAt
+			const openPaymentsQry = `SELECT shopId, orderId, paymentChosenAt
 					FROM payments
 					WHERE
 					payedAt IS NULL
@@ -199,8 +197,7 @@ watch:
 			} else if err != nil {
 				check(err)
 			}
-
-			orderID := waiter.orderID
+			orderID := waiter.orderID.Uint
 			log("watcher.subscribeFilterLogsPaymentsMade.found orderId=%d txHash=%x", orderID, vLog.TxHash)
 
 			_, has := r.ordersByOrderID.get(orderID)
@@ -234,7 +231,7 @@ func (r *Relay) subscribeFilterLogsERC20Transfers(geth *ethClient) error {
 		erc20AddressSet = make(map[common.Address]struct{})
 	)
 
-	openPaymentsQry := `SELECT shopId, orderId, paymentChosenAt, purchaseAddr, lastBlockNo, coinsPayed, coinsTotal, erc20TokenAddr
+	openPaymentsQry := `SELECT shopId, orderId, paymentChosenAt, purchaseAddr, lastBlockNo, coinsTotal, erc20TokenAddr
 				FROM payments
 				WHERE payedAt IS NULL
 					AND erc20TokenAddr IS NOT NULL -- see subscribeFilterLogsERC20Transfers()
@@ -246,7 +243,8 @@ func (r *Relay) subscribeFilterLogsERC20Transfers(geth *ethClient) error {
 	defer rows.Close()
 	for rows.Next() {
 		var waiter PaymentWaiter
-		err := rows.Scan(&waiter.shopID, &waiter.orderID, &waiter.paymentChosenAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsPayed, &waiter.coinsTotal, &waiter.erc20TokenAddr)
+
+		err := rows.Scan(&waiter.shopID, &waiter.orderID, &waiter.paymentChosenAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsTotal, &waiter.erc20TokenAddr)
 		check(err)
 
 		erc20AddressSet[*waiter.erc20TokenAddr] = struct{}{}
@@ -315,7 +313,7 @@ watch:
 			waiter, has := waiters[toHash]
 			if has && waiter.erc20TokenAddr.Cmp(vLog.Address) == 0 {
 				// We found a transfer to our address!
-				orderID := waiter.orderID
+				orderID := waiter.orderID.Uint
 
 				_, has := r.ordersByOrderID.get(orderID)
 				assertWithMessage(has, fmt.Sprintf("order not found for orderId=%d", orderID))
@@ -330,8 +328,7 @@ watch:
 				assertWithMessage(ok, fmt.Sprintf("unexpected unpack result for field 0 - type=%T", evts[0]))
 				debug("watcher.subscribeFilterLogsERC20Transfers.foundTransfer orderId=%d from=%s to=%s amount=%s", orderID, fromHash.Hex(), toHash.Hex(), inTx.String())
 
-				waiter.coinsPayed.Add(&waiter.coinsPayed.Int, inTx)
-				if waiter.coinsPayed.Cmp(&waiter.coinsTotal.Int) != -1 {
+				if inTx.Cmp(&waiter.coinsTotal.Int) != -1 {
 					// it is larger or equal
 
 					op := PaymentFoundInternalOp{
@@ -345,14 +342,6 @@ watch:
 
 					delete(waiters, toHash)
 					log("watcher.subscribeFilterLogsERC20Transfers.completed orderId=%d", orderID)
-
-				} else {
-					// it is still smaller
-					log("watcher.subscribeFilterLogsERC20Transfers.partial orderId=%d inTx=%s subTotal=%s", orderID, inTx.String(), waiter.coinsPayed.String())
-					// update subtotal
-					const updateSubtotalQuery = `UPDATE payments SET coinsPayed = $1 WHERE orderId = $2;`
-					_, err = r.connPool.Exec(ctx, updateSubtotalQuery, waiter.coinsPayed, orderID)
-					check(err)
 				}
 			} else {
 				log("watcher.subscribeFilterLogsERC20Transfers.noWaiter inTx=%s", vLog.TxHash.Hex())
@@ -445,13 +434,13 @@ func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
 			}
 
 			debug("watcher.subscribeNewHeadsForEther.checkTx checkingBlock=%s to=%s", newHead.Hash().Hex(), addr.Hex())
-			orderID := waiter.orderID
+			orderID := waiter.orderID.Uint
 			_, has := r.ordersByOrderID.get(orderID)
 			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%d", orderID))
 
 			op := PaymentFoundInternalOp{
 				shopID:    waiter.shopID,
-				orderID:   orderID,
+				orderID:   waiter.orderID,
 				blockHash: &Hash{Raw: newHead.Hash().Bytes()},
 				done:      make(chan struct{}),
 			}
