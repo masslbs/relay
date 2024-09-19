@@ -204,11 +204,11 @@ type listingSnapshotter struct {
 
 	metric *Metric
 	client *ipfsRpc.HttpApi
-	shopID shopID
+	shopID ObjectIdArray
 	items  chan<- savedItem
 }
 
-func newListingSnapshotter(m *Metric, shopID shopID) (*listingSnapshotter, <-chan savedItem, error) {
+func newListingSnapshotter(m *Metric, shopID ObjectIdArray) (*listingSnapshotter, <-chan savedItem, error) {
 	ctx := context.Background()
 	c, err := getIpfsClient(ctx, 0, nil)
 	if err != nil {
@@ -231,22 +231,22 @@ func (ls *listingSnapshotter) save(cid combinedID, item *CachedListing) {
 	ls.Go(func() error {
 		data, err := proto.Marshal(item.value)
 		if err != nil {
-			return fmt.Errorf("mkSnapshot.encodeError item_id=%d err=%s", item.value.Id, err)
+			return fmt.Errorf("mkSnapshot.encodeError item_id=%x err=%s", item.value.Id.Raw, err)
 		}
 
 		uploadHandle := ipfsFiles.NewReaderFile(bytes.NewReader(data))
 
 		uploadedCid, err := ls.client.Unixfs().Add(ctx, uploadHandle)
 		if err != nil {
-			return fmt.Errorf("mkSnapshot.ipfsAddError item=%d err=%s", item.value.Id, err)
+			return fmt.Errorf("mkSnapshot.ipfsAddError item=%x err=%s", item.value.Id.Raw, err)
 		}
 
 		// TODO: wait with pinning until after the item was sold..?
-		pinKey := fmt.Sprintf("shop-%d-item-%d-%d", ls.shopID, item.value.Id, item.shopSeq)
+		pinKey := fmt.Sprintf("shop-%x-item-%d-%d", ls.shopID, item.value.Id.Raw, item.shopSeq)
 		if !isDevEnv {
 			_, err = pinataPin(uploadedCid, pinKey)
 			if err != nil {
-				return fmt.Errorf("mkSnapshot.pinataFail item=%d err=%s", item.value.Id, err)
+				return fmt.Errorf("mkSnapshot.pinataFail item=%x err=%s", item.value.Id.Raw, err)
 			}
 		}
 
