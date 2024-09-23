@@ -1335,6 +1335,9 @@ func newMetadata(keyCardID keyCardID, shopID shopID, version uint16) CachedMetad
 	return metadata
 }
 
+// TODO: move
+
+// comparable type, usable for map keys
 type cachedShopCurrency struct {
 	Addr    common.Address
 	ChainID uint64
@@ -1355,10 +1358,13 @@ func (a cachedShopCurrency) Equal(b cachedShopCurrency) bool {
 
 type cachedCurrenciesMap map[cachedShopCurrency]struct{}
 
+// </move>
+
 // CachedShopManifest is latest reduction of a ShopManifest.
 // It combines the intial ShopManifest and all UpdateShopManifests
 type CachedShopManifest struct {
 	CachedMetadata
+	init sync.Once
 
 	shopTokenID        []byte
 	payees             map[string]*Payee
@@ -1366,8 +1372,6 @@ type CachedShopManifest struct {
 	pricingCurrency    cachedShopCurrency
 	shippingRegions    map[string]*ShippingRegion
 	orderModifiers     map[uint64]*OrderPriceModifier
-
-	init sync.Once
 }
 
 func (current *CachedShopManifest) update(union *ShopEvent, meta CachedMetadata) {
@@ -1456,7 +1460,7 @@ func (current *CachedShopManifest) update(union *ShopEvent, meta CachedMetadata)
 // It combines the initial CreateItem and all UpdateItems
 type CachedListing struct {
 	CachedMetadata
-	inited bool
+	init sync.Once
 
 	value *Listing
 
@@ -1466,15 +1470,15 @@ type CachedListing struct {
 }
 
 func (current *CachedListing) update(union *ShopEvent, meta CachedMetadata) {
+	current.init.Do(func() {
+		current.options = make(map[uint64]map[uint64]*ListingVariation)
+
+	})
 	switch tv := union.Union.(type) {
 	case *ShopEvent_Listing:
-		assert(!current.inited)
 		current.CachedMetadata = meta
 		current.value = tv.Listing
-		current.options = make(map[uint64]map[uint64]*ListingVariation)
-		current.inited = true
 	case *ShopEvent_UpdateListing:
-		assert(current.inited)
 		current.CachedMetadata = meta
 		ui := tv.UpdateListing
 		if p := ui.Price; p != nil {
@@ -1564,7 +1568,7 @@ func (current *CachedListing) update(union *ShopEvent, meta CachedMetadata) {
 // It combines the initial CreateTag and all AddToTag, RemoveFromTag, RenameTag, and DeleteTag
 type CachedTag struct {
 	CachedMetadata
-	inited bool
+	init sync.Once
 
 	tagID   uint64
 	name    string
@@ -1573,19 +1577,16 @@ type CachedTag struct {
 }
 
 func (current *CachedTag) update(evt *ShopEvent, meta CachedMetadata) {
-	if current.items == nil && !current.inited {
+	current.init.Do(func() {
 		current.items = NewSetInts[uint64]()
-	}
+	})
 	switch evt.Union.(type) {
 	case *ShopEvent_Tag:
-		assert(!current.inited)
 		current.CachedMetadata = meta
 		ct := evt.GetTag()
 		current.name = ct.Name
 		current.tagID = ct.Id
-		current.inited = true
 	case *ShopEvent_UpdateTag:
-		assert(current.items != nil)
 		ut := evt.GetUpdateTag()
 		for _, id := range ut.AddListingIds {
 			current.items.Add(id)
@@ -1608,7 +1609,7 @@ func (current *CachedTag) update(evt *ShopEvent, meta CachedMetadata) {
 // It combines the initial CreateOrder and all ChangeOrder events
 type CachedOrder struct {
 	CachedMetadata
-	inited bool
+	init sync.Once
 
 	order Order
 
@@ -1617,20 +1618,17 @@ type CachedOrder struct {
 }
 
 func (current *CachedOrder) update(evt *ShopEvent, meta CachedMetadata) {
-	if current.items == nil && !current.inited {
+	current.init.Do(func() {
 		current.items = NewMapInts[combinedID, uint32]()
-	}
+	})
 	switch msg := evt.Union.(type) {
 	case *ShopEvent_CreateOrder:
-		assert(!current.inited)
 		ct := msg.CreateOrder
 		current.CachedMetadata = meta
 		current.order.Id = ct.Id
 		current.order.State = Order_STATE_OPEN
-		current.inited = true
 	case *ShopEvent_UpdateOrder:
 		uo := msg.UpdateOrder
-
 		switch action := uo.Action.(type) {
 		case *UpdateOrder_ChangeItems_:
 			ci := action.ChangeItems
@@ -1672,10 +1670,12 @@ func (current *CachedOrder) update(evt *ShopEvent, meta CachedMetadata) {
 	}
 }
 
-// CachedStock is the latest reduction of a Shop's stock.
+// Cachedstock is the latest reduction of a Shop's stock.
 // It combines all ChangeStock events
 type CachedStock struct {
 	CachedMetadata
+
+	init sync.Once
 
 	inventory *MapInts[combinedID, int32]
 }
@@ -1685,10 +1685,9 @@ func (current *CachedStock) update(evt *ShopEvent, _ CachedMetadata) {
 	if cs == nil {
 		return
 	}
-	if current.inventory == nil {
+	current.init.Do(func() {
 		current.inventory = NewMapInts[combinedID, int32]()
-	}
-
+	})
 	cid := newCombinedID(cs.Id, cs.VariationIds...)
 	stock := current.inventory.Get(cid)
 	stock += cs.Diff
@@ -1785,12 +1784,17 @@ func newRelay(metric *Metric) *Relay {
 	r.ops = make(chan RelayOp, databaseOpsChanSize)
 	r.shopIdsToShopState = NewMapInts[shopID, *ShopState]()
 
-	shopFieldFn := func(evt *ShopEvent, meta CachedMetadata) uint64 {
+	shopFieldFn := func(_ *ShopEvent, meta CachedMetadata) uint64 {
 		return uint64(meta.createdByShopID)
 	}
-	r.shopManifestsByShopID = newReductionLoader[*CachedShopManifest](r, shopFieldFn, []eventType{eventTypeManifest, eventTypeUpdateManifest, eventTypeAccount}, "createdByShopId")
+	r.shopManifestsByShopID = newReductionLoader[*CachedShopManifest](r, shopFieldFn, []eventType{
+		eventTypeManifest,
+		eventTypeUpdateManifest,
+		eventTypeAccount,
+	}, "createdByShopId")
+	r.stockByShopID = newReductionLoader[*CachedStock](r, shopFieldFn, []eventType{eventTypeChangeInventory}, "createdByShopId")
 
-	itemsFieldFn := func(evt *ShopEvent, meta CachedMetadata) uint64 {
+	itemsFieldFn := func(evt *ShopEvent, _ CachedMetadata) uint64 {
 		switch tv := evt.Union.(type) {
 		case *ShopEvent_Listing:
 			return tv.Listing.Id
@@ -1799,9 +1803,12 @@ func newRelay(metric *Metric) *Relay {
 		}
 		return 0
 	}
-	r.listingsByListingID = newReductionLoader[*CachedListing](r, itemsFieldFn, []eventType{eventTypeListing, eventTypeUpdateListing}, "objectID")
-	r.stockByShopID = newReductionLoader[*CachedStock](r, shopFieldFn, []eventType{eventTypeChangeInventory}, "createdByShopId")
-	tagsFieldFn := func(evt *ShopEvent, meta CachedMetadata) uint64 {
+	r.listingsByListingID = newReductionLoader[*CachedListing](r, itemsFieldFn, []eventType{
+		eventTypeListing,
+		eventTypeUpdateListing,
+	}, "objectID")
+
+	tagsFieldFn := func(evt *ShopEvent, _ CachedMetadata) uint64 {
 		switch tv := evt.Union.(type) {
 		case *ShopEvent_Tag:
 			return tv.Tag.Id
@@ -1815,7 +1822,7 @@ func newRelay(metric *Metric) *Relay {
 		eventTypeUpdateTag,
 	}, "objectID")
 
-	ordersFieldFn := func(evt *ShopEvent, meta CachedMetadata) uint64 {
+	ordersFieldFn := func(evt *ShopEvent, _ CachedMetadata) uint64 {
 		switch tv := evt.Union.(type) {
 		case *ShopEvent_CreateOrder:
 			return tv.CreateOrder.Id
