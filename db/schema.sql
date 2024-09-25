@@ -12,15 +12,15 @@ create table shops (
 
 -- TODO: document why keyCards and relayKeyCards use the same sequence
 -- in short, we need unique values for events.createdByKeyCardId
--- alternativly we could might might keyCards polymorphic
+-- alternativly we could might make keyCards polymorphic
 
 CREATE SEQUENCE keyCard_id_seq START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
 
 create table keyCards (
-    id integer DEFAULT nextval('keyCard_id_seq') PRIMARY KEY,
+    id bigint DEFAULT nextval('keyCard_id_seq') PRIMARY KEY,
     cardPublicKey bytea NOT NULL,
     userWalletAddr bytea NOT NULL,
-    shopId integer NOT NULL,
+    shopId bigint NOT NULL,
     linkedAt timestamptz NOT NULL,
     unlinkedAt timestamptz,
     lastAckedSeq bigint NOT NULL,
@@ -33,8 +33,8 @@ create index keyCardsOnUserId on keyCards(userWalletAddr);
 create index keyCardsOnShopId on keyCards(shopId);
 
 create table relayKeyCards (
-    id integer DEFAULT nextval('keyCard_id_seq') PRIMARY KEY,
-    shopId integer NOT NULL,
+    id bigint DEFAULT nextval('keyCard_id_seq') PRIMARY KEY,
+    shopId bigint NOT NULL,
     cardPublicKey bytea NOT NULL,
     lastUsedAt timestamptz NOT NULL,
     lastWrittenEventNonce bigint NOT NULL

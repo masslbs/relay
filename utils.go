@@ -6,7 +6,6 @@ package main
 
 import (
 	"database/sql/driver"
-	"encoding/binary"
 	"fmt"
 	"math/big"
 	"net/url"
@@ -77,20 +76,29 @@ func assertNonemptyString(s string) {
 	assertWithMessage(s != "", "string was empty")
 }
 
-func validateObjectID(x uint64, field string) *Error {
-	if x == 0 {
-		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` must be a non-zero objectId", field)}
+func validateObjectID(x *ObjectId, field string) *Error {
+	if x == nil {
+		return &Error{
+			Code:    ErrorCodes_INVALID,
+			Message: fmt.Sprintf("Field `%s` must be a non-zero objectId", field),
+		}
 	}
-	return nil
+	return validateBytes(x.Raw, field+".id", 8)
 }
 
 func validateString(s string, field string, maxLength int) *Error {
 	if s == "" {
-		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` must be a non-empty string", field)}
+		return &Error{
+			Code:    ErrorCodes_INVALID,
+			Message: fmt.Sprintf("Field `%s` must be a non-empty string", field),
+		}
 	}
 	runeCount := utf8.RuneCountInString(s)
 	if runeCount > maxLength {
-		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` must be no more than %d characters, got %d", field, maxLength, runeCount)}
+		return &Error{
+			Code:    ErrorCodes_INVALID,
+			Message: fmt.Sprintf("Field `%s` must be no more than %d characters, got %d", field, maxLength, runeCount),
+		}
 	}
 	return nil
 }
@@ -102,7 +110,20 @@ const (
 
 func validateBytes(val []byte, field string, want uint) *Error {
 	if n := len(val); uint(n) != want {
-		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` must have correct amount of bytes, got %d", field, n)}
+		return &Error{
+			Code:    ErrorCodes_INVALID,
+			Message: fmt.Sprintf("Field `%s` must have correct amount of bytes, got %d", field, n),
+		}
+	}
+	return nil
+}
+
+func validateChainID(val uint64, field string) *Error {
+	if val == 0 {
+		return &Error{
+			Code:    ErrorCodes_INVALID,
+			Message: fmt.Sprintf("Field `%s` must be a valid chainID, not 0", field)}
+
 	}
 	return nil
 }
@@ -111,7 +132,7 @@ func (payee *Payee) validate(field string) *Error {
 	return coalesce(
 		validateString(payee.Name, field+".name", 128),
 		payee.Address.validate(field+".address"),
-		validateObjectID(payee.ChainId, field+".chain_id"),
+		validateChainID(payee.ChainId, field+".chain_id"),
 	)
 }
 
@@ -126,7 +147,7 @@ func (sig *Signature) validate() *Error {
 func (curr *ShopCurrency) validate(field string) *Error {
 	return coalesce(
 		curr.Address.validate(field+".address"),
-		validateObjectID(curr.ChainId, field+".chain_id"),
+		validateChainID(curr.ChainId, field+".chain_id"),
 	)
 }
 
@@ -191,10 +212,8 @@ func (region *ShippingRegion) validate(field string) *Error {
 		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + ": country and postal_code need to be set if city is"})
 	}
 	for i, id := range region.OrderPriceModifierIds {
-		if id == 0 {
-			idField := field + fmt.Sprintf(".order_price_modifier_id[%d]", i)
-			errs = append(errs, validateObjectID(id, idField))
-		}
+		idField := field + fmt.Sprintf(".order_price_modifier_id[%d]", i)
+		errs = append(errs, validateObjectID(id, idField))
 	}
 	return coalesce(errs...)
 }
@@ -328,39 +347,6 @@ func (bi *SQLStringBigInt) Scan(src interface{}) error {
 		bi.SetBytes(src)
 	default:
 		return fmt.Errorf("unsupported Scan source type: %T", src)
-	}
-	return nil
-}
-
-// SQLUint64 turns uint64 into big-endian byte array.
-// This circumvents a shortcomming of postgresql, which doesn't have native unsigned integer types.
-type SQLUint64 struct {
-	Uint uint64
-}
-
-func uint64ToBytes(v uint64) []byte {
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, v)
-	return buf
-}
-
-// Value implements the driver.Valuer interface
-func (ui SQLUint64) Value() (driver.Value, error) {
-	return uint64ToBytes(ui.Uint), nil
-}
-
-// Scan implements the sql.Scanner interface
-func (ui *SQLUint64) Scan(src interface{}) error {
-	switch tv := src.(type) {
-	case int64:
-		ui.Uint = uint64(tv)
-	case []byte:
-		if n := len(tv); n != 8 {
-			return fmt.Errorf("expected 8 bytes for uint64 but got %d", n)
-		}
-		ui.Uint = binary.BigEndian.Uint64(tv)
-	default:
-		return fmt.Errorf("unsupported Scan source type: %T", tv)
 	}
 	return nil
 }
