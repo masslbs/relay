@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from massmarket-network-schema:network/encoding.txt at network v3 (deb2be339b014b895cd0c0730832e60bede51508)
+// Generated from massmarket-network-schema:network/encoding.txt at network v3 (2125585d9649f1fb04379972d958345b093d4da4)
 //lint:file-ignore U1000 Ignore all unused code, it's generated
 
 package main

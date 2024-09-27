@@ -1,4 +1,4 @@
-// Generated from /nix/store/rbydwlvy20nmcr9x1sd90dwwyizjqimy-source/network-schema/envelope.proto at version v3 (deb2be339b014b895cd0c0730832e60bede51508)
+// Generated from /nix/store/bn2ryxvkqfscbxd85hakdz0nvahnzp00-source/network-schema/envelope.proto at version v3 (2125585d9649f1fb04379972d958345b093d4da4)
 
 // SPDX-FileCopyrightText: 2023 - 2024 Mass Labs
 //
