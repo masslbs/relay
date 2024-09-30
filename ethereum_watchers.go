@@ -213,10 +213,11 @@ watch:
 			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%x", orderID))
 
 			op := PaymentFoundInternalOp{
-				shopID:  waiter.shopID,
-				orderID: waiter.orderID,
-				txHash:  &Hash{Raw: vLog.TxHash.Bytes()},
-				done:    make(chan struct{}),
+				shopID:    waiter.shopID,
+				orderID:   waiter.orderID,
+				txHash:    &Hash{Raw: vLog.TxHash.Bytes()},
+				blockHash: &Hash{Raw: vLog.BlockHash.Bytes()},
+				done:      make(chan struct{}),
 			}
 			r.opsInternal <- &op
 			<-op.done // block until op was processed by server loop
@@ -346,10 +347,11 @@ watch:
 					// it is larger or equal
 
 					op := PaymentFoundInternalOp{
-						shopID:  waiter.shopID,
-						orderID: waiter.orderID,
-						txHash:  &Hash{Raw: vLog.TxHash.Bytes()},
-						done:    make(chan struct{}),
+						shopID:    waiter.shopID,
+						orderID:   waiter.orderID,
+						txHash:    &Hash{Raw: vLog.TxHash.Bytes()},
+						blockHash: &Hash{Raw: vLog.BlockHash.Bytes()},
+						done:      make(chan struct{}),
 					}
 					r.opsInternal <- &op
 					<-op.done

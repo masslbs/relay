@@ -13,7 +13,7 @@
     contracts.url = "github:masslbs/contracts";
     contracts.inputs.nixpkgs.follows = "nixpkgs";
     schema = {
-      url = "github:masslbs/network-schema/v3.2-alpha4";
+      url = "github:masslbs/network-schema/v3.2-alpha5";
       flake = false;
     };
   };

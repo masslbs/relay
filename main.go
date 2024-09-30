@@ -1064,29 +1064,23 @@ func validateUpdateOrder(v uint, event *UpdateOrder) *Error {
 				errs = append(errs, validateObjectID(v, fmt.Sprintf("change_items.removes[%d].variation[%d]", i, j)))
 			}
 		}
-	case *UpdateOrder_Canceled_:
-		errs = append(errs, validateOrderCanceled(v, tv.Canceled))
-	case *UpdateOrder_InvoiceAddress:
-		errs = append(errs, validateUpdateShippingDetails(v, tv.InvoiceAddress))
-	case *UpdateOrder_ShippingAddress:
-		errs = append(errs, validateUpdateShippingDetails(v, tv.ShippingAddress))
+	case *UpdateOrder_Cancel_:
+		errs = append(errs, validateOrderCancel(v, tv.Cancel))
+	case *UpdateOrder_SetInvoiceAddress:
+		errs = append(errs, validateUpdateShippingDetails(v, tv.SetInvoiceAddress))
+	case *UpdateOrder_SetShippingAddress:
+		errs = append(errs, validateUpdateShippingDetails(v, tv.SetShippingAddress))
 	case *UpdateOrder_CommitItems_:
 		// noop
 	case *UpdateOrder_ChoosePayment:
 		errs = append(errs, validateUpdateOrderPaymentMenthod(v, tv.ChoosePayment))
-	case *UpdateOrder_PaymentDetails:
-		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "PaymentDetails can not bet written in EventWriteRequest"})
+	case *UpdateOrder_SetPaymentDetails:
+		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "PaymentDetails can only be created by relays"})
 	}
 	return coalesce(errs...)
 }
 
-func validateOrderCanceled(_ uint, event *UpdateOrder_Canceled) *Error {
-	if event.CanceldAt == nil {
-		return &Error{Code: ErrorCodes_INVALID, Message: "timestamp can't be unset"}
-	}
-	if event.CanceldAt.Seconds == 0 {
-		return &Error{Code: ErrorCodes_INVALID, Message: "timestamp can't be 0"}
-	}
+func validateOrderCancel(_ uint, event *UpdateOrder_Cancel) *Error {
 	return nil
 }
 
@@ -1140,6 +1134,12 @@ func (im *EventWriteRequest) validate(version uint) *Error {
 	}
 	if decodedEvt.Nonce == 0 {
 		return &Error{Code: ErrorCodes_INVALID, Message: "missing nonce on shopEvent"}
+	}
+	if decodedEvt.Timestamp == nil {
+		return &Error{Code: ErrorCodes_INVALID, Message: "timestamp can't be unset"}
+	}
+	if decodedEvt.Timestamp.Seconds == 0 {
+		return &Error{Code: ErrorCodes_INVALID, Message: "timestamp can't be 0"}
 	}
 	var err *Error
 	switch union := decodedEvt.Union.(type) {
@@ -1625,7 +1625,6 @@ func (current *CachedOrder) update(evt *ShopEvent, meta CachedMetadata) {
 		ct := msg.CreateOrder
 		current.CachedMetadata = meta
 		current.order.Id = ct.Id
-		current.order.State = Order_STATE_OPEN
 	case *ShopEvent_UpdateOrder:
 		uo := msg.UpdateOrder
 		switch action := uo.Action.(type) {
@@ -1648,20 +1647,23 @@ func (current *CachedOrder) update(evt *ShopEvent, meta CachedMetadata) {
 				current.items.Set(sid, count)
 			}
 		case *UpdateOrder_CommitItems_:
-			current.order.State = Order_STATE_COMMITED
-		case *UpdateOrder_InvoiceAddress:
-			current.order.InvoiceAddress = action.InvoiceAddress
-		case *UpdateOrder_ShippingAddress:
-			current.order.ShippingAddress = action.ShippingAddress
-		case *UpdateOrder_PaymentDetails:
-			fin := action.PaymentDetails
+			current.order.CommitedAt = evt.Timestamp
+		case *UpdateOrder_SetInvoiceAddress:
+			current.order.InvoiceAddress = action.SetInvoiceAddress
+			current.order.AddressUpdatedAt = evt.Timestamp
+		case *UpdateOrder_SetShippingAddress:
+			current.order.ShippingAddress = action.SetShippingAddress
+			current.order.AddressUpdatedAt = evt.Timestamp
+		case *UpdateOrder_SetPaymentDetails:
+			fin := action.SetPaymentDetails
 			current.paymentId = fin.PaymentId.Raw
-			current.order.State = Order_STATE_UNPAID
-		case *UpdateOrder_Canceled_:
-			current.order.State = Order_STATE_CANCELED
-		case *UpdateOrder_Paid:
-			current.order.State = Order_STATE_PAID
-			current.order.Paid = action.Paid
+			current.order.PaymentDetailsCreatedAt = evt.Timestamp
+		case *UpdateOrder_Cancel_:
+			current.order.CanceledAt = evt.Timestamp
+		case *UpdateOrder_AddWittnessedTx:
+			current.order.WittnessedTransactions = append(current.order.WittnessedTransactions, action.AddWittnessedTx)
+		case *UpdateOrder_SetMerchantNotes:
+			current.order.MerchantNotes = action.SetMerchantNotes
 		}
 	default:
 		panic(fmt.Sprintf("unhandled event type: %T", evt.Union))
@@ -3071,7 +3073,7 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 		switch act := evt.Action.(type) {
 		case *UpdateOrder_ChangeItems_:
 			ci := act.ChangeItems
-			if order.order.State >= Order_STATE_COMMITED {
+			if order.order.CommitedAt != nil {
 				return &Error{Code: ErrorCodes_INVALID, Message: "order already finalized"}
 			}
 			changes := NewMapInts[combinedID, int64]()
@@ -3142,19 +3144,19 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 				}
 			}
 
-		case *UpdateOrder_InvoiceAddress:
+		case *UpdateOrder_SetInvoiceAddress:
 			// noop
 
-		case *UpdateOrder_ShippingAddress:
+		case *UpdateOrder_SetShippingAddress:
 			// noop
 
-		case *UpdateOrder_Canceled_:
-			if order.order.State < Order_STATE_COMMITED {
-				return &Error{Code: ErrorCodes_INVALID, Message: "order is not finalized"}
+		case *UpdateOrder_Cancel_:
+			if order.order.CommitedAt == nil {
+				return &Error{Code: ErrorCodes_INVALID, Message: "order is not yet commited"}
 			}
 
 		case *UpdateOrder_ChoosePayment:
-			if order.order.State != Order_STATE_COMMITED {
+			if order.order.CommitedAt == nil {
 				return &Error{Code: ErrorCodes_INVALID, Message: "order is not yet commited"}
 			}
 			if order.order.ShippingAddress == nil && order.order.InvoiceAddress == nil {
@@ -3279,10 +3281,8 @@ where shopId = $1
 			&ShopEvent_UpdateOrder{
 				&UpdateOrder{
 					Id: &ObjectId{Raw: orderID[:]},
-					Action: &UpdateOrder_Canceled_{
-						&UpdateOrder_Canceled{
-							CanceldAt: now,
-						},
+					Action: &UpdateOrder_Cancel_{
+						&UpdateOrder_Cancel{},
 					},
 				},
 			},
@@ -3339,7 +3339,7 @@ where shopId = $1
 	// for convenience, sum up all items in the other orders
 	otherOrderItemQuantities := NewMapInts[combinedID, uint32]()
 	otherOrderIds.All(func(_ ObjectIdArray, order *CachedOrder) bool {
-		if order.order.State == Order_STATE_CANCELED {
+		if order.order.CanceledAt != nil { // skip canceled orders
 			return false
 		}
 		order.items.All(func(stockID combinedID, quantity uint32) bool {
@@ -3621,7 +3621,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIdA
 		&ShopEvent_UpdateOrder{
 			&UpdateOrder{
 				Id:     &ObjectId{Raw: orderID[:]},
-				Action: &UpdateOrder_PaymentDetails{&fin},
+				Action: &UpdateOrder_SetPaymentDetails{&fin},
 			},
 		})
 
@@ -4059,6 +4059,8 @@ func (op *PaymentFoundInternalOp) process(r *Relay) {
 	assert(!shopID.Equal(zeroObjectIdArr))
 	orderID := op.orderID
 	assert(!orderID.Equal(zeroObjectIdArr))
+	assert(op.blockHash != nil)
+
 	log("db.paymentFoundInternalOp.start shopID=%x orderID=%x", shopID, orderID)
 	start := now()
 
@@ -4067,15 +4069,14 @@ func (op *PaymentFoundInternalOp) process(r *Relay) {
 
 	r.beginSyncTransaction()
 
-	paid := &OrderPaid{}
-	var txHash, blockHash *[]byte
-	if t := op.txHash; t != nil {
+	paid := &OrderTransaction{
+		BlockHash: op.blockHash,
+	}
+	var txHash, blockHash *[]byte // for sql
+	blockHash = &op.blockHash.Raw
+	if t := op.txHash; t != nil { // we only get the tx hash for non-internal tx's
 		paid.TxHash = t
 		txHash = &t.Raw
-	}
-	if b := op.blockHash; b != nil {
-		paid.BlockHash = b
-		blockHash = &b.Raw
 	}
 
 	const markOrderAsPayedQuery = `UPDATE payments SET
@@ -4110,7 +4111,7 @@ WHERE shopID = $3 and orderId = $4;`
 		&ShopEvent_UpdateOrder{
 			&UpdateOrder{
 				Id: &ObjectId{Raw: orderID[:]},
-				Action: &UpdateOrder_Paid{
+				Action: &UpdateOrder_AddWittnessedTx{
 					paid,
 				},
 			},
