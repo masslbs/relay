@@ -4678,6 +4678,7 @@ func healthHandleFunc(r *Relay) func(http.ResponseWriter, *http.Request) {
 		start := now()
 		log("relay.health.start")
 		ctx := context.Background()
+
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		var res int
@@ -4691,11 +4692,13 @@ func healthHandleFunc(r *Relay) func(http.ResponseWriter, *http.Request) {
 		}
 		// log("relay.health.dbs.pass")
 
+		timeout := time.After(5 * time.Second)
 		wait, op := NewEventLoopPing()
+
 		select {
 		case r.opsInternal <- op:
 			// pass
-		default:
+		case <-timeout:
 			log("relay.health.evtLoop.txFail")
 			w.WriteHeader(500)
 			r.metric.httpStatusCodes.WithLabelValues("500", req.URL.Path).Inc()
@@ -4705,7 +4708,7 @@ func healthHandleFunc(r *Relay) func(http.ResponseWriter, *http.Request) {
 		// log("relay.health.evtLoop.txPass")
 
 		select {
-		case <-time.After(5 * time.Second):
+		case <-timeout:
 			log("relay.health.evtLoop.rxTimeout")
 			w.WriteHeader(500)
 			r.metric.httpStatusCodes.WithLabelValues("500", req.URL.Path).Inc()
