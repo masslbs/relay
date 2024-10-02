@@ -48,6 +48,8 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/masslbs/relay/internal/contractabis"
 )
 
 // Server configuration.
@@ -3526,7 +3528,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIdA
 		return &Error{Code: ErrorCodes_INVALID, Message: "failed to get block by number"}
 	}
 
-	var pr = PaymentRequest{}
+	var pr = contractsabi.PaymentRequest{}
 	pr.ChainId = new(big.Int).SetUint64(method.Payee.ChainId)
 	pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
 	pr.Order = orderHash

@@ -33,6 +33,8 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	ethlog "github.com/ethereum/go-ethereum/log"
 	"github.com/ssgreg/repeat"
+
+	"github.com/masslbs/relay/internal/contractabis"
 )
 
 // EthLookp represents an internal ethereum operation,
@@ -226,7 +228,7 @@ func (lookup *erc20MetadataEthLookup) process(client *ethClient) {
 		Context: context.Background(),
 	}
 
-	tokenCaller, err := NewERC20Caller(lookup.tokenAddr, rpc)
+	tokenCaller, err := contractsabi.NewERC20Caller(lookup.tokenAddr, rpc)
 	if err != nil {
 		lookup.closeWithError(fmt.Errorf("newERC20Caller failed: %w", err))
 		return
@@ -335,7 +337,7 @@ func (lookup *ownerOfShopEthLookup) process(client *ethClient) {
 	}
 
 	// owner
-	shopReg, err := NewRegShopCaller(client.contractAddresses.ShopRegistry, rpc)
+	shopReg, err := contractsabi.NewRegShopCaller(client.contractAddresses.ShopRegistry, rpc)
 	if err != nil {
 		lookup.closeWithError(fmt.Errorf("failed to create shop registry caller: %w", err))
 		return
@@ -407,7 +409,7 @@ func (lookup *clerkHasAccessEthLookup) process(client *ethClient) {
 		Context: context.Background(),
 	}
 
-	shopReg, err := NewRegShopCaller(client.contractAddresses.ShopRegistry, rpc)
+	shopReg, err := contractsabi.NewRegShopCaller(client.contractAddresses.ShopRegistry, rpc)
 	if err != nil {
 		err = fmt.Errorf("failed to create shop registry caller: %w", err)
 		lookup.closeWithError(err)
@@ -557,7 +559,7 @@ func (rpc *ethRPCService) GetBlockByNumber(chainID uint64, blockNum *big.Int) (*
 
 type paymentIDandAddressEthLookup struct {
 	chainID    uint64
-	paymentReq *PaymentRequest
+	paymentReq *contractsabi.PaymentRequest
 	fallback   common.Address
 
 	resultID   []byte
@@ -587,7 +589,7 @@ func (lookup *paymentIDandAddressEthLookup) process(client *ethClient) {
 	}
 
 	// get paymentId and create fallback address
-	paymentsContract, err := NewPaymentsByAddressCaller(client.contractAddresses.Payments, rpc)
+	paymentsContract, err := contractsabi.NewPaymentsByAddressCaller(client.contractAddresses.Payments, rpc)
 	if err != nil {
 		lookup.closeWithError(fmt.Errorf("failed to instantiate contract helper: %w", err))
 		return
@@ -612,7 +614,7 @@ func (lookup *paymentIDandAddressEthLookup) process(client *ethClient) {
 	return
 }
 
-func (rpc *ethRPCService) GetPaymentIDAndAddress(chainID uint64, pr *PaymentRequest, fallback common.Address) ([]byte, common.Address, error) {
+func (rpc *ethRPCService) GetPaymentIDAndAddress(chainID uint64, pr *contractsabi.PaymentRequest, fallback common.Address) ([]byte, common.Address, error) {
 	lookup := &paymentIDandAddressEthLookup{
 		chainID:    chainID,
 		paymentReq: pr,
@@ -657,7 +659,7 @@ type ethClient struct {
 	keyPair *ethKeyPair
 }
 
-//go:embed gen_contract_addresses.json
+//go:embed internal/contractabis/gen_contract_addresses.json
 var genContractAddresses embed.FS
 
 func newEthClient(kp *ethKeyPair, chainID uint64, rpcURLs []string) *ethClient {
@@ -698,7 +700,7 @@ func newEthClient(kp *ethKeyPair, chainID uint64, rpcURLs []string) *ethClient {
 	)
 	check(err)
 
-	addrData, err := genContractAddresses.ReadFile("gen_contract_addresses.json")
+	addrData, err := genContractAddresses.ReadFile("internal/contractabis/gen_contract_addresses.json")
 	check(err)
 	err = json.Unmarshal(addrData, &c.contractAddresses)
 	check(err)
@@ -707,10 +709,10 @@ func newEthClient(kp *ethKeyPair, chainID uint64, rpcURLs []string) *ethClient {
 	log("ethClient.newEthClient relayRegAddr=%s", c.contractAddresses.RelayRegistry.Hex())
 	log("ethClient.newEthClient paymentsAddr=%s", c.contractAddresses.Payments.Hex())
 
-	c.erc20ContractABI, err = abi.JSON(strings.NewReader(ERC20MetaData.ABI))
+	c.erc20ContractABI, err = abi.JSON(strings.NewReader(contractsabi.ERC20MetaData.ABI))
 	check(err)
 
-	c.shopRegContractABI, err = abi.JSON(strings.NewReader(RegShopMetaData.ABI))
+	c.shopRegContractABI, err = abi.JSON(strings.NewReader(contractsabi.RegShopMetaData.ABI))
 	check(err)
 
 	return &c
@@ -785,7 +787,7 @@ func (c *ethClient) getRPC(ctx context.Context) (*ethclient.Client, error) {
 	return newClient, err
 }
 
-func (c *ethClient) newRelayReg() (*RegRelay, error) {
+func (c *ethClient) newRelayReg() (*contractsabi.RegRelay, error) {
 	client, err := c.getRPC(nil)
 	if err != nil {
 		return nil, err
@@ -793,14 +795,14 @@ func (c *ethClient) newRelayReg() (*RegRelay, error) {
 	if bytes.Equal(c.contractAddresses.RelayRegistry[:], bytes.Repeat([]byte{0}, 20)) {
 		return nil, errors.New("cant use zero address for relayReg")
 	}
-	reg, err := NewRegRelay(c.contractAddresses.RelayRegistry, client)
+	reg, err := contractsabi.NewRegRelay(c.contractAddresses.RelayRegistry, client)
 	if err != nil {
 		return nil, fmt.Errorf("ethClient.newRelayReg: creating relay registry failed: %w", err)
 	}
 	return reg, nil
 }
 
-func (c *ethClient) newShopReg() (*RegShop, error) {
+func (c *ethClient) newShopReg() (*contractsabi.RegShop, error) {
 	client, err := c.getRPC(nil)
 	if err != nil {
 		return nil, err
@@ -808,7 +810,7 @@ func (c *ethClient) newShopReg() (*RegShop, error) {
 	if bytes.Equal(c.contractAddresses.ShopRegistry[:], bytes.Repeat([]byte{0}, 20)) {
 		return nil, errors.New("cant use zero address for shopReg")
 	}
-	reg, err := NewRegShop(c.contractAddresses.ShopRegistry, client)
+	reg, err := contractsabi.NewRegShop(c.contractAddresses.ShopRegistry, client)
 	if err != nil {
 		return nil, fmt.Errorf("ethClient.newShopReg: creating shop registry failed: %w", err)
 	}
