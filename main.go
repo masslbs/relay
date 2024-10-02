@@ -45,7 +45,6 @@ import (
 	"github.com/rs/cors"
 	"github.com/spruceid/siwe-go"
 	"github.com/ssgreg/repeat"
-	"golang.org/x/crypto/sha3"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -3364,7 +3363,6 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIdA
 		invalidErr  *Error
 
 		orderHash [32]byte
-		hasher    = sha3.NewLegacyKeccak256()
 
 		done = make(chan struct{})
 	)
@@ -3439,7 +3437,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIdA
 			}
 			return strings.Compare(a.cid.variations, b.cid.variations)
 		})
-
+		/* TODO: merkleization
 		for _, it := range items {
 			h := it.cid.Hash()
 			//debug("DEBUG/itemHash id=%v hash=%s ipfs=%s", it.cid, h.Hex(), it.versioned)
@@ -3447,6 +3445,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIdA
 		}
 		hs := hasher.Sum(nil)
 		copy(orderHash[:], hs)
+		*/
 		close(done)
 	}()
 	err = snapshotter.Wait() // also closes saveItems channel

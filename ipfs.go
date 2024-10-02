@@ -242,7 +242,7 @@ func (ls *listingSnapshotter) save(cid combinedID, item *CachedListing) {
 		}
 
 		// TODO: wait with pinning until after the item was sold..?
-		pinKey := fmt.Sprintf("shop-%x-item-%d-%d", ls.shopID, item.value.Id.Raw, item.shopSeq)
+		pinKey := fmt.Sprintf("shop-%x-item-%x-%d", ls.shopID, item.value.Id.Raw, item.shopSeq)
 		if !isDevEnv {
 			_, err = pinataPin(uploadedCid, pinKey)
 			if err != nil {
