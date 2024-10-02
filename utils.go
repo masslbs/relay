@@ -211,16 +211,15 @@ func (region *ShippingRegion) validate(field string) *Error {
 	if region.City != "" && (region.PostalCode == "" || region.Country == "") {
 		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + ": country and postal_code need to be set if city is"})
 	}
-	for i, id := range region.OrderPriceModifierIds {
-		idField := field + fmt.Sprintf(".order_price_modifier_id[%d]", i)
-		errs = append(errs, validateObjectID(id, idField))
+	for i, mod := range region.OrderPriceModifiers {
+		modField := field + fmt.Sprintf(".order_price_modifier_id[%d]", i)
+		errs = append(errs, mod.validate(modField))
 	}
 	return coalesce(errs...)
 }
 
 func (mod *OrderPriceModifier) validate(field string) *Error {
 	errs := []*Error{
-		validateObjectID(mod.Id, field+".id"),
 		validateString(mod.Title, field+".title", 128),
 	}
 	switch tv := mod.Modification.(type) {

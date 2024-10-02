@@ -22,17 +22,17 @@ type keyCardID uint64
 
 type ObjectIdArray [8]byte
 
-func (obj ObjectId) Array() ObjectIdArray {
+func (obj *ObjectId) Array() ObjectIdArray {
 	assert(len(obj.Raw) == 8)
 	return [8]byte(obj.Raw)
 }
 
-func (obj ObjectId) Uint64() uint64 {
+func (obj *ObjectId) Uint64() uint64 {
 	assert(len(obj.Raw) == 8)
 	return binary.BigEndian.Uint64(obj.Raw)
 }
 
-func (obj ObjectId) Equal(other *ObjectId) bool {
+func (obj *ObjectId) Equal(other *ObjectId) bool {
 	return bytes.Equal(obj.Raw, other.Raw)
 }
 

@@ -844,10 +844,6 @@ func validateShopManifest(_ uint, event *Manifest) *Error {
 		field := fmt.Sprintf("shipping_region[%d]", i)
 		errs = append(errs, region.validate(field))
 	}
-	for i, mod := range event.OrderPriceModifiers {
-		field := fmt.Sprintf("order_price_modifier[%d]", i)
-		errs = append(errs, mod.validate(field))
-	}
 	return coalesce(errs...)
 }
 
@@ -892,20 +888,6 @@ func validateUpdateManifest(_ uint, event *UpdateManifest) *Error {
 		for i, remove := range removes {
 			field := fmt.Sprintf("remove_shipping_region[%d]", i)
 			errs = append(errs, validateString(remove, field, 128))
-		}
-		hasOpt = true
-	}
-	if adds := event.AddOrderPriceModifiers; len(adds) > 0 {
-		for i, add := range adds {
-			field := fmt.Sprintf("add_order_price_modifier[%d]", i)
-			errs = append(errs, add.validate(field))
-		}
-		hasOpt = true
-	}
-	if removes := event.RemoveOrderPriceModifierIds; len(removes) > 0 {
-		for i, remove := range removes {
-			field := fmt.Sprintf("remove_order_price_modifier[%d]", i)
-			errs = append(errs, validateObjectID(remove, field))
 		}
 		hasOpt = true
 	}
@@ -1402,9 +1384,6 @@ func (current *CachedShopManifest) update(union *ShopEvent, meta CachedMetadata)
 		for _, region := range sm.ShippingRegions {
 			current.shippingRegions[region.Name] = region
 		}
-		for _, mod := range sm.OrderPriceModifiers {
-			current.orderModifiers[mod.Id.Array()] = mod
-		}
 	case *ShopEvent_UpdateManifest:
 		um := union.GetUpdateManifest()
 		if adds := um.AddAcceptedCurrencies; len(adds) > 0 {
@@ -1444,12 +1423,6 @@ func (current *CachedShopManifest) update(union *ShopEvent, meta CachedMetadata)
 		}
 		for _, rm := range um.RemoveShippingRegions {
 			delete(current.shippingRegions, rm)
-		}
-		for _, add := range um.AddOrderPriceModifiers {
-			current.orderModifiers[add.Id.Array()] = add
-		}
-		for _, rm := range um.RemoveOrderPriceModifierIds {
-			delete(current.orderModifiers, rm.Array())
 		}
 	}
 }
@@ -1660,10 +1633,10 @@ func (current *CachedOrder) update(evt *ShopEvent, meta CachedMetadata) {
 			current.order.PaymentDetailsCreatedAt = evt.Timestamp
 		case *UpdateOrder_Cancel_:
 			current.order.CanceledAt = evt.Timestamp
-		case *UpdateOrder_AddWittnessedTx:
-			current.order.WittnessedTransactions = append(current.order.WittnessedTransactions, action.AddWittnessedTx)
-		case *UpdateOrder_SetMerchantNotes:
-			current.order.MerchantNotes = action.SetMerchantNotes
+		case *UpdateOrder_AddPaymentTx:
+			current.order.PaymentTransactions = append(current.order.PaymentTransactions, action.AddPaymentTx)
+		case *UpdateOrder_SetShippingStatus:
+			current.order.ShippingStatus = action.SetShippingStatus
 		}
 	default:
 		panic(fmt.Sprintf("unhandled event type: %T", evt.Union))
@@ -2783,20 +2756,9 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 		for _, region := range m.ShippingRegions {
 			_, has := usedNames[region.Name]
 			if has {
-				return &Error{Code: ErrorCodes_INVALID, Message: "duplicate region name: " + region.Name}
+				return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("duplicate region name: %q", region.Name)}
 			}
 			usedNames[region.Name] = struct{}{}
-		}
-		usedIDs := make(map[ObjectIdArray]struct{})
-		for _, mod := range m.OrderPriceModifiers {
-			_, has := usedIDs[mod.Id.Array()]
-			if has {
-				return &Error{
-					Code:    ErrorCodes_INVALID,
-					Message: fmt.Sprintf("duplicate order modifier: %x", mod.Id.Raw),
-				}
-			}
-			usedIDs[mod.Id.Array()] = struct{}{}
 		}
 
 	case *ShopEvent_UpdateManifest:
@@ -2863,24 +2825,6 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 				return &Error{
 					Code:    ErrorCodes_INVALID,
 					Message: "unknown shipping region",
-				}
-			}
-		}
-		for _, add := range um.AddOrderPriceModifiers {
-			_, has := manifest.orderModifiers[add.Id.Array()]
-			if has {
-				return &Error{
-					Code:    ErrorCodes_INVALID,
-					Message: "order price modifier id already taken",
-				}
-			}
-		}
-		for _, rm := range um.RemoveOrderPriceModifierIds {
-			_, has := manifest.orderModifiers[rm.Array()]
-			if !has {
-				return &Error{
-					Code:    ErrorCodes_INVALID,
-					Message: "unknown order price modifier",
 				}
 			}
 		}
@@ -3516,12 +3460,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIdA
 	bigTotal := new(big.Int).Set(bigSubtotal)
 	diff := new(big.Int)
 
-	for _, modID := range region.OrderPriceModifierIds {
-		mod, has := shop.orderModifiers[modID.Array()]
-		if !has {
-			logS(sessionID, "relay.orderPaymentChoiceOp.priceModifierNotFound order_id=%x modifier_id=%x", order.order.Id.Raw, modID.Raw)
-			return &Error{Code: ErrorCodes_INVALID, Message: "failed to calculate total price"}
-		}
+	for _, mod := range region.OrderPriceModifiers {
 		switch tv := mod.Modification.(type) {
 		case *OrderPriceModifier_Absolute:
 			abs := tv.Absolute
@@ -4111,7 +4050,7 @@ WHERE shopID = $3 and orderId = $4;`
 		&ShopEvent_UpdateOrder{
 			&UpdateOrder{
 				Id: &ObjectId{Raw: orderID[:]},
-				Action: &UpdateOrder_AddWittnessedTx{
+				Action: &UpdateOrder_AddPaymentTx{
 					paid,
 				},
 			},
