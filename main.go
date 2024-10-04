@@ -24,12 +24,14 @@ import (
 	"net/http/pprof"
 	"net/url"
 	"os"
+	"os/signal"
 	"reflect"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
@@ -4932,6 +4934,16 @@ func main() {
 	cmd := os.Args[1]
 	cmdArgs := os.Args[2:]
 	if cmd == "server" && len(cmdArgs) == 0 {
+		// need clean shutdown for coverage reports
+		// TODO: move this into server()... maybe?
+		signalChan := make(chan os.Signal, 1)
+		signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			for sig := range signalChan {
+				fmt.Printf("\nReceived signal: %s. Initiating shutdown...\n", sig)
+				os.Exit(0)
+			}
+		}()
 		server()
 	} else if cmd == "debug-obj" && len(cmdArgs) == 1 {
 		debugObject(cmdArgs[0])
