@@ -3540,7 +3540,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIdA
 
 	paymentId, paymentAddr, err := r.ethereum.GetPaymentIDAndAddress(chosenCurrency.ChainID, &pr, ownerAddr)
 	if err != nil {
-		logS(sessionID, "relay.orderPaymentChoiceOp.paymentIDandAddrFailed order=%d err=%s", orderID, err)
+		logS(sessionID, "relay.orderPaymentChoiceOp.paymentIDandAddrFailed order=%x err=%s", orderID, err)
 		return &Error{Code: ErrorCodes_INVALID, Message: "failed to get paymentID"}
 	}
 
