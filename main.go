@@ -3241,7 +3241,7 @@ func (r *Relay) processOrderItemsCommitment(sessionID sessionID, orderID ObjectI
 	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
 
 	start := now()
-	logS(sessionID, "relay.orderCommitItemsOp.process order=%d", orderID)
+	logS(sessionID, "relay.orderCommitItemsOp.process order=%x", orderID)
 
 	// load realted data
 	order, has := r.ordersByOrderID.get(sessionState.shopID, orderID)
@@ -3337,7 +3337,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIdA
 	shopID := sessionState.shopID
 
 	start := now()
-	logS(sessionID, "relay.orderPaymentChoiceOp.process order=%d", orderID)
+	logS(sessionID, "relay.orderPaymentChoiceOp.process order=%x", orderID)
 
 	// load related data
 	order, has := r.ordersByOrderID.get(sessionState.shopID, orderID)
@@ -3416,9 +3416,12 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIdA
 			return true
 		}
 
+		logS(sessionID, "relay.orderPaymentChoiceOp.subTotal current=%s | quant=%s price=%s", bigSubtotal, bigQuant, bigPrice)
 		bigQuant.Mul(bigQuant, bigPrice)
 
 		bigSubtotal.Add(bigSubtotal, bigQuant)
+		logS(sessionID, "relay.orderPaymentChoiceOp.subTotal new=%s = oldSubTotal + quant_times_price(%s)", bigSubtotal, bigQuant)
+
 		return false
 	})
 	if invalidErr != nil {
@@ -3458,7 +3461,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIdA
 	// add taxes and shipping
 	bigTotal := new(big.Int).Set(bigSubtotal)
 	diff := new(big.Int)
-
+	logS(sessionID, "relay.orderPaymentChoiceOp.total beforeModifiers=%s", bigTotal)
 	for _, mod := range region.OrderPriceModifiers {
 		switch tv := mod.Modification.(type) {
 		case *OrderPriceModifier_Absolute:
@@ -3475,6 +3478,13 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIdA
 			bigTotal.Mul(bigTotal, diff)
 			bigTotal.Div(bigTotal, big100)
 		}
+	}
+
+	logS(sessionID, "relay.orderPaymentChoiceOp.total after=%s", bigTotal)
+
+	if n := len(bigTotal.Bytes()); n > 32 {
+		logS(sessionID, "relay.orderPaymentChoiceOp.totalTooBig got=%d", n)
+		return &Error{Code: ErrorCodes_INVALID, Message: ""}
 	}
 
 	// create payment address for order content
