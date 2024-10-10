@@ -31,6 +31,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -47,6 +48,7 @@ import (
 	"github.com/rs/cors"
 	"github.com/spruceid/siwe-go"
 	"github.com/ssgreg/repeat"
+	"golang.org/x/time/rate"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -1731,6 +1733,10 @@ type Relay struct {
 	tagsByTagID           *ReductionLoader[*CachedTag]
 	ordersByOrderID       *ReductionLoader[*CachedOrder]
 	allLoaders            []Loader
+
+	connectionLimiter *rate.Limiter
+	connectionCount   atomic.Int64
+	maxConnections    int64
 }
 
 func newRelay(metric *Metric) *Relay {
@@ -1811,6 +1817,11 @@ func newRelay(metric *Metric) *Relay {
 	r.blobUploadTokensMu = &sync.Mutex{}
 
 	r.metric = metric
+
+	// Initialize rate limiter: 10 new connections per second, burst of 50
+	r.connectionLimiter = rate.NewLimiter(rate.Limit(10), 50)
+	r.maxConnections = 256 // Default max connections
+
 	return r
 }
 
@@ -4466,6 +4477,18 @@ func (m *Metric) counterAdd(name string, value float64) {
 func sessionsHandleFunc(version uint, r *Relay) func(http.ResponseWriter, *http.Request) {
 	log("relay.sessionsHandleFunc version=%d", version)
 	return func(w http.ResponseWriter, req *http.Request) {
+		if !r.connectionLimiter.Allow() {
+			http.Error(w, "Too many connection attempts", http.StatusTooManyRequests)
+			r.metric.httpStatusCodes.WithLabelValues("429", req.URL.Path).Inc()
+			return
+		}
+
+		if r.connectionCount.Load() >= r.maxConnections {
+			http.Error(w, "Maximum connections reached", http.StatusServiceUnavailable)
+			r.metric.httpStatusCodes.WithLabelValues("503", req.URL.Path).Inc()
+			return
+		}
+
 		conn, _, _, err := ws.UpgradeHTTP(req, w)
 		if err != nil {
 			code := http.StatusInternalServerError
@@ -4476,12 +4499,17 @@ func sessionsHandleFunc(version uint, r *Relay) func(http.ResponseWriter, *http.
 			log("relay.upgradeError %+v", err)
 			return
 		}
+
+		r.connectionCount.Add(1)
+
 		// bit of a misnomer, to set 201, but let's log it at least
 		r.metric.httpStatusCodes.WithLabelValues("201", req.URL.Path).Inc()
 		sess := newSession(version, conn, r.ops, r.metric)
 		startOp := &StartOp{sessionID: sess.id, sessionVersion: version, sessionOps: sess.ops}
 		sess.sendDatabaseOp(startOp)
 		sess.run()
+		r.connectionCount.Add(-1)
+
 	}
 }
 
