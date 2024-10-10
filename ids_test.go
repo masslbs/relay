@@ -27,9 +27,9 @@ func TestCombinedID(t *testing.T) {
 		{[]uint64{1, 5, 2, 3, 4}},
 	}
 
-	itemId := testObjIDs(42)[0]
+	itemID := testObjIDs(42)[0]
 	for tci, tc := range tests {
-		cid := newCombinedID(itemId, testObjIDs(tc.variations...)...)
+		cid := newCombinedID(itemID, testObjIDs(tc.variations...)...)
 		got := cid.Variations()
 		a.Len(got, len(tc.variations))
 		slices.Sort(tc.variations)

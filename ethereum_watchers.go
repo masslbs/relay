@@ -25,14 +25,14 @@ import (
 
 // PaymentWaiter is a struct that holds the state of a order that is waiting for payment.
 type PaymentWaiter struct {
-	shopID          ObjectIdArray
-	orderID         ObjectIdArray
+	shopID          ObjectIDArray
+	orderID         ObjectIDArray
 	paymentChosenAt time.Time
 	chainID         uint64
 	purchaseAddr    common.Address
 	lastBlockNo     SQLStringBigInt
 	coinsTotal      SQLStringBigInt
-	paymentId       []byte
+	paymentID       []byte
 
 	// (optional) contract of the erc20 that we are looking for
 	erc20TokenAddr *common.Address
@@ -98,8 +98,8 @@ watch:
 			} else {
 				return fmt.Errorf("unhandeld event type: %s", vLog.Topics[0].Hex())
 			}
-			shopId := new(big.Int).SetBytes(vLog.Topics[1].Bytes())
-			debug("watcher.subscribeAccountEvents add=%v rm=%v shop=%s", isAdd, isRemove, shopId)
+			eventShopID := new(big.Int).SetBytes(vLog.Topics[1].Bytes())
+			debug("watcher.subscribeAccountEvents add=%v rm=%v shop=%s", isAdd, isRemove, eventShopID)
 
 			evts, err := geth.shopRegContractABI.Unpack(eventName, vLog.Data)
 			if err != nil {
@@ -109,13 +109,13 @@ watch:
 
 			// check if we are serving this store
 			var dbShopID uint64
-			err = r.connPool.QueryRow(ctx, `select id from shops where tokenId = $1`, shopId.String()).Scan(&dbShopID)
+			err = r.connPool.QueryRow(ctx, `select id from shops where tokenId = $1`, eventShopID.String()).Scan(&dbShopID)
 			if err == pgx.ErrNoRows {
 				continue watch // not for this relay
 			} else if err != nil {
 				check(err)
 			}
-			var shopID ObjectIdArray
+			var shopID ObjectIDArray
 			binary.BigEndian.PutUint64(shopID[:], dbShopID)
 
 			//spew.Dump(evts)
@@ -133,7 +133,7 @@ watch:
 				txHash: vLog.TxHash,
 			}
 			r.opsInternal <- op
-			log("watcher.subscribeAccountEvents.%s user=%s shop=%s", eventName, userAddr, shopId)
+			log("watcher.subscribeAccountEvents.%s user=%s shop=%d", eventName, userAddr, dbShopID)
 
 			i++
 		}
@@ -167,13 +167,13 @@ func (r *Relay) getPaymentWaiterForERC20Transfer(chainID uint64, purchaseAddr, t
 		return PaymentWaiter{}, err
 	}
 
-	waiter.shopID = ObjectIdArray(sid)
-	waiter.orderID = ObjectIdArray(oid)
+	waiter.shopID = ObjectIDArray(sid)
+	waiter.orderID = ObjectIDArray(oid)
 
 	return waiter, nil
 }
 
-func (r *Relay) getPaymentWaiterForPaymentMade(chainID uint64, paymentIdHash common.Hash) (PaymentWaiter, error) {
+func (r *Relay) getPaymentWaiterForPaymentMade(chainID uint64, paymentIDHash common.Hash) (PaymentWaiter, error) {
 	var waiter PaymentWaiter
 	var sid, oid []byte
 
@@ -182,18 +182,18 @@ func (r *Relay) getPaymentWaiterForPaymentMade(chainID uint64, paymentIdHash com
 	WHERE
 	payedAt IS NULL
 	AND paymentChosenAt >= NOW() - INTERVAL '1 day'
-	AND paymentId = $1
+	AND paymentID = $1
 	AND chainId = $2`
 
-	err := r.connPool.QueryRow(context.Background(), query, paymentIdHash.Bytes(), chainID).Scan(&sid, &oid, &waiter.paymentChosenAt)
+	err := r.connPool.QueryRow(context.Background(), query, paymentIDHash.Bytes(), chainID).Scan(&sid, &oid, &waiter.paymentChosenAt)
 	if err != nil {
 		return PaymentWaiter{}, err
 	}
 
 	assert(len(sid) == 8)
 	assert(len(oid) == 8)
-	waiter.shopID = ObjectIdArray(sid)
-	waiter.orderID = ObjectIdArray(oid)
+	waiter.shopID = ObjectIDArray(sid)
+	waiter.orderID = ObjectIDArray(oid)
 
 	return waiter, nil
 }
@@ -239,8 +239,8 @@ watch:
 			debug("watcher.subscribeFilterLogsPaymentsMade.newLog i=%d block_tx=%s", i, vLog.BlockHash.Hex())
 			i++
 
-			var paymentIdHash = vLog.Topics[1]
-			waiter, err := r.getPaymentWaiterForPaymentMade(geth.chainID, paymentIdHash)
+			var paymentIDHash = vLog.Topics[1]
+			waiter, err := r.getPaymentWaiterForPaymentMade(geth.chainID, paymentIDHash)
 			if err == pgx.ErrNoRows {
 				continue
 			} else if err != nil {
@@ -389,9 +389,9 @@ func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
 		check(err)
 
 		assert(len(sid) == 8)
-		waiter.shopID = ObjectIdArray(sid)
+		waiter.shopID = ObjectIDArray(sid)
 		assert(len(oid) == 8)
-		waiter.orderID = ObjectIdArray(oid)
+		waiter.orderID = ObjectIDArray(oid)
 
 		waiters[waiter.purchaseAddr] = waiter
 	}

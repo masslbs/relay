@@ -12,5 +12,5 @@ pkgs.buildGoModule {
   src = ./.;
   go = pkgs.go_1_22;
   enableParallelBuilding = true;
-  vendorHash = "sha256-qKfzURVEa843V2mw/jpMzDTWEAwrPEDN3tr/ejUO6g4=";
+  vendorHash = "sha256-5V8DdSEyO0LfajURkTouNkxKQO31736/G7qinszHV1k=";
 }

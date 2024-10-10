@@ -37,7 +37,11 @@ import (
 	contractsabi "github.com/masslbs/relay/internal/contractabis"
 )
 
-// EthLookp represents an internal ethereum operation,
+// ZeroAddress is the zero address.
+// TODO: defined in geth?
+var ZeroAddress common.Address
+
+// EthLookup represents an internal ethereum operation,
 // abstracted from the actual interaction with the JSON rpc
 type EthLookup interface {
 	getChainID() uint64
@@ -89,7 +93,7 @@ func newEthRPCService(chains map[uint64][]string) *ethRPCService {
 		parts := strings.SplitN(values, "=", 2)
 		assert(len(parts) == 2)
 
-		chainId, err := strconv.ParseUint(parts[0], 10, 64)
+		chainID, err := strconv.ParseUint(parts[0], 10, 64)
 		check(err)
 
 		var hasWebsocketEndpoint = false
@@ -101,7 +105,7 @@ func newEthRPCService(chains map[uint64][]string) *ethRPCService {
 		}
 		assertWithMessage(hasWebsocketEndpoint, "need at least one websocket endpoint per chain for payment subscriptions")
 
-		r.chains[chainId] = newEthClient(r.keyPair, chainId, urls)
+		r.chains[chainID] = newEthClient(r.keyPair, chainID, urls)
 	}
 
 	// register / verify nft for the relay
@@ -588,7 +592,7 @@ func (lookup *paymentIDandAddressEthLookup) process(client *ethClient) {
 		return
 	}
 
-	paymentId, err := paymentsContract.GetPaymentId(callOpts, *lookup.paymentReq)
+	paymentID, err := paymentsContract.GetPaymentId(callOpts, *lookup.paymentReq)
 	if err != nil {
 		lookup.closeWithError(fmt.Errorf("failed to retreive paymentID: %w", err))
 		return
@@ -600,7 +604,7 @@ func (lookup *paymentIDandAddressEthLookup) process(client *ethClient) {
 		return
 	}
 	lookup.resultID = make([]byte, 32)
-	paymentId.FillBytes(lookup.resultID)
+	paymentID.FillBytes(lookup.resultID)
 	lookup.resultAddr = purchaseAddr
 	close(lookup.errCh)
 
@@ -794,23 +798,6 @@ func (c *ethClient) newRelayReg() (*contractsabi.RegRelay, error) {
 	return reg, nil
 }
 
-/*
-func (c *ethClient) newShopReg() (*contractsabi.RegShop, error) {
-	client, err := c.getRPC(nil)
-	if err != nil {
-		return nil, err
-	}
-	if bytes.Equal(c.contractAddresses.ShopRegistry[:], bytes.Repeat([]byte{0}, 20)) {
-		return nil, errors.New("cant use zero address for shopReg")
-	}
-	reg, err := contractsabi.NewRegShop(c.contractAddresses.ShopRegistry, client)
-	if err != nil {
-		return nil, fmt.Errorf("ethClient.newShopReg: creating shop registry failed: %w", err)
-	}
-	return reg, nil
-}
-*/
-
 func (c *ethClient) makeTxOpts(ctx context.Context, client *ethclient.Client) (*bind.TransactOpts, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -824,7 +811,7 @@ func (c *ethClient) makeTxOpts(ctx context.Context, client *ethclient.Client) (*
 		GasFeeCap: c.gasFeeCap,
 		GasTipCap: big.NewInt(1),
 		Nonce:     nil,
-		Signer: func(address common.Address, tx *types.Transaction) (*types.Transaction, error) {
+		Signer: func(_ common.Address, tx *types.Transaction) (*types.Transaction, error) {
 			return types.SignTx(tx, types.LatestSignerForChainID(big.NewInt(int64(c.chainID))), c.keyPair.secret)
 		},
 	}, nil
@@ -855,28 +842,6 @@ func (c *ethClient) updateGasLimit(ctx context.Context, client *ethclient.Client
 	log("ethClient.updateGasLimit gasTipCap=%s", c.gasTipCap)
 	return nil
 }
-
-/*
-func (c *ethClient) hasBalance(ctx context.Context, addr common.Address) bool {
-	rpc, err := c.getRPC(ctx)
-	if err != nil {
-		log("ethClient.hasBalance.getClient error=%s", err)
-		return false
-	}
-	currBlock, err := rpc.BlockNumber(ctx)
-	if err != nil {
-		log("ethClient.hasBalance.blockNo error=%s", err)
-		return false
-	}
-	balance, err := rpc.BalanceAt(ctx, addr, big.NewInt(int64(currBlock)))
-	if err != nil {
-		log("ethClient.hasBalance.balanceAt error=%s", err)
-		return false
-	}
-	log("ethClient balance=%d wallet=%s", balance.Int64(), addr.Hex())
-	return balance.Int64() > 0
-}
-*/
 
 type ethKeyPair struct {
 	secret *ecdsa.PrivateKey

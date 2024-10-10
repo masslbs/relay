@@ -204,11 +204,11 @@ type listingSnapshotter struct {
 
 	metric *Metric
 	client *ipfsRpc.HttpApi
-	shopID ObjectIdArray
+	shopID ObjectIDArray
 	items  chan<- savedItem
 }
 
-func newListingSnapshotter(m *Metric, shopID ObjectIdArray) (*listingSnapshotter, <-chan savedItem, error) {
+func newListingSnapshotter(m *Metric, shopID ObjectIDArray) (*listingSnapshotter, <-chan savedItem, error) {
 	ctx := context.Background()
 	c, err := getIpfsClient(ctx, 0, nil)
 	if err != nil {

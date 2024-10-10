@@ -32,12 +32,12 @@ func subslice[T any](original []T, subsliceSize int) [][]T {
 // Use a sentinel instead of a bool to save one byte of space per map value.
 var exists = struct{}{}
 
-// SetRequestIDs is a set of requestIDs.
+// SetInts is a set of requestIDs.
 type SetInts[K comparable] struct {
 	elems map[K]struct{}
 }
 
-// NewSetRequestIDs creates a new set of requestIDs.
+// NewSetInts creates a new set of requestIDs.
 func NewSetInts[K comparable](ids ...K) *SetInts[K] {
 	s := &SetInts[K]{}
 	s.Clear(uint(len(ids)))
@@ -228,6 +228,7 @@ func (m *MapInts[K, V]) Size() int {
 	return len(m.elems)
 }
 
+// ShopObjectIDArray is a 16 byte array.
 type ShopObjectIDArray [16]byte
 
 // ShopEventMap is a map from requestIDs to values.

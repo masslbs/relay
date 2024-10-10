@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"time"
 	"unicode/utf8"
@@ -339,4 +340,59 @@ func (bi *SQLStringBigInt) Scan(src interface{}) error {
 		return fmt.Errorf("unsupported Scan source type: %T", src)
 	}
 	return nil
+}
+
+// ScoreRegions compares all configured regions to a chosen address and picks the one most applicable.
+func ScoreRegions(configured map[string]*ShippingRegion, chosen *AddressDetails) (*ShippingRegion, error) {
+	type score struct {
+		Name   string
+		Points int
+	}
+	var scores []score
+
+	for k, r := range configured {
+		var s = score{
+			Name: k,
+		}
+
+		if r.Country == chosen.Country || r.Country == "" {
+			if r.Country == "" {
+				s.Points++
+			} else {
+				s.Points += 10
+			}
+			if r.PostalCode == chosen.PostalCode {
+				s.Points += 100
+				if r.City == chosen.City {
+					s.Points += 1000
+				}
+			}
+
+			scores = append(scores, s)
+		}
+	}
+
+	if len(scores) == 0 {
+		return nil, fmt.Errorf("no shipping region matched")
+	}
+
+	//spew.Dump(scores)
+
+	if len(scores) > 1 {
+		// sort highest points first
+		slices.SortFunc(scores, func(a, b score) int {
+			if a.Points > b.Points {
+				return -1
+			}
+			if a.Points < b.Points {
+				return 1
+			}
+			// eq
+			return 0
+		})
+	}
+
+	reg, has := configured[scores[0].Name]
+	assert(has)
+	return reg, nil
 }

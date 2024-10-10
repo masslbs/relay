@@ -37,7 +37,6 @@ rm -r network-schema/
 
 sed -i 's/ErrorCodes_ERROR_CODES_/ErrorCodes_/' gen_network_error.pb.go
 
-go run generate_types.go $SCHEMA_VERSION $SCHEMA_COMMIT_HASH > gen_types.go
 go run generate_constants.go $SCHEMA_VERSION $SCHEMA_COMMIT_HASH > gen_constants.go
 
 # smart contract wrapper

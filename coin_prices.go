@@ -67,7 +67,8 @@ var _ priceConverter = (*testingConverter)(nil)
 
 var bigTwo = big.NewInt(2)
 
-func (tc testingConverter) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int, error) {
+// Convert is a testing price converter that returns a constant value
+func (tc testingConverter) Convert(_, _ cachedShopCurrency, amount *big.Int) (*big.Int, error) {
 	r := new(big.Int).Mul(amount, bigTwo)
 	return r, nil
 }
@@ -92,7 +93,7 @@ type coinGeckoPlatform struct {
 	ID           string  `json:"id"`
 	ChainID      *uint64 `json:"chain_identifier"`
 	Name         string
-	NativeCoinId string
+	NativeCoinID string
 }
 
 func newCoinGecko(demoKey string, fiatCurrency string, ethereum *ethRPCService) *coinGecko {
@@ -105,9 +106,9 @@ func newCoinGecko(demoKey string, fiatCurrency string, ethereum *ethRPCService) 
 	}
 }
 
-func (cg *coinGecko) lookupPlatform(chainId uint64) (coinGeckoPlatform, error) {
+func (cg *coinGecko) lookupPlatform(chainID uint64) (coinGeckoPlatform, error) {
 	cg.platformNamesMu.Lock()
-	name, has := cg.platformNames[chainId]
+	name, has := cg.platformNames[chainID]
 	if has {
 		cg.platformNamesMu.Unlock()
 		return name, nil
@@ -139,7 +140,7 @@ func (cg *coinGecko) lookupPlatform(chainId uint64) (coinGeckoPlatform, error) {
 			cg.platformNames[*p.ChainID] = p
 		}
 	}
-	name, has = cg.platformNames[chainId]
+	name, has = cg.platformNames[chainID]
 	cg.platformNamesMu.Unlock()
 
 	if !has {
@@ -217,8 +218,8 @@ func (cg *coinGecko) GetERC20Price(coin cachedShopCurrency) (*big.Int, error) {
 	return jsonToBigInt(price)
 }
 
-// converts the amount from a (base currency) to b (chosen/target)
-func (tc *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int, error) {
+// Convert converts the amount from a (base currency) to b (chosen/target)
+func (cg *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int, error) {
 	var (
 		basedInErc20  = ZeroAddress.Cmp(a.Addr) != 0
 		decimalsBased uint8
@@ -234,7 +235,7 @@ func (tc *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int
 	// get decimals count for erc20s
 	// TODO: since this is a contract we should be able cache it when adding the token..?
 	if basedInErc20 {
-		tok, err = tc.ethereum.GetERC20Metadata(a.ChainID, a.Addr)
+		tok, err = cg.ethereum.GetERC20Metadata(a.ChainID, a.Addr)
 		if err != nil {
 			return nil, fmt.Errorf("convert: metadata for base %v: %w", a, err)
 		}
@@ -246,18 +247,18 @@ func (tc *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int
 
 		decimalsBased = tok.decimals
 
-		basePrice, err = tc.GetERC20Price(a)
+		basePrice, err = cg.GetERC20Price(a)
 	} else {
 		// TODO: might need a scary table here for some fringe coins
 		decimalsBased = 18
-		basePrice, err = tc.GetCoinPriceFromNetworkID(a.ChainID)
+		basePrice, err = cg.GetCoinPriceFromNetworkID(a.ChainID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get coin price for base currency %v: %w", a, err)
 	}
 
 	if chosenIsErc20 {
-		tok, err = tc.ethereum.GetERC20Metadata(b.ChainID, b.Addr)
+		tok, err = cg.ethereum.GetERC20Metadata(b.ChainID, b.Addr)
 		if err != nil {
 			return nil, fmt.Errorf("convert: metadata for chosen %v: %w", b, err)
 		}
@@ -269,11 +270,11 @@ func (tc *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int
 
 		decimalsChosen = tok.decimals
 
-		chosenPrice, err = tc.GetERC20Price(b)
+		chosenPrice, err = cg.GetERC20Price(b)
 	} else {
 		// TODO: might need a scary table here for some fringe coins
 		decimalsChosen = 18
-		chosenPrice, err = tc.GetCoinPriceFromNetworkID(b.ChainID)
+		chosenPrice, err = cg.GetCoinPriceFromNetworkID(b.ChainID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get price for chosen currency %v: %w", b, err)

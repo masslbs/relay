@@ -58,6 +58,7 @@ func verifyChallengeResponse(publicKey, challange, signature []byte) error {
 	return ecrecoverEIP191AndCompare(challange, signature, publicKey)
 }
 
+// Verify verifies the signature of the event
 func (evt *SignedEvent) Verify(publicKey []byte) error {
 	return ecrecoverEIP191AndCompare(evt.Event.Value, evt.Signature.Raw, publicKey)
 }
