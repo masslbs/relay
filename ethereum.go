@@ -34,7 +34,7 @@ import (
 	ethlog "github.com/ethereum/go-ethereum/log"
 	"github.com/ssgreg/repeat"
 
-	"github.com/masslbs/relay/internal/contractabis"
+	contractsabi "github.com/masslbs/relay/internal/contractabis"
 )
 
 // EthLookp represents an internal ethereum operation,
@@ -216,7 +216,7 @@ func (lookup *erc20MetadataEthLookup) closeWithError(err error) {
 }
 
 func (lookup *erc20MetadataEthLookup) process(client *ethClient) {
-	rpc, err := client.getRPC(nil)
+	rpc, err := client.getRPC(context.TODO())
 	if err != nil {
 		err = fmt.Errorf("failed to estrablish RPC client: %w", err)
 		lookup.closeWithError(err)
@@ -259,7 +259,6 @@ func (lookup *erc20MetadataEthLookup) process(client *ethClient) {
 		tokenName: tokenName,
 	}
 	close(lookup.errCh)
-	return
 }
 
 type erc20Metadata struct {
@@ -324,7 +323,7 @@ func (lookup *ownerOfShopEthLookup) closeWithError(err error) {
 }
 
 func (lookup *ownerOfShopEthLookup) process(client *ethClient) {
-	rpc, err := client.getRPC(nil)
+	rpc, err := client.getRPC(context.TODO())
 	if err != nil {
 		err = fmt.Errorf("failed to estrablish RPC client: %w", err)
 		lookup.closeWithError(err)
@@ -351,8 +350,6 @@ func (lookup *ownerOfShopEthLookup) process(client *ethClient) {
 
 	lookup.result = &ownerAddr
 	close(lookup.errCh)
-
-	return
 }
 
 func (rpc *ethRPCService) GetOwnerOfShop(shopID *big.Int) (common.Address, error) {
@@ -397,7 +394,7 @@ func (lookup *clerkHasAccessEthLookup) closeWithError(err error) {
 }
 
 func (lookup *clerkHasAccessEthLookup) process(client *ethClient) {
-	rpc, err := client.getRPC(nil)
+	rpc, err := client.getRPC(context.TODO())
 	if err != nil {
 		err = fmt.Errorf("failed to estrablish RPC client: %w", err)
 		lookup.closeWithError(err)
@@ -433,8 +430,6 @@ func (lookup *clerkHasAccessEthLookup) process(client *ethClient) {
 
 	lookup.result = has
 	close(lookup.errCh)
-
-	return
 }
 
 func (rpc *ethRPCService) ClerkHasAccess(shopID *big.Int, user common.Address) (bool, error) {
@@ -458,7 +453,6 @@ func (rpc *ethRPCService) ClerkHasAccess(shopID *big.Int, user common.Address) (
 
 type blockNumberEthLookup struct {
 	chainID uint64
-	shopID  *big.Int
 
 	result *uint64
 	errCh  chan<- error
@@ -471,7 +465,7 @@ func (lookup *blockNumberEthLookup) closeWithError(err error) {
 }
 
 func (lookup *blockNumberEthLookup) process(client *ethClient) {
-	rpc, err := client.getRPC(nil)
+	rpc, err := client.getRPC(context.TODO())
 	if err != nil {
 		err = fmt.Errorf("failed to estrablish RPC client: %w", err)
 		lookup.closeWithError(err)
@@ -520,7 +514,7 @@ func (lookup *blockByNumberEthLookup) closeWithError(err error) {
 }
 
 func (lookup *blockByNumberEthLookup) process(client *ethClient) {
-	rpc, err := client.getRPC(nil)
+	rpc, err := client.getRPC(context.TODO())
 	if err != nil {
 		err = fmt.Errorf("failed to estrablish RPC client: %w", err)
 		lookup.closeWithError(err)
@@ -536,7 +530,6 @@ func (lookup *blockByNumberEthLookup) process(client *ethClient) {
 	lookup.result = b
 	close(lookup.errCh)
 
-	return
 }
 
 func (rpc *ethRPCService) GetBlockByNumber(chainID uint64, blockNum *big.Int) (*types.Block, error) {
@@ -575,7 +568,7 @@ func (lookup *paymentIDandAddressEthLookup) closeWithError(err error) {
 }
 
 func (lookup *paymentIDandAddressEthLookup) process(client *ethClient) {
-	rpc, err := client.getRPC(nil)
+	rpc, err := client.getRPC(context.TODO())
 	if err != nil {
 		err = fmt.Errorf("failed to estrablish RPC client: %w", err)
 		lookup.closeWithError(err)
@@ -611,7 +604,6 @@ func (lookup *paymentIDandAddressEthLookup) process(client *ethClient) {
 	lookup.resultAddr = purchaseAddr
 	close(lookup.errCh)
 
-	return
 }
 
 func (rpc *ethRPCService) GetPaymentIDAndAddress(chainID uint64, pr *contractsabi.PaymentRequest, fallback common.Address) ([]byte, common.Address, error) {
@@ -788,7 +780,7 @@ func (c *ethClient) getRPC(ctx context.Context) (*ethclient.Client, error) {
 }
 
 func (c *ethClient) newRelayReg() (*contractsabi.RegRelay, error) {
-	client, err := c.getRPC(nil)
+	client, err := c.getRPC(context.TODO())
 	if err != nil {
 		return nil, err
 	}
@@ -802,6 +794,7 @@ func (c *ethClient) newRelayReg() (*contractsabi.RegRelay, error) {
 	return reg, nil
 }
 
+/*
 func (c *ethClient) newShopReg() (*contractsabi.RegShop, error) {
 	client, err := c.getRPC(nil)
 	if err != nil {
@@ -816,6 +809,7 @@ func (c *ethClient) newShopReg() (*contractsabi.RegShop, error) {
 	}
 	return reg, nil
 }
+*/
 
 func (c *ethClient) makeTxOpts(ctx context.Context, client *ethclient.Client) (*bind.TransactOpts, error) {
 	if ctx == nil {
@@ -862,6 +856,7 @@ func (c *ethClient) updateGasLimit(ctx context.Context, client *ethclient.Client
 	return nil
 }
 
+/*
 func (c *ethClient) hasBalance(ctx context.Context, addr common.Address) bool {
 	rpc, err := c.getRPC(ctx)
 	if err != nil {
@@ -881,6 +876,7 @@ func (c *ethClient) hasBalance(ctx context.Context, addr common.Address) bool {
 	log("ethClient balance=%d wallet=%s", balance.Int64(), addr.Hex())
 	return balance.Int64() > 0
 }
+*/
 
 type ethKeyPair struct {
 	secret *ecdsa.PrivateKey

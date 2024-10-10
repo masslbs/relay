@@ -51,7 +51,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/masslbs/relay/internal/contractabis"
+	contractsabi "github.com/masslbs/relay/internal/contractabis"
 )
 
 // Server configuration.
@@ -73,9 +73,6 @@ const (
 
 	DefaultPaymentTTL = 60 * 60 * 24
 )
-
-// set by build script via ldflags
-var release = "unset"
 
 var (
 	// TODO: defined in geth?
@@ -1065,7 +1062,7 @@ func validateUpdateOrder(v uint, event *UpdateOrder) *Error {
 	return coalesce(errs...)
 }
 
-func validateOrderCancel(_ uint, event *UpdateOrder_Cancel) *Error {
+func validateOrderCancel(_ uint, _ *UpdateOrder_Cancel) *Error {
 	return nil
 }
 
@@ -1572,7 +1569,7 @@ func (current *CachedTag) update(evt *ShopEvent, meta CachedMetadata) {
 		if r := ut.Rename; r != nil {
 			current.name = *r
 		}
-		if d := ut.Delete; d != nil && *d == true {
+		if d := ut.Delete; d != nil && *d {
 			current.deleted = true
 		}
 	default:
@@ -1717,9 +1714,6 @@ type Relay struct {
 
 	baseURL *url.URL
 
-	watcherContextERC20       context.Context
-	watcherContextERC20Cancel context.CancelFunc
-
 	watcherContextEther       context.Context
 	watcherContextEtherCancel context.CancelFunc
 
@@ -1747,7 +1741,6 @@ func newRelay(metric *Metric) *Relay {
 	check(err)
 
 	r.ethereum = newEthRPCService(nil)
-	r.watcherContextERC20, r.watcherContextERC20Cancel = context.WithCancel(context.Background())
 	r.watcherContextEther, r.watcherContextEtherCancel = context.WithCancel(context.Background())
 
 	if cgAPIKey := os.Getenv("COINGECKO_API_KEY"); cgAPIKey != "" {
@@ -1826,16 +1819,6 @@ func (r *Relay) connect() {
 	r.connPool = newPool()
 
 	r.loadServerSeq()
-}
-
-// Send the op to the database (itself). Here a block is fatal because the
-// database loop won't be able to progress.
-func (db *Relay) sendDatabaseOp(op RelayOp) {
-	select {
-	case db.ops <- op:
-	default:
-		panic(fmt.Sprintf("relay.sendDatabaseOp.blocked: %+v", op))
-	}
 }
 
 // TODO: generics solution to reduce [][]any copies
@@ -3616,10 +3599,7 @@ AND orderId = $2`
 	check(err)
 
 	ctx = context.Background()
-	if chosenIsErc20 {
-		r.watcherContextERC20Cancel()
-		r.watcherContextERC20, r.watcherContextERC20Cancel = context.WithCancel(ctx)
-	} else {
+	if !chosenIsErc20 {
 		r.watcherContextEtherCancel()
 		r.watcherContextEther, r.watcherContextEtherCancel = context.WithCancel(ctx)
 	}
@@ -3908,8 +3888,7 @@ func (op *GetBlobUploadURLOp) process(r *Relay) {
 	}
 	r.blobUploadTokensMu.Unlock()
 
-	var uploadURL url.URL
-	uploadURL = *r.baseURL
+	uploadURL := *r.baseURL
 	uploadURL.Path = fmt.Sprintf("/v%d/upload_blob", currentRelayVersion)
 	uploadURL.RawQuery = "token=" + token
 	op.uploadURL = &uploadURL

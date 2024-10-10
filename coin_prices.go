@@ -173,7 +173,7 @@ func (cg *coinGecko) GetCoinPrice(coin string) (*big.Int, error) {
 	}
 	fiatPrices, ok := result[coin]
 	if !ok {
-		return nil, fmt.Errorf("Coin %s not found", coin)
+		return nil, fmt.Errorf("coin %s not found", coin)
 	}
 	price, ok := fiatPrices[cg.fiatCurrency]
 	if !ok {

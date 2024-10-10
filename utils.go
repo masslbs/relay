@@ -13,8 +13,6 @@ import (
 	"strconv"
 	"time"
 	"unicode/utf8"
-
-	"github.com/ethereum/go-ethereum/common"
 )
 
 var (
@@ -157,13 +155,6 @@ func (addr *EthereumAddress) validate(field string) *Error {
 
 func validateEthAddressBytes(addr []byte, field string) *Error {
 	return validateBytes(addr, field, 20)
-}
-
-func validateEthAddressHexString(k string, field string) *Error {
-	if !common.IsHexAddress(k) {
-		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` must be a valid ethereum address", field)}
-	}
-	return nil
 }
 
 func (lo *ListingOption) validate(field string) *Error {

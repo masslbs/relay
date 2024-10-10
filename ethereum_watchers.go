@@ -27,7 +27,6 @@ import (
 type PaymentWaiter struct {
 	shopID          ObjectIdArray
 	orderID         ObjectIdArray
-	itemsLockedAt   time.Time
 	paymentChosenAt time.Time
 	chainID         uint64
 	purchaseAddr    common.Address
@@ -144,6 +143,61 @@ watch:
 	return nil
 }
 
+func (r *Relay) getPaymentWaiterForERC20Transfer(chainID uint64, purchaseAddr, tokenAddr common.Address) (PaymentWaiter, error) {
+	var waiter PaymentWaiter
+	var sid, oid []byte
+
+	query := `
+		SELECT shopId, orderId, paymentChosenAt, purchaseAddr, lastBlockNo, coinsTotal, erc20TokenAddr
+		FROM payments
+		WHERE payedAt IS NULL
+			AND erc20TokenAddr = $1
+			AND purchaseAddr = $2
+			AND paymentChosenAt >= NOW() - INTERVAL '1 day'
+			AND chainId = $3
+		LIMIT 1
+	`
+
+	err := r.connPool.QueryRow(context.Background(), query, tokenAddr, purchaseAddr, chainID).Scan(
+		&sid, &oid, &waiter.paymentChosenAt, &waiter.purchaseAddr,
+		&waiter.lastBlockNo, &waiter.coinsTotal, &waiter.erc20TokenAddr,
+	)
+
+	if err != nil {
+		return PaymentWaiter{}, err
+	}
+
+	waiter.shopID = ObjectIdArray(sid)
+	waiter.orderID = ObjectIdArray(oid)
+
+	return waiter, nil
+}
+
+func (r *Relay) getPaymentWaiterForPaymentMade(chainID uint64, paymentIdHash common.Hash) (PaymentWaiter, error) {
+	var waiter PaymentWaiter
+	var sid, oid []byte
+
+	const query = `SELECT shopId, orderId, paymentChosenAt
+	FROM payments
+	WHERE
+	payedAt IS NULL
+	AND paymentChosenAt >= NOW() - INTERVAL '1 day'
+	AND paymentId = $1
+	AND chainId = $2`
+
+	err := r.connPool.QueryRow(context.Background(), query, paymentIdHash.Bytes(), chainID).Scan(&sid, &oid, &waiter.paymentChosenAt)
+	if err != nil {
+		return PaymentWaiter{}, err
+	}
+
+	assert(len(sid) == 8)
+	assert(len(oid) == 8)
+	waiter.shopID = ObjectIdArray(sid)
+	waiter.orderID = ObjectIdArray(oid)
+
+	return waiter, nil
+}
+
 // direct contract calls, done via pay() that emit PaymentMade events
 func (r *Relay) subscribeFilterLogsPaymentsMade(geth *ethClient) error {
 	log("watcher.subscribeFilterLogsPaymentsMade.start chainID=%d", geth.chainID)
@@ -186,26 +240,12 @@ watch:
 			i++
 
 			var paymentIdHash = vLog.Topics[1]
-			var waiter PaymentWaiter
-			var sid, oid []byte
-			const openPaymentsQry = `SELECT shopId, orderId, paymentChosenAt
-					FROM payments
-					WHERE
-					payedAt IS NULL
-					AND paymentChosenAt >= NOW() - INTERVAL '1 day'
-					AND paymentId = $1
-					AND chainId = $2`
-			err := r.connPool.QueryRow(ctx, openPaymentsQry, paymentIdHash.Bytes(), geth.chainID).Scan(&sid, &oid, &waiter.paymentChosenAt)
+			waiter, err := r.getPaymentWaiterForPaymentMade(geth.chainID, paymentIdHash)
 			if err == pgx.ErrNoRows {
 				continue
 			} else if err != nil {
 				check(err)
 			}
-			assert(len(sid) == 8)
-			waiter.shopID = ObjectIdArray(sid)
-			assert(len(oid) == 8)
-			waiter.orderID = ObjectIdArray(oid)
-
 			orderID := waiter.orderID
 			log("watcher.subscribeFilterLogsPaymentsMade.found orderId=%x txHash=%x", orderID, vLog.TxHash)
 
@@ -233,65 +273,15 @@ watch:
 func (r *Relay) subscribeFilterLogsERC20Transfers(geth *ethClient) error {
 	debug("watcher.subscribeFilterLogsERC20Transfers.start chainID=%d", geth.chainID)
 
-	var (
-		start = now()
-		ctx   = r.watcherContextERC20
-
-		waiters         = make(map[common.Hash]PaymentWaiter)
-		erc20AddressSet = make(map[common.Address]struct{})
-	)
-
-	openPaymentsQry := `SELECT shopId, orderId, paymentChosenAt, purchaseAddr, lastBlockNo, coinsTotal, erc20TokenAddr
-				FROM payments
-				WHERE payedAt IS NULL
-					AND erc20TokenAddr IS NOT NULL -- see subscribeFilterLogsERC20Transfers()
-					AND paymentChosenAt >= NOW() - INTERVAL '1 day'
-		            AND chainId = $1
-		ORDER BY lastBlockNo asc;`
-	rows, err := r.connPool.Query(ctx, openPaymentsQry, geth.chainID)
-	check(err)
-	defer rows.Close()
-	for rows.Next() {
-		var waiter PaymentWaiter
-		var sid, oid []byte
-		err := rows.Scan(&sid, &oid, &waiter.paymentChosenAt, &waiter.purchaseAddr, &waiter.lastBlockNo, &waiter.coinsTotal, &waiter.erc20TokenAddr)
-		check(err)
-
-		assert(len(sid) == 8)
-		waiter.shopID = ObjectIdArray(sid)
-		assert(len(oid) == 8)
-		waiter.orderID = ObjectIdArray(oid)
-
-		erc20AddressSet[*waiter.erc20TokenAddr] = struct{}{}
-
-		// right-align the purchase address to 32 bytes so we can use it as a topic
-		var purchaseAddrAsHash common.Hash
-		copy(purchaseAddrAsHash[12:], waiter.purchaseAddr.Bytes())
-		waiters[purchaseAddrAsHash] = waiter
-	}
-	check(rows.Err())
-
-	if len(waiters) == 0 {
-		debug("watcher.subscribeFilterLogsERC20Transfers.noOpenPayments took=%d", took(start))
-		return nil
-	}
+	var ctx = context.Background()
 
 	rpc, err := geth.getWebsocketRPC()
 	if err != nil {
 		return repeat.HintTemporary(err)
 	}
 
-	// turn set into a list
-	erc20Addresses := make([]common.Address, len(erc20AddressSet))
-	i := 0
-	for addr := range erc20AddressSet {
-		copy(erc20Addresses[i][:], addr[:])
-		i++
-	}
-
 	ch := make(chan types.Log)
 	arg := ethereum.FilterQuery{
-		Addresses: erc20Addresses,
 		Topics: [][]common.Hash{
 			{eventSignatureTransferErc20},
 		},
@@ -301,74 +291,75 @@ func (r *Relay) subscribeFilterLogsERC20Transfers(geth *ethClient) error {
 	if err != nil {
 		err = fmt.Errorf("watcher.subscribeFilterLogsERC20Transfers.EthSubscribeFailed: %w", err)
 		return repeat.HintTemporary(err)
-
 	}
 	defer subscription.Unsubscribe()
 
 	errch := subscription.Err()
 
-	var returnErr error = nil
-watch:
 	for {
 		select {
-		case <-ctx.Done():
-			err = ctx.Err()
-			debug("watcher.subscribeFilterLogsERC20Transfers.contextDone err=%s", err)
-			returnErr = repeat.HintTemporary(err)
-			break watch
 		case err := <-errch:
 			debug("watcher.subscribeFilterLogsERC20Transfers.subscriptionBroke err=%s", err)
-			returnErr = repeat.HintTemporary(err)
-			break watch
+			return repeat.HintTemporary(err)
 		case vLog := <-ch:
 			debug("watcher.subscribeFilterLogsERC20Transfers.checking block_tx=%s topics=%#v", vLog.BlockHash.Hex(), vLog.Topics[1:])
-			fromHash := vLog.Topics[1]
 			toHash := vLog.Topics[2]
 
-			waiter, has := waiters[toHash]
-			if has && waiter.erc20TokenAddr.Cmp(vLog.Address) == 0 {
-				// We found a transfer to our address!
-				orderID := waiter.orderID
+			// Query for the payment waiter on each log received
+			paymentAddr := common.Address(toHash[12:])
+			waiter, err := r.getPaymentWaiterForERC20Transfer(geth.chainID, paymentAddr, vLog.Address)
+			if err == pgx.ErrNoRows {
+				continue
+			} else if err != nil {
+				err = fmt.Errorf("watcher.subscribeFilterLogsERC20Transfers.getPaymentWaiterFailed tx=%s err=%s", vLog.TxHash.Hex(), err)
+				check(err)
+			}
 
-				_, has := r.ordersByOrderID.get(waiter.shopID, orderID)
-				assertWithMessage(has, fmt.Sprintf("order not found for orderId=%x", orderID))
-
-				evts, err := geth.erc20ContractABI.Unpack("Transfer", vLog.Data)
-				if err != nil {
-					log("watcher.subscribeFilterLogsERC20Transfers.transferErc20.failedToUnpackTransfer tx=%s err=%s", vLog.TxHash.Hex(), err)
-					continue
-				}
-
-				inTx, ok := evts[0].(*big.Int)
-				assertWithMessage(ok, fmt.Sprintf("unexpected unpack result for field 0 - type=%T", evts[0]))
-				debug("watcher.subscribeFilterLogsERC20Transfers.foundTransfer orderId=%x from=%s to=%s amount=%s", orderID, fromHash.Hex(), toHash.Hex(), inTx.String())
-
-				if inTx.Cmp(&waiter.coinsTotal.Int) != -1 {
-					// it is larger or equal
-
-					op := PaymentFoundInternalOp{
-						shopID:    waiter.shopID,
-						orderID:   waiter.orderID,
-						txHash:    &Hash{Raw: vLog.TxHash.Bytes()},
-						blockHash: &Hash{Raw: vLog.BlockHash.Bytes()},
-						done:      make(chan struct{}),
-					}
-					r.opsInternal <- &op
-					<-op.done
-
-					delete(waiters, toHash)
-					log("watcher.subscribeFilterLogsERC20Transfers.completed orderId=%x", orderID)
-				}
-			} else {
-				log("watcher.subscribeFilterLogsERC20Transfers.noWaiter inTx=%s", vLog.TxHash.Hex())
+			// Process the transfer
+			if err := r.processERC20Transfer(geth, waiter, vLog); err != nil {
+				log("watcher.subscribeFilterLogsERC20Transfers.processTransferFailed waiter=%x err=%s", waiter.orderID, err)
 			}
 		}
 	}
-	stillWaiting := len(waiters)
-	debug("watcher.subscribeFilterLogsERC20Transfers.finish took=%d openWaiters=%d", took(start), stillWaiting)
-	r.metric.gaugeSet("relay_payments_erc20_open", float64(stillWaiting))
-	return returnErr
+}
 
+func (r *Relay) processERC20Transfer(geth *ethClient, waiter PaymentWaiter, vLog types.Log) error {
+	orderID := waiter.orderID
+
+	_, has := r.ordersByOrderID.get(waiter.shopID, orderID)
+	if !has {
+		return fmt.Errorf("order not found for orderId=%x", orderID)
+	}
+
+	evts, err := geth.erc20ContractABI.Unpack("Transfer", vLog.Data)
+	if err != nil {
+		return fmt.Errorf("failedToUnpackTransfer tx=%s err=%s", vLog.TxHash.Hex(), err)
+	}
+
+	inTx, ok := evts[0].(*big.Int)
+	if !ok {
+		return fmt.Errorf("unexpected unpack result for field 0 - type=%T", evts[0])
+	}
+
+	debug("watcher.processERC20Transfer.foundTransfer orderId=%x from=%s to=%s amount=%s",
+		orderID, vLog.Topics[1].Hex(), vLog.Topics[2].Hex(), inTx.String())
+
+	if inTx.Cmp(&waiter.coinsTotal.Int) != -1 {
+		// it is larger or equal
+		op := PaymentFoundInternalOp{
+			shopID:    waiter.shopID,
+			orderID:   waiter.orderID,
+			txHash:    &Hash{Raw: vLog.TxHash.Bytes()},
+			blockHash: &Hash{Raw: vLog.BlockHash.Bytes()},
+			done:      make(chan struct{}),
+		}
+		r.opsInternal <- &op
+		<-op.done
+
+		log("watcher.processERC20Transfer.completed orderId=%x", orderID)
+	}
+
+	return nil
 }
 
 func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
