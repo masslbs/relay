@@ -3740,8 +3740,7 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 		// we only support queries for public content to other shops then the authenticated one
 		if !subscription.shopID.Equal(session.shopID) &&
 			(filter.ObjectType == ObjectType_OBJECT_TYPE_INVENTORY ||
-				filter.ObjectType == ObjectType_OBJECT_TYPE_ORDER ||
-				filter.ObjectType == ObjectType_OBJECT_TYPE_ACCOUNT) {
+				filter.ObjectType == ObjectType_OBJECT_TYPE_ORDER) {
 			logSR("relay.subscriptionRequestOp.notAllowed why=\"other shop\" filter=%s",
 				sessionID, requestID, filter.ObjectType.String())
 			op.err = &Error{Code: ErrorCodes_INVALID, Message: "not allowed"}
