@@ -76,20 +76,29 @@ func assertNonemptyString(s string) {
 	assertWithMessage(s != "", "string was empty")
 }
 
-func validateObjectID(x uint64, field string) *Error {
-	if x == 0 {
-		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` must be a non-zero objectId", field)}
+func validateObjectID(x *ObjectId, field string) *Error {
+	if x == nil {
+		return &Error{
+			Code:    ErrorCodes_INVALID,
+			Message: fmt.Sprintf("Field `%s` must be a non-zero objectId", field),
+		}
 	}
-	return nil
+	return validateBytes(x.Raw, field+".id", 8)
 }
 
 func validateString(s string, field string, maxLength int) *Error {
 	if s == "" {
-		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` must be a non-empty string", field)}
+		return &Error{
+			Code:    ErrorCodes_INVALID,
+			Message: fmt.Sprintf("Field `%s` must be a non-empty string", field),
+		}
 	}
 	runeCount := utf8.RuneCountInString(s)
 	if runeCount > maxLength {
-		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` must be no more than %d characters, got %d", field, maxLength, runeCount)}
+		return &Error{
+			Code:    ErrorCodes_INVALID,
+			Message: fmt.Sprintf("Field `%s` must be no more than %d characters, got %d", field, maxLength, runeCount),
+		}
 	}
 	return nil
 }
@@ -101,7 +110,20 @@ const (
 
 func validateBytes(val []byte, field string, want uint) *Error {
 	if n := len(val); uint(n) != want {
-		return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("Field `%s` must have correct amount of bytes, got %d", field, n)}
+		return &Error{
+			Code:    ErrorCodes_INVALID,
+			Message: fmt.Sprintf("Field `%s` must have correct amount of bytes, got %d", field, n),
+		}
+	}
+	return nil
+}
+
+func validateChainID(val uint64, field string) *Error {
+	if val == 0 {
+		return &Error{
+			Code:    ErrorCodes_INVALID,
+			Message: fmt.Sprintf("Field `%s` must be a valid chainID, not 0", field)}
+
 	}
 	return nil
 }
@@ -110,7 +132,7 @@ func (payee *Payee) validate(field string) *Error {
 	return coalesce(
 		validateString(payee.Name, field+".name", 128),
 		payee.Address.validate(field+".address"),
-		validateObjectID(payee.ChainId, field+".chain_id"),
+		validateChainID(payee.ChainId, field+".chain_id"),
 	)
 }
 
@@ -125,7 +147,7 @@ func (sig *Signature) validate() *Error {
 func (curr *ShopCurrency) validate(field string) *Error {
 	return coalesce(
 		curr.Address.validate(field+".address"),
-		validateObjectID(curr.ChainId, field+".chain_id"),
+		validateChainID(curr.ChainId, field+".chain_id"),
 	)
 }
 
@@ -175,6 +197,47 @@ func (lm *ListingMetadata) validate(field string) *Error {
 		errs = append(errs, validateURL(img, field))
 	}
 	return coalesce(errs...)
+}
+
+func (region *ShippingRegion) validate(field string) *Error {
+	errs := []*Error{
+		validateString(region.Name, field+".name", 128),
+	}
+	// if city is non-empty, the fields before it also have to be non-empty, etc.
+	if region.PostalCode != "" && region.Country == "" {
+		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + ": country needs to be set if postal_code is"})
+	}
+
+	if region.City != "" && (region.PostalCode == "" || region.Country == "") {
+		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + ": country and postal_code need to be set if city is"})
+	}
+	for i, mod := range region.OrderPriceModifiers {
+		modField := field + fmt.Sprintf(".order_price_modifier_id[%d]", i)
+		errs = append(errs, mod.validate(modField))
+	}
+	return coalesce(errs...)
+}
+
+func (mod *OrderPriceModifier) validate(field string) *Error {
+	errs := []*Error{
+		validateString(mod.Title, field+".title", 128),
+	}
+	switch tv := mod.Modification.(type) {
+	case *OrderPriceModifier_Absolute:
+		abs := tv.Absolute
+		errs = append(errs, abs.Diff.validate(field+".modification/absolute.diff"))
+	case *OrderPriceModifier_Percentage:
+		perc := tv.Percentage
+		errs = append(errs, perc.validate(field+".modification/percentage"))
+	default:
+		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + fmt.Sprintf(".modification: unhandled type: %T", tv)})
+	}
+
+	return coalesce(errs...)
+}
+
+func (i *Uint256) validate(field string) *Error {
+	return validateBytes(i.Raw, field, 32)
 }
 
 func validateURL(k string, field string) *Error {
