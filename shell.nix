@@ -54,7 +54,7 @@ in
         reuse
 
         # dev tools
-        go
+        go_1_22
         go-outline
         gopls
         gopkgs

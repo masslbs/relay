@@ -6,7 +6,6 @@ package main
 
 import (
 	"fmt"
-	"golang.org/x/exp/constraints"
 )
 
 func subslice[T any](original []T, subsliceSize int) [][]T {
@@ -34,12 +33,12 @@ func subslice[T any](original []T, subsliceSize int) [][]T {
 var exists = struct{}{}
 
 // SetRequestIDs is a set of requestIDs.
-type SetInts[K constraints.Integer] struct {
+type SetInts[K comparable] struct {
 	elems map[K]struct{}
 }
 
 // NewSetRequestIDs creates a new set of requestIDs.
-func NewSetInts[K constraints.Integer](ids ...K) *SetInts[K] {
+func NewSetInts[K comparable](ids ...K) *SetInts[K] {
 	s := &SetInts[K]{}
 	s.Clear(uint(len(ids)))
 	for _, id := range ids {
@@ -226,6 +225,113 @@ func (m *MapInts[K, V]) Find(check func(K, V) bool) (K, bool) {
 
 // Size returns the number of requestIDs in the map.
 func (m *MapInts[K, V]) Size() int {
+	return len(m.elems)
+}
+
+type ShopObjectIDArray [16]byte
+
+// ShopEventMap is a map from requestIDs to values.
+type ShopEventMap[V any] struct {
+	elems map[ShopObjectIDArray]V
+}
+
+// NewShopEventMap creates a new map from requestIDs to values.
+func NewShopEventMap[V any]() *ShopEventMap[V] {
+	m := &ShopEventMap[V]{}
+	m.Clear()
+	return m
+}
+
+// Clear the map.
+func (m *ShopEventMap[V]) Clear() {
+	m.elems = make(map[ShopObjectIDArray]V)
+}
+
+// Has returns true if the map contains the given requestID.
+func (m *ShopEventMap[V]) Has(k ShopObjectIDArray) bool {
+	_, ok := m.elems[k]
+	return ok
+}
+
+// GetHas returns the value and true if the map contains the given requestID.
+func (m *ShopEventMap[V]) GetHas(k ShopObjectIDArray) (V, bool) {
+	v, has := m.elems[k]
+	return v, has
+}
+
+// Get returns the value for the given requestID.
+func (m *ShopEventMap[V]) Get(k ShopObjectIDArray) V {
+	return m.elems[k]
+}
+
+// GetOrCreate returns the value for the given requestID, creating it if it doesn't exist.
+func (m *ShopEventMap[V]) GetOrCreate(k ShopObjectIDArray, f func(ShopObjectIDArray) V) V {
+	v, has := m.GetHas(k)
+	if !has {
+		v = f(k)
+		m.Set(k, v)
+	}
+	return v
+}
+
+// MustGet returns the value for the given requestID, panicking if it doesn't exist.
+func (m *ShopEventMap[V]) MustGet(k ShopObjectIDArray) V {
+	v, has := m.elems[k]
+	assertWithMessage(has, fmt.Sprintf("element %v missing in set", k))
+	return v
+}
+
+// Set the value for the given requestID.
+func (m *ShopEventMap[V]) Set(k ShopObjectIDArray, v V) {
+	m.elems[k] = v
+}
+
+// Delete the value for the given requestID.
+func (m *ShopEventMap[V]) Delete(k ShopObjectIDArray) {
+	delete(m.elems, k)
+}
+
+// Keys returns a slice of all the requestIDs in the map.
+func (m *ShopEventMap[V]) Keys() []ShopObjectIDArray {
+	keys := make([]ShopObjectIDArray, len(m.elems))
+	i := 0
+	for k := range m.elems {
+		keys[i] = k
+		i++
+	}
+	return keys
+}
+
+// All calls the given function for each requestID and value in the map.
+// returning true halts the iteration
+func (m *ShopEventMap[V]) All(f func(ShopObjectIDArray, V) bool) {
+	for k, v := range m.elems {
+		if f(k, v) {
+			break
+		}
+	}
+}
+
+// AllValues calls the given function for each value in the map.
+func (m *ShopEventMap[V]) AllValues(f func(V)) {
+	for _, v := range m.elems {
+		f(v)
+	}
+}
+
+// Find calls the given function for each key and value in the map and returns the first requestID and value for which the function returns true.
+func (m *ShopEventMap[V]) Find(check func(ShopObjectIDArray, V) bool) (ShopObjectIDArray, bool) {
+	for k, v := range m.elems {
+		if check(k, v) {
+			return k, true
+		}
+	}
+	var zero ShopObjectIDArray
+	return zero, false
+}
+
+// Size returns the number of requestIDs in the map.
+func (m *ShopEventMap[V]) Size() int {
 	return len(m.elems)
 }
 
