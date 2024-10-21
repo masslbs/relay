@@ -5,6 +5,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -59,6 +61,20 @@ func sentryRecover() {
 		// repanic the original value as if it wasnt recovered.
 		// this adds adds two frames to the stack trace.
 		panic(v)
+	}
+}
+
+// test handler that can be used to test sentry integration
+func sentryTestHandler() func(http.ResponseWriter, *http.Request) {
+	log("server.sentryTestHandler")
+	return func(w http.ResponseWriter, r *http.Request) {
+		log("server.sentryTestHandler.start")
+
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "ok")
+		log("server.sentryTestHandler.panic")
+		err := errors.New("Bang!")
+		panic(err)
 	}
 }
 

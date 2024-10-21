@@ -382,6 +382,7 @@ func server() {
 
 	// Internal engineering APIs
 	mux.HandleFunc("/health", healthHandleFunc(r))
+	mux.HandleFunc("/sentry-test", sentryTestHandler())
 
 	// Reliablity Kludge
 	mux.HandleFunc("/ipfs/", ipfsCatHandleFunc())
