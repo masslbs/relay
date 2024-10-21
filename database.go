@@ -1417,7 +1417,7 @@ func timeTick(tt tickType) (tickType, time.Time) {
 func (r *Relay) run() {
 	assert(r.writesEnabled)
 	log("relay.run")
-	// defer sentryRecover()
+	defer sentryRecover()
 
 	debounceSessionsTimer := NewReusableTimer(databaseDebounceInterval)
 	memoryStatsTimer := NewReusableTimer(memoryStatsInterval)

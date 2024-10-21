@@ -302,11 +302,14 @@ func (r *Relay) subscribeFilterLogsERC20Transfers(geth *ethClient) error {
 			debug("watcher.subscribeFilterLogsERC20Transfers.subscriptionBroke err=%s", err)
 			return repeat.HintTemporary(err)
 		case vLog := <-ch:
-			debug("watcher.subscribeFilterLogsERC20Transfers.checking block_tx=%s topics=%#v", vLog.BlockHash.Hex(), vLog.Topics[1:])
-			toHash := vLog.Topics[2]
+			if len(vLog.Topics) < 3 {
+				debug("watcher.subscribeFilterLogsERC20Transfers.skipped block_tx=%s topics=%#v", vLog.BlockHash.Hex(), vLog.Topics)
+				continue
+			}
 
 			// Query for the payment waiter on each log received
-			paymentAddr := common.Address(toHash[12:])
+			toHash := vLog.Topics[2]
+			paymentAddr := common.Address(toHash[12:]) // slice 20 bytes out of topic[2]
 			waiter, err := r.getPaymentWaiterForERC20Transfer(geth.chainID, paymentAddr, vLog.Address)
 			if err == pgx.ErrNoRows {
 				continue
@@ -314,6 +317,7 @@ func (r *Relay) subscribeFilterLogsERC20Transfers(geth *ethClient) error {
 				err = fmt.Errorf("watcher.subscribeFilterLogsERC20Transfers.getPaymentWaiterFailed tx=%s err=%s", vLog.TxHash.Hex(), err)
 				check(err)
 			}
+			log("watcher.subscribeFilterLogsERC20Transfers.found tx=%s waiter=%x", vLog.TxHash.Hex(), waiter.orderID)
 
 			// Process the transfer
 			if err := r.processERC20Transfer(geth, waiter, vLog); err != nil {

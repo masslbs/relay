@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
+	"github.com/getsentry/sentry-go"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -26,6 +27,9 @@ import (
 	"github.com/ssgreg/repeat"
 	"google.golang.org/protobuf/proto"
 )
+
+// set via ldflags during build
+var release = "unset"
 
 // Server configuration.
 const (
@@ -272,8 +276,8 @@ func emitUptime(metric *Metric) {
 func server() {
 	initLoggingOnce.Do(initLogging)
 	port := mustGetEnvInt("PORT")
-	log("relay.start port=%d logMessages=%t simulateErrorRate=%d simulateIgnoreRate=%d sessionPingInterval=%s, sessionKickTimeout=%s",
-		port, logMessages, simulateErrorRate, simulateIgnoreRate, sessionPingInterval, sessionKickTimeout)
+	log("relay.start version=%s port=%d logMessages=%t simulateErrorRate=%d simulateIgnoreRate=%d sessionPingInterval=%s, sessionKickTimeout=%s",
+		release, port, logMessages, simulateErrorRate, simulateIgnoreRate, sessionPingInterval, sessionKickTimeout)
 
 	metric := newMetric()
 
@@ -300,6 +304,7 @@ func server() {
 
 	// onchain accounts only need to happen on the chain where the shop registry contract is hosted
 	go func() {
+		defer sentryRecover()
 		chainID := r.ethereum.registryChainID
 		geth, has := r.ethereum.chains[chainID]
 		assert(has)
@@ -322,6 +327,7 @@ func server() {
 	for _, geth := range r.ethereum.chains {
 		for _, w := range fns {
 			go func(w watcher, c *ethClient) {
+				defer sentryRecover()
 				log("watcher.spawned name=%s chainId=%d", w.name, c.chainID)
 
 				ticker := NewReusableTimer(ethereumBlockInterval / 2)
@@ -378,6 +384,7 @@ func server() {
 
 	// Internal engineering APIs
 	mux.HandleFunc("/health", healthHandleFunc(r))
+	mux.HandleFunc("/sentry-test", sentryTestHandler())
 
 	// Reliablity Kludge
 	mux.HandleFunc("/ipfs/", ipfsCatHandleFunc())
@@ -390,9 +397,15 @@ func server() {
 		corsOpts.Debug = true
 	}
 
+	wrappedHandler := sentrySetupHttpHandler(mux)
+
+	// Flush buffered events before the program terminates.
+	// Set the timeout to the maximum duration the program can afford to wait.
+	defer sentry.Flush(sentryFlushTimeout)
+
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
-		Handler: cors.New(corsOpts).Handler(mux),
+		Handler: cors.New(corsOpts).Handler(wrappedHandler),
 	}
 	err := srv.ListenAndServe()
 	check(err)

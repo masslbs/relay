@@ -62,7 +62,7 @@ func (sess *Session) nextRequestID() *RequestId {
 // so that a subsequent read errors.
 func (sess *Session) readerRun() {
 	logS(sess.id, "session.reader.start")
-	// defer sentryRecover()
+	defer sentryRecover()
 
 	for {
 		im, err := sess.readerReadMessage()

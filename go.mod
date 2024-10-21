@@ -12,6 +12,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/ethereum-optimism/optimism v1.7.7
 	github.com/ethereum/go-ethereum v1.14.7
+	github.com/getsentry/sentry-go v0.18.0
 	github.com/gobwas/ws v1.3.1
 	github.com/ipfs/boxo v0.22.1-0.20240821001902-3cd3857b046c
 	github.com/ipfs/kubo v0.30.0-rc1
@@ -65,7 +66,6 @@ require (
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/gballet/go-libpcsclite v0.0.0-20191108122812-4678299bea08 // indirect
 	github.com/gballet/go-verkle v0.1.1-0.20231031103413-a67434b50f46 // indirect
-	github.com/getsentry/sentry-go v0.18.0 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
