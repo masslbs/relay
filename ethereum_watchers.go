@@ -302,7 +302,11 @@ func (r *Relay) subscribeFilterLogsERC20Transfers(geth *ethClient) error {
 			debug("watcher.subscribeFilterLogsERC20Transfers.subscriptionBroke err=%s", err)
 			return repeat.HintTemporary(err)
 		case vLog := <-ch:
-			debug("watcher.subscribeFilterLogsERC20Transfers.checking block_tx=%s topics=%#v", vLog.BlockHash.Hex(), vLog.Topics[1:])
+			if len(vLog.Topics) < 3 {
+				debug("watcher.subscribeFilterLogsERC20Transfers.skipped block_tx=%s topics=%#v", vLog.BlockHash.Hex(), vLog.Topics)
+				continue
+			}
+			log("watcher.subscribeFilterLogsERC20Transfers.checking block_tx=%s topics=%#v", vLog.BlockHash.Hex(), vLog.Topics[1:])
 			toHash := vLog.Topics[2]
 
 			// Query for the payment waiter on each log received

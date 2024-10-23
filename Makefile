@@ -19,4 +19,4 @@ CPY := "Mass Labs"
 
 reuse:
 	reuse annotate --license  $(LIC) --copyright $(CPY) --merge-copyrights Makefile README.md *.go internal/contractabis/*.go go.mod *.nix .gitignore .github/workflows/test.yml .github/actions/checkout/action.yml *.bash db/schema.sql
-	reuse annotate --license  $(LIC) --copyright $(CPY) --merge-copyrights --force-dot-license gen_network_typedData.json internal/contractabis/gen_contract_addresses.json .env.sample flake.lock go.sum version
+	reuse annotate --license  $(LIC) --copyright $(CPY) --merge-copyrights --force-dot-license gen_network_typedData.json internal/contractabis/gen_contract_addresses.json .env.sample flake.lock go.sum
