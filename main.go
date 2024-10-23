@@ -304,6 +304,7 @@ func server() {
 
 	// onchain accounts only need to happen on the chain where the shop registry contract is hosted
 	go func() {
+		defer sentryRecover()
 		chainID := r.ethereum.registryChainID
 		geth, has := r.ethereum.chains[chainID]
 		assert(has)
@@ -326,6 +327,7 @@ func server() {
 	for _, geth := range r.ethereum.chains {
 		for _, w := range fns {
 			go func(w watcher, c *ethClient) {
+				defer sentryRecover()
 				log("watcher.spawned name=%s chainId=%d", w.name, c.chainID)
 
 				ticker := NewReusableTimer(ethereumBlockInterval / 2)
