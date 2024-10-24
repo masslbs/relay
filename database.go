@@ -484,9 +484,6 @@ type Relay struct {
 
 	baseURL *url.URL
 
-	watcherContextEther       context.Context
-	watcherContextEtherCancel context.CancelFunc
-
 	// persistence
 	syncTx               pgx.Tx
 	queuedEventInserts   []*EventInsert
@@ -515,7 +512,6 @@ func newRelay(metric *Metric) *Relay {
 	check(err)
 
 	r.ethereum = newEthRPCService(nil)
-	r.watcherContextEther, r.watcherContextEtherCancel = context.WithCancel(context.Background())
 
 	if cgAPIKey := os.Getenv("COINGECKO_API_KEY"); cgAPIKey != "" {
 		r.prices = newCoinGecko(cgAPIKey, "usd", r.ethereum)
