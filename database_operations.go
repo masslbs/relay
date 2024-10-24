@@ -1957,12 +1957,6 @@ AND orderId = $2`
 		w.chainID)
 	check(err)
 
-	ctx = context.Background()
-	if !chosenIsErc20 {
-		r.watcherContextEtherCancel()
-		r.watcherContextEther, r.watcherContextEtherCancel = context.WithCancel(ctx)
-	}
-
 	logS(sessionID, "relay.orderPaymentChoiceOp.finish took=%d", took(start))
 	return nil
 }

@@ -330,30 +330,12 @@ func server() {
 				defer sentryRecover()
 				log("watcher.spawned name=%s chainId=%d", w.name, c.chainID)
 
-				ticker := NewReusableTimer(ethereumBlockInterval / 2)
 				countError := repeat.FnOnError(repeat.FnES(func(err error) {
 					log("watcher.error name=%s chainId=%d err=%s", w.name, c.chainID, err)
 					r.metric.counterAdd("relay_watchError_error", 1)
 				}))
 				waitForNextBlock := repeat.FnOnSuccess(repeat.FnS(func() {
-					log("watcher.success name=%s", w.name)
-					/* this is "a bit" ugly.
-					   go doesn't let us add select cases conditionally.
-					   but we only need break out early (context cancel) for etherByAddress since that is using newHeads
-					   this is in reality only needed to make the tests performant, too.
-					   without this, the payment in the test might happen before the watcher resets
-					*/
-					if w.name == "vanilla-eth" {
-						select {
-						case <-ticker.C:
-							debug("watcher.blockTimerDone name=%s", w.name)
-						case <-r.watcherContextEther.Done():
-							debug("watcher.etherCanceled name=%s", w.name)
-						}
-					} else {
-						<-ticker.C
-					}
-					ticker.Rewind()
+					log("watcher.success name=%s chainId=%d", w.name, c.chainID)
 				}))
 				err := repeat.Repeat(
 					repeat.Fn(func() error { return w.fn(c) }),
