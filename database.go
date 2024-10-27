@@ -1226,8 +1226,8 @@ func (r *Relay) pushOutShopLog(sessionID sessionID, session *SessionState, subID
 		// Index: events(createdByShopId, shopSeq)
 		query := `select count(*) from events
 			where createdByShopId = $1 and shopSeq > $2
-			  and createdByKeyCardId != $3 and (` + sub.whereFragment + `)`
-		err := r.connPool.QueryRow(ctx, query, sub.shopID[:], sub.lastPushedSeq, session.keyCardID).
+			  and (` + sub.whereFragment + `)`
+		err := r.connPool.QueryRow(ctx, query, sub.shopID[:], sub.lastPushedSeq).
 			Scan(&op.unpushedEvents)
 		if err != pgx.ErrNoRows {
 			check(err)
@@ -1259,8 +1259,8 @@ func (r *Relay) pushOutShopLog(sessionID sessionID, session *SessionState, subID
 			from events e
 			where e.createdByShopId = $1
 			    and e.shopSeq > $2
-				and e.createdByKeyCardId != $3 and (` + sub.whereFragment + `) order by e.shopSeq asc limit $4`
-		rows, err := r.connPool.Query(ctx, query, sub.shopID[:], sub.lastPushedSeq, session.keyCardID, readsAllowed)
+				and (` + sub.whereFragment + `) order by e.shopSeq asc limit $3`
+		rows, err := r.connPool.Query(ctx, query, sub.shopID[:], sub.lastPushedSeq, readsAllowed)
 		check(err)
 		defer rows.Close()
 		for rows.Next() {

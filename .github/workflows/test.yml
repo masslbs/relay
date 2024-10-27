@@ -141,8 +141,6 @@ jobs:
 
       # TODO: compare against previous run
       - name: Post benchmark results
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           BENCHMARK_SUMMARY=$(jq -r '
           "## Benchmark Results\n\n" +
@@ -155,8 +153,7 @@ jobs:
           "- **Commit:** \(.commit_info.id)\n" +
           "- **Time:** \(.commit_info.time)\n"
           ' ../bench-output.json)
-          PR_COMMENT="${BENCHMARK_SUMMARY}"
-          gh pr comment ${{ github.event.pull_request.number }} --body "$PR_COMMENT"
+          echo "$BENCHMARK_SUMMARY" >> $GITHUB_STEP_SUMMARY
         working-directory: relay
 
       - name: Upload relay log on failure
