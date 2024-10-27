@@ -397,7 +397,7 @@ func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
 
 			if len(waiters) == 0 {
 				debug("watcher.processNewHeadForEther.noOpenPayments took=%d", took(start))
-				return nil
+				continue
 			}
 
 			debug("watcher.processNewHeadForEther.dbRead took=%d waiters=%d", took(start), len(waiters))
