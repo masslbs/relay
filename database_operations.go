@@ -2059,7 +2059,13 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 			where = ` (eventType='createOrder' OR eventType='updateOrder')`
 			// Add additional constraint for guest users
 			if session.keyCardOfAGuest {
-				where = where + fmt.Sprintf(" AND createdByKeyCardId=%d", session.keyCardID)
+				// we need to include all orders created by the guest
+				// this includes updates to orders created by the relay or clerks
+				where = where + fmt.Sprintf(`AND (createdByKeyCardId=%d OR (
+			createdByShopId = '\x%x' AND
+objectId in (select objectId from events where eventType='createOrder' and createdByKeyCardID=%d)
+			)
+)`, session.keyCardID, session.shopID, session.keyCardID)
 			}
 		}
 
