@@ -188,7 +188,10 @@ func ipfsCatHandleFunc() func(http.ResponseWriter, *http.Request) {
 			http.Error(w, "Not a file", http.StatusBadRequest)
 			return
 		}
-		w.Header().Set("Content-Length", strconv.Itoa(int(sz)))
+		headers := w.Header()
+		headers.Set("Content-Length", strconv.Itoa(int(sz)))
+		// ipfs blobs never change
+		headers.Set("Cache-Control", "public, max-age=29030400, immutable")
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.Copy(w, f)
 	}

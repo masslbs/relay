@@ -108,12 +108,11 @@ func newCoinGecko(demoKey string, fiatCurrency string, ethereum *ethRPCService) 
 
 func (cg *coinGecko) lookupPlatform(chainID uint64) (coinGeckoPlatform, error) {
 	cg.platformNamesMu.Lock()
+	defer cg.platformNamesMu.Unlock()
 	name, has := cg.platformNames[chainID]
 	if has {
-		cg.platformNamesMu.Unlock()
 		return name, nil
 	}
-	cg.platformNamesMu.Unlock()
 
 	url := "https://api.coingecko.com/api/v3/asset_platforms"
 	if cg.demoKey != "" {
@@ -133,18 +132,16 @@ func (cg *coinGecko) lookupPlatform(chainID uint64) (coinGeckoPlatform, error) {
 		return name, err
 	}
 
-	cg.platformNamesMu.Lock()
 	for _, p := range result {
 		if p.ChainID != nil {
-			//fmt.Printf("%s %d\n", p.Name, *p.ChainID)
+			fmt.Printf("%s %d\n", p.Name, *p.ChainID)
 			cg.platformNames[*p.ChainID] = p
 		}
 	}
-	name, has = cg.platformNames[chainID]
-	cg.platformNamesMu.Unlock()
 
+	name, has = cg.platformNames[chainID]
 	if !has {
-		return name, errors.New("not found")
+		return coinGeckoPlatform{}, errors.New("not found")
 	}
 	return name, nil
 }

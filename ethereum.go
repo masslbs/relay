@@ -624,8 +624,7 @@ func (rpc *ethRPCService) GetPaymentIDAndAddress(chainID uint64, pr *contractsab
 	if err := <-errCh; err != nil {
 		return nil, common.Address{}, err
 	}
-	assert(lookup.resultID != nil)
-
+	assert(len(lookup.resultID) == 32)
 	return lookup.resultID, lookup.resultAddr, nil
 }
 

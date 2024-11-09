@@ -6,6 +6,7 @@ package main
 
 import (
 	"database/sql/driver"
+	"encoding/binary"
 	"fmt"
 	"math/big"
 	"net/url"
@@ -340,6 +341,33 @@ func (bi *SQLStringBigInt) Scan(src interface{}) error {
 		return fmt.Errorf("unsupported Scan source type: %T", src)
 	}
 	return nil
+}
+
+// SQLUint64Bytes is a wrapper around big.Int that implements the sql.Scanner and driver.Valuer interfaces
+type SQLUint64Bytes struct{ Data ObjectIDArray }
+
+// Value implements the driver.Valuer interface
+func (ui SQLUint64Bytes) Value() (driver.Value, error) {
+	return ui.Data[:], nil
+}
+
+// Scan implements the sql.Scanner interface
+func (ui *SQLUint64Bytes) Scan(src interface{}) error {
+	switch src := src.(type) {
+
+	case []byte:
+		if len(src) != 8 {
+			return fmt.Errorf("expected 8 bytes, got %d", len(src))
+		}
+		copy(ui.Data[:], src)
+	default:
+		return fmt.Errorf("unsupported Scan source type: %T", src)
+	}
+	return nil
+}
+
+func (ui *SQLUint64Bytes) Uint64() uint64 {
+	return binary.BigEndian.Uint64(ui.Data[:])
 }
 
 // ScoreRegions compares all configured regions to a chosen address and picks the one most applicable.

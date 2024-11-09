@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/jackc/pgx/v4"
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/time/rate"
 	"google.golang.org/protobuf/proto"
 	anypb "google.golang.org/protobuf/types/known/anypb"
@@ -771,13 +771,11 @@ func (r *Relay) hydrateShops(shopIDs *SetInts[ObjectIDArray]) {
 			rows, err := r.connPool.Query(ctx, queryLatestShopSeq, novelShopIDsSubslice)
 			check(err)
 			for rows.Next() {
-				var dbID uint64
+				var eventsShopID SQLUint64Bytes
 				var lastWrittenSeq *uint64
-				err = rows.Scan(&dbID, &lastWrittenSeq)
+				err = rows.Scan(&eventsShopID, &lastWrittenSeq)
 				check(err)
-				var shopID ObjectIDArray
-				binary.BigEndian.PutUint64(shopID[:], dbID)
-				shopState := r.shopIDsToShopState.MustGet(shopID)
+				shopState := r.shopIDsToShopState.MustGet(eventsShopID.Data)
 				if lastWrittenSeq != nil {
 					shopState.lastWrittenSeq = *lastWrittenSeq
 					shopState.lastUsedSeq = *lastWrittenSeq
@@ -1376,7 +1374,7 @@ func (r *Relay) memoryStats() {
 }
 
 func newPool() *pgxpool.Pool {
-	syncPool, err := pgxpool.Connect(context.Background(), mustGetEnvString("DATABASE_URL"))
+	syncPool, err := pgxpool.New(context.Background(), mustGetEnvString("DATABASE_URL"))
 	check(err)
 	return syncPool
 }

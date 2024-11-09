@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5"
 	contractsabi "github.com/masslbs/relay/internal/contractabis"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -522,6 +522,7 @@ func validateUpdateShippingDetails(_ uint, event *AddressDetails) *Error {
 		validateString(event.City, "city", 128),
 		validateString(event.PostalCode, "postal_code", 25),
 		validateString(event.Country, "country", 50),
+		// TODO: validate email format
 		validateString(event.EmailAddress, "email_address", 320),
 	}
 	if event.PhoneNumber != nil {
@@ -1001,6 +1002,7 @@ func (op *EventWriteOp) process(r *Relay) {
 		r.sendSessionOp(sessionState, op)
 		return
 	}
+	r.hydrateShops(NewSetInts(sessionState.shopID))
 
 	// check signature
 	if err := op.im.Events[0].Verify(sessionState.keyCardPublicKey); err != nil {
@@ -1273,17 +1275,17 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 		shopStock, shopStockExists := r.stockByShopID.get(m.createdByShopID, m.createdByShopID)
 		if shopStockExists {
 			if shopStock.inventory == nil && change < 0 {
-				return &Error{Code: ErrorCodes_OUT_OF_STOCK, Message: "not enough stock"}
+				return notEnoughStockError
 			}
 			if shopStock.inventory != nil && change < 0 {
 				items, has := shopStock.inventory.GetHas(newCombinedID(itemID, evt.VariationIds...))
 				if has && items+change < 0 {
-					return &Error{Code: ErrorCodes_OUT_OF_STOCK, Message: "not enough stock"}
+					return notEnoughStockError
 				}
 			}
 		} else { // this might be the first changeStock event
 			if change < 0 {
-				return &Error{Code: ErrorCodes_OUT_OF_STOCK, Message: "not enough stock"}
+				return notEnoughStockError
 			}
 		}
 
@@ -1425,11 +1427,13 @@ func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadat
 				// TODO: check variation exists?
 				inStock, has := stock.inventory.GetHas(stockID)
 				if !has || inStock == 0 {
-					return &Error{Code: ErrorCodes_INVALID, Message: "not in stock"}
+					log("relay.checkEventWrite.commitItems stock=%x not found", stockID)
+					return notEnoughStockError
 				}
 				inOrder := order.items.Get(stockID)
 				if inOrder > uint32(inStock) {
-					return &Error{Code: ErrorCodes_INVALID, Message: "not enough items in stock for order"}
+					log("relay.checkEventWrite.commitItems stock=%x inOrder=%d inStock=%d", stockID, inOrder, inStock)
+					return notEnoughStockError
 				}
 			}
 
@@ -1521,14 +1525,11 @@ where shopId = $1
 
 	otherOrderIDs := NewMapInts[ObjectIDArray, *CachedOrder]()
 	for otherOrderRows.Next() {
-		var otherOrderID ObjectIDArray
-		var buf []byte
-		check(otherOrderRows.Scan(&buf))
-		assert(len(buf) == 8)
-		otherOrderID = ObjectIDArray(buf)
-		otherOrder, has := r.ordersByOrderID.get(sessionState.shopID, otherOrderID)
+		var otherOrderID SQLUint64Bytes
+		check(otherOrderRows.Scan(&otherOrderID))
+		otherOrder, has := r.ordersByOrderID.get(sessionState.shopID, otherOrderID.Data)
 		assert(has)
-		otherOrderIDs.Set(otherOrderID, otherOrder)
+		otherOrderIDs.Set(otherOrderID.Data, otherOrder)
 	}
 	check(otherOrderRows.Err())
 
@@ -1609,22 +1610,26 @@ where shopId = $1
 		orderID[:],
 	)
 	check(err)
-	defer otherOrderRows.Close()
-
-	otherOrderIDs := NewMapInts[ObjectIDArray, *CachedOrder]()
+	var otherOrderIDBytes [][]byte
+	// first we need to drain all the otherOrderRows
 	for otherOrderRows.Next() {
-		var buf []byte
-		var otherOrderID ObjectIDArray
-		check(otherOrderRows.Scan(&buf))
-		assert(len(buf) == 8)
-		otherOrderID = ObjectIDArray(buf)
-
-		otherOrder, has := r.ordersByOrderID.get(sessionState.shopID, otherOrderID)
-		assert(has)
-		otherOrderIDs.Set(otherOrderID, otherOrder)
+		var otherOrderID SQLUint64Bytes
+		err := otherOrderRows.Scan(&otherOrderID)
+		check(err)
+		otherOrderIDBytes = append(otherOrderIDBytes, otherOrderID.Data[:])
 	}
 	check(otherOrderRows.Err())
-
+	otherOrderRows.Close()
+	// now we can use the ordersByOrderID to reduce the orders
+	// (this can load in data from psql and if we did it in the same loop would lead to conn busy errors)
+	otherOrderIDs := NewMapInts[ObjectIDArray, *CachedOrder]()
+	for _, orderIDBytes := range otherOrderIDBytes {
+		var orderID ObjectIDArray
+		copy(orderID[:], orderIDBytes)
+		otherOrder, has := r.ordersByOrderID.get(sessionState.shopID, orderID)
+		assert(has)
+		otherOrderIDs.Set(orderID, otherOrder)
+	}
 	// for convenience, sum up all items in the other orders
 	otherOrderItemQuantities := NewMapInts[combinedID, uint32]()
 	otherOrderIDs.All(func(_ ObjectIDArray, order *CachedOrder) bool {
@@ -1645,16 +1650,14 @@ where shopId = $1
 	order.items.All(func(cid combinedID, quantity uint32) bool {
 		stockItems, has := stock.inventory.GetHas(cid)
 		if !has {
-			invalidErr = &Error{Code: ErrorCodes_OUT_OF_STOCK, Message: "not enough stock"}
+			invalidErr = notEnoughStockError
 			return true
 		}
-
 		usedInOtherOrders := otherOrderItemQuantities.Get(cid)
 		if stockItems < 0 || uint32(stockItems)-usedInOtherOrders < quantity {
-			invalidErr = &Error{Code: ErrorCodes_OUT_OF_STOCK, Message: "not enough stock"}
+			invalidErr = notEnoughStockError
 			return true
 		}
-
 		return false
 	})
 	if invalidErr != nil {
@@ -1716,7 +1719,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIDA
 	snapshotter, savedItems, err := newListingSnapshotter(r.metric, shopID)
 	if err != nil {
 		logS(sessionID, "relay.orderPaymentChoiceOp.ipfsClientFailed error=%s", err)
-		return &Error{Code: ErrorCodes_INVALID, Message: "internal error"}
+		return &Error{Code: ErrorCodes_INVALID, Message: "internal ipfs error"}
 	}
 
 	// iterate over this order
@@ -1830,7 +1833,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIDA
 
 	if n := len(bigTotal.Bytes()); n > 32 {
 		logS(sessionID, "relay.orderPaymentChoiceOp.totalTooBig got=%d", n)
-		return &Error{Code: ErrorCodes_INVALID, Message: ""}
+		return &Error{Code: ErrorCodes_INVALID, Message: "payment amount exceeded uint256"}
 	}
 
 	// create payment address for order content
@@ -1849,9 +1852,8 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIDA
 		}
 	}
 
-	bigShopTokenID := new(big.Int).SetBytes(shop.shopTokenID)
-
 	// fallback for paymentAddr
+	bigShopTokenID := new(big.Int).SetBytes(shop.shopTokenID)
 	ownerAddr, err := r.ethereum.GetOwnerOfShop(bigShopTokenID)
 	if err != nil {
 		logS(sessionID, "relay.orderPaymentChoiceOp.shopOwnerFailed err=%s", err)
@@ -1872,6 +1874,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIDA
 		return &Error{Code: ErrorCodes_INVALID, Message: "failed to get block by number"}
 	}
 
+	// construct payment request for ID and pay-by-address
 	var pr = contractsabi.PaymentRequest{}
 	pr.ChainId = new(big.Int).SetUint64(method.Payee.ChainId)
 	pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
@@ -1971,8 +1974,6 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 		logSR("relay.subscriptionRequestOp.drain", sessionID, requestID)
 		return
 	}
-	logSR("relay.subscriptionRequestOp.process", sessionID, requestID)
-	r.lastSeenAtTouch(session)
 
 	if len(session.subscriptions) > 0 {
 		// To not yield confusing ordering of events, until we have a better implementation, we only support one at a time
@@ -2002,6 +2003,8 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 		check(err)
 	}
 	binary.BigEndian.PutUint64(subscription.shopID[:], shopDBID)
+	logSR("relay.subscriptionRequestOp.process shopDBID=%d", sessionID, requestID, shopDBID)
+	r.lastSeenAtTouch(session)
 
 	subscription.lastStatusedSeq = startSeqNo
 	subscription.lastBufferedSeq = startSeqNo

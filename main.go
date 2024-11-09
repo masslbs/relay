@@ -156,6 +156,11 @@ var notFoundError = &Error{
 	Message: "Item not found",
 }
 
+var notEnoughStockError = &Error{
+	Code:    ErrorCodes_OUT_OF_STOCK,
+	Message: "not enough stock",
+}
+
 var simulateError = &Error{
 	Code:    ErrorCodes_SIMULATED,
 	Message: "Error condition simulated for this message",
