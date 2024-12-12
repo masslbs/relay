@@ -92,7 +92,6 @@ jobs:
         with:
           repository: masslbs/pystoretest
           ssh-key: ${{ secrets.SSH_CHECKOUT_PYSTORETEST }}
-          fallback-branch: network-v2
           path: pystoretest
           ref: ${{ steps.branches.outputs.relay_pr }}
 
