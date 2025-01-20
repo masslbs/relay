@@ -13,7 +13,6 @@
     src = ./.;
     hooks = {
       gotest.enable = true;
-      gotest.package = pkgs.go_1_22;
       gofmt.enable = true;
       #revive.enable = true;
       goimports = {
@@ -55,7 +54,7 @@ in
         reuse
 
         # dev tools
-        go_1_22
+        go_1_23
         go-outline
         gopls
         gopkgs
