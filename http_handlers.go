@@ -207,10 +207,12 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			keyCardIsGuest:   isGuest,
 			keyCardPublicKey: keyCardPublicKey,
 			userWallet:       userWallet,
-			done:             make(chan struct{}),
+			done:             make(chan error),
 		}
 		r.opsInternal <- op
-		<-op.done
+		if err := <-op.done; err != nil {
+			return http.StatusConflict, err
+		}
 
 		w.WriteHeader(http.StatusCreated)
 		err = json.NewEncoder(w).Encode(map[string]any{"success": true})
