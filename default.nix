@@ -13,8 +13,8 @@ pkgs.buildGoModule {
   pname = "relay";
   pwd = ./.;
   src = ./.;
-  go = pkgs.go_1_22;
+  go = pkgs.go_1_23;
   enableParallelBuilding = true;
-  vendorHash = "sha256-aD/+1LT7W3lviGtde1M6NT9P6ECv6/y3Ce77KfpvU8g=";
+  vendorHash = "sha256-d3iWXiWbhGtaG56B939QlVNSXc4WffnftZo79Bh8Z6I=";
   ldflags = ["-X main.release=${version}"];
 }
