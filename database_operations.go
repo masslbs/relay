@@ -10,6 +10,7 @@ import (
 	crand "crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -19,7 +20,9 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	contractsabi "github.com/masslbs/relay/internal/contractabis"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -146,7 +149,7 @@ type KeyCardEnrolledInternalOp struct {
 	keyCardIsGuest   bool
 	keyCardPublicKey []byte
 	userWallet       common.Address
-	done             chan struct{}
+	done             chan error
 }
 
 // OnchainActionInternalOp are the result of on-chain access control changes of a shop
@@ -2221,6 +2224,17 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 	const insertKeyCard = `insert into keyCards (shopId, cardPublicKey, userWalletAddr, isGuest, lastVersion,  lastAckedSeq, linkedAt, lastSeenAt)
 		VALUES ($1, $2, $3, $4, 0, 0, now(), now() )`
 	_, err := r.syncTx.Exec(dbCtx, insertKeyCard, shopDBID, op.keyCardPublicKey, op.userWallet.Bytes(), op.keyCardIsGuest)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			// fmt.Fprintf(os.Stderr, "relay.keyCardEnrolledOp.debug pgErr.Code=%s pgErr.ConstraintName=%s\n", pgErr.Code, pgErr.ConstraintName)
+			if pgErr.Code == pgerrcode.UniqueViolation && pgErr.ConstraintName == "keycardsonpublickey" {
+				op.done <- errors.New("keycard already enrolled")
+				r.rollbackSyncTransaction()
+				return
+			}
+		}
+	}
 	check(err)
 
 	// emit new keycard event
