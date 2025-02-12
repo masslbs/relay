@@ -12,10 +12,13 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/masslbs/network-schema/go/objects"
 )
 
 type priceConverter interface {
-	Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int, error)
+	Convert(a, b objects.ChainAddress, amount *big.Int) (*big.Int, error)
 }
 
 const coinConversionDecimalBase = 16
@@ -68,7 +71,7 @@ var _ priceConverter = (*testingConverter)(nil)
 var bigTwo = big.NewInt(2)
 
 // Convert is a testing price converter that returns a constant value
-func (tc testingConverter) Convert(_, _ cachedShopCurrency, amount *big.Int) (*big.Int, error) {
+func (tc testingConverter) Convert(_, _ objects.ChainAddress, amount *big.Int) (*big.Int, error) {
 	r := new(big.Int).Mul(amount, bigTwo)
 	return r, nil
 }
@@ -180,12 +183,16 @@ func (cg *coinGecko) GetCoinPrice(coin string) (*big.Int, error) {
 	return jsonToBigInt(price)
 }
 
-func (cg *coinGecko) GetERC20Price(coin cachedShopCurrency) (*big.Int, error) {
+func (cg *coinGecko) GetERC20Price(coin objects.ChainAddress) (*big.Int, error) {
 	plat, err := cg.lookupPlatform(coin.ChainID)
 	if err != nil {
 		return nil, fmt.Errorf("unsupported coingecko platform: %d: %w", coin.ChainID, err)
 	}
-	url := fmt.Sprintf("https://api.coingecko.com/api/v3/simple/token_price/%s?contract_addresses=%s&vs_currencies=%s&precision=full", plat.ID, coin.Addr.Hex(), cg.fiatCurrency)
+	url := fmt.Sprintf("https://api.coingecko.com/api/v3/simple/token_price/%s?contract_addresses=%s&vs_currencies=%s&precision=full",
+		plat.ID,
+		common.Address(coin.Address).Hex(),
+		cg.fiatCurrency,
+	)
 	if cg.demoKey != "" {
 		url += "&x_cg_demo_api_key=" + cg.demoKey
 	}
@@ -203,7 +210,7 @@ func (cg *coinGecko) GetERC20Price(coin cachedShopCurrency) (*big.Int, error) {
 	if err != nil {
 		return nil, err
 	}
-	hexAddr := coin.Addr.Hex()
+	hexAddr := common.Address(coin.Address).Hex()
 	token, ok := data[strings.ToLower(hexAddr)]
 	if !ok {
 		return nil, fmt.Errorf("token %s not in response: %+v", hexAddr, data)
@@ -216,13 +223,13 @@ func (cg *coinGecko) GetERC20Price(coin cachedShopCurrency) (*big.Int, error) {
 }
 
 // Convert converts the amount from a (base currency) to b (chosen/target)
-func (cg *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int, error) {
+func (cg *coinGecko) Convert(a, b objects.ChainAddress, amount *big.Int) (*big.Int, error) {
 	var (
-		basedInErc20  = ZeroAddress.Cmp(a.Addr) != 0
+		basedInErc20  = ZeroAddress.Cmp(common.Address(a.Address)) != 0
 		decimalsBased uint8
 		basePrice     *big.Int
 
-		chosenIsErc20  = ZeroAddress.Cmp(b.Addr) != 0
+		chosenIsErc20  = ZeroAddress.Cmp(common.Address(b.Address)) != 0
 		decimalsChosen uint8
 		chosenPrice    *big.Int
 
@@ -232,14 +239,9 @@ func (cg *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int
 	// get decimals count for erc20s
 	// TODO: since this is a contract we should be able cache it when adding the token..?
 	if basedInErc20 {
-		tok, err = cg.ethereum.GetERC20Metadata(a.ChainID, a.Addr)
+		tok, err = cg.ethereum.GetERC20Metadata(a.ChainID, common.Address(a.Address))
 		if err != nil {
 			return nil, fmt.Errorf("convert: metadata for base %v: %w", a, err)
-		}
-
-		// let's not assume these contracts are static code
-		if err := tok.validate(); err != nil {
-			return nil, err
 		}
 
 		decimalsBased = tok.decimals
@@ -255,14 +257,9 @@ func (cg *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int
 	}
 
 	if chosenIsErc20 {
-		tok, err = cg.ethereum.GetERC20Metadata(b.ChainID, b.Addr)
+		tok, err = cg.ethereum.GetERC20Metadata(b.ChainID, common.Address(b.Address))
 		if err != nil {
 			return nil, fmt.Errorf("convert: metadata for chosen %v: %w", b, err)
-		}
-
-		// let's not assume these contracts are static code
-		if err := tok.validate(); err != nil {
-			return nil, err
 		}
 
 		decimalsChosen = tok.decimals

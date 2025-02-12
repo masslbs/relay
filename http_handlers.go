@@ -17,8 +17,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gobwas/ws"
+	"github.com/masslbs/network-schema/go/objects"
 	"github.com/spruceid/siwe-go"
 )
 
@@ -82,11 +84,7 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			return http.StatusBadRequest, fmt.Errorf("invalid signature: %w", err)
 		}
 
-		recoveredECDSAPubKey, err := crypto.UnmarshalPubkey(recoveredPubKey)
-		if err != nil {
-			return http.StatusBadRequest, fmt.Errorf("unmarshalPubkey failed: %w", err)
-		}
-		userWallet := crypto.PubkeyToAddress(*recoveredECDSAPubKey)
+		userWallet := crypto.PubkeyToAddress(*recoveredPubKey)
 
 		msg, err := siwe.ParseMessage(data.Message)
 		if err != nil {
@@ -103,12 +101,12 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 
 			// assuming the enrollment is directly on the relay
 			if msg.GetDomain() != refererURL.Host {
-				return http.StatusBadRequest, fmt.Errorf("referered domain did not match")
+				return http.StatusBadRequest, fmt.Errorf("referred domain did not match")
 			}
 
 			siweURI := msg.GetURI()
 			if siweURI.Host != refererURL.Host {
-				return http.StatusBadRequest, fmt.Errorf("refered URI did not match")
+				return http.StatusBadRequest, fmt.Errorf("referred URI did not match")
 			}
 
 			/* TODO: not sure how to scope this
@@ -180,8 +178,8 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			return http.StatusBadRequest, fmt.Errorf("invalid hex encoding of keycard: %w", err)
 		}
 
-		if n := len(keyCardPublicKey); n != 64 {
-			return http.StatusBadRequest, fmt.Errorf("keyCardPublicKey length is not 64 but %d", n)
+		if n := len(keyCardPublicKey); n != objects.PublicKeySize {
+			return http.StatusBadRequest, fmt.Errorf("keyCardPublicKey length is not %d but %d", objects.PublicKeySize, n)
 		}
 
 		//  check if shop exists
@@ -190,8 +188,11 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			return http.StatusBadRequest, fmt.Errorf("no owner for shop: %w", err)
 		}
 
-		var isGuest bool = req.URL.Query().Get("guest") == "1"
-		if !isGuest {
+		isGuest := req.URL.Query().Get("guest") == "1"
+		if isGuest {
+			// if the user is a guest, we need to set the userWallet to the zero address
+			userWallet = common.Address{}
+		} else {
 			has, err := r.ethereum.ClerkHasAccess(&shopTokenID, userWallet)
 			if err != nil {
 				return http.StatusInternalServerError, fmt.Errorf("contract call error: %w", err)
@@ -205,22 +206,15 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 		op := &KeyCardEnrolledInternalOp{
 			shopNFT:          shopTokenID,
 			keyCardIsGuest:   isGuest,
-			keyCardPublicKey: keyCardPublicKey,
-			userWallet:       userWallet,
+			keyCardPublicKey: objects.PublicKey(keyCardPublicKey),
+			userWallet:       objects.EthereumAddress{Address: userWallet},
 			done:             make(chan error),
 		}
 		r.opsInternal <- op
+
+		// wait for the operation to complete
 		if err := <-op.done; err != nil {
 			return http.StatusConflict, err
-		}
-
-		w.WriteHeader(http.StatusCreated)
-		err = json.NewEncoder(w).Encode(map[string]any{"success": true})
-		if err != nil {
-			log("relay.enrollKeyCard.responseFailure err=%s", err)
-			// returning an error would mean sending error code
-			// we already sent one so we cant
-			return 0, nil
 		}
 
 		return http.StatusCreated, nil
@@ -228,17 +222,19 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 	return func(w http.ResponseWriter, req *http.Request) {
 		start := now()
 		code, err := fn(w, req)
-		r.metric.httpStatusCodes.WithLabelValues(strconv.Itoa(code), req.URL.Path).Inc()
-		r.metric.httpResponseTimes.WithLabelValues(strconv.Itoa(code), req.URL.Path).Set(tookF(start))
+		strCode := strconv.Itoa(code)
+		r.metric.httpStatusCodes.WithLabelValues(strCode, req.URL.Path).Inc()
+		r.metric.httpResponseTimes.WithLabelValues(strCode, req.URL.Path).Set(tookF(start))
+		w.WriteHeader(code)
+		jsonEnc := json.NewEncoder(w)
 		if err != nil {
-			jsonEnc := json.NewEncoder(w)
 			log("relay.enrollKeyCard.failed err=%s", err)
-			w.WriteHeader(code)
 			err = jsonEnc.Encode(map[string]any{"handler": "enrollKeyCard", "error": err.Error()})
-			if err != nil {
-				log("relay.enrollKeyCard.failedToRespond err=%s", err)
-			}
-			return
+		} else {
+			err = jsonEnc.Encode(map[string]any{"handler": "enrollKeyCard", "success": true})
+		}
+		if err != nil {
+			log("relay.enrollKeyCard.responseFailure err=%s", err)
 		}
 	}
 }

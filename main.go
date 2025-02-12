@@ -6,8 +6,12 @@
 package main
 
 import (
+	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/pprof"
 	"os"
@@ -16,16 +20,21 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/getsentry/sentry-go"
+	"github.com/jackc/pgx/v5"
+	cbor "github.com/masslbs/network-schema/go/cbor"
+	"github.com/masslbs/network-schema/go/objects"
+	"github.com/masslbs/network-schema/go/patch"
+	pb "github.com/masslbs/network-schema/go/pb"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
 	"github.com/ssgreg/repeat"
-	"google.golang.org/protobuf/proto"
 )
 
 // set via ldflags during build
@@ -67,8 +76,8 @@ var simulateErrorRate = 0
 var simulateIgnoreRate = 0
 
 var (
-	networkVersions            = []uint{3}
-	currentRelayVersion uint16 = 3
+	networkVersions            = []uint{4}
+	currentRelayVersion uint16 = 4
 )
 
 var initLoggingOnce sync.Once
@@ -113,11 +122,12 @@ func initLogging() {
 	}
 }
 
-func (err *Error) Error() string {
-	return "(" + ErrorCodes_name[int32(err.Code)] + "): " + err.Message
-}
+// TODO: differentiate network-schema errors from relay errors
+// func (err *Error) Error() string {
+// 	return "(" + ErrorCodes_name[int32(err.Code)] + "): " + err.Message
+// }
 
-func coalesce(errs ...*Error) *Error {
+func coalesce(errs ...*pb.Error) *pb.Error {
 	for _, err := range errs {
 		if err != nil {
 			return err
@@ -126,49 +136,54 @@ func coalesce(errs ...*Error) *Error {
 	return nil
 }
 
-var tooManyConcurrentRequestsError = &Error{
-	Code:    ErrorCodes_TOO_MANY_CONCURRENT_REQUESTS,
+var tooManyConcurrentRequestsError = &pb.Error{
+	Code:    pb.ErrorCodes_TOO_MANY_CONCURRENT_REQUESTS,
 	Message: "Too many concurrent requests sent to server",
 }
 
-var alreadyAuthenticatedError = &Error{
-	Code:    ErrorCodes_ALREADY_AUTHENTICATED,
+var alreadyAuthenticatedError = &pb.Error{
+	Code:    pb.ErrorCodes_ALREADY_AUTHENTICATED,
 	Message: "Already authenticated in a previous message",
 }
 
-var notAuthenticatedError = &Error{
-	Code:    ErrorCodes_NOT_AUTHENTICATED,
+var notAuthenticatedError = &pb.Error{
+	Code:    pb.ErrorCodes_NOT_AUTHENTICATED,
 	Message: "Must authenticate before sending any other messages",
 }
 
-var alreadyConnectedError = &Error{
-	Code:    ErrorCodes_ALREADY_CONNECTED,
-	Message: "Already connected from this device in another session",
+var alreadyConnectedError = &pb.Error{
+	Code:    pb.ErrorCodes_ALREADY_CONNECTED,
+	Message: "Already connected from this keyCard in another session",
 }
 
-var unlinkedKeyCardError = &Error{
-	Code:    ErrorCodes_UNLINKED_KEYCARD,
+var unlinkedKeyCardError = &pb.Error{
+	Code:    pb.ErrorCodes_UNLINKED_KEYCARD,
 	Message: "Key Card was removed from the Shop",
 }
 
-var notFoundError = &Error{
-	Code:    ErrorCodes_NOT_FOUND,
+var notAllowedError = &pb.Error{
+	Code:    pb.ErrorCodes_INVALID,
+	Message: "not allowed",
+}
+
+var notFoundError = &pb.Error{
+	Code:    pb.ErrorCodes_NOT_FOUND,
 	Message: "Item not found",
 }
 
-var notEnoughStockError = &Error{
-	Code:    ErrorCodes_OUT_OF_STOCK,
+var notEnoughStockError = &pb.Error{
+	Code:    pb.ErrorCodes_OUT_OF_STOCK,
 	Message: "not enough stock",
 }
 
-var simulateError = &Error{
-	Code:    ErrorCodes_SIMULATED,
+var simulateError = &pb.Error{
+	Code:    pb.ErrorCodes_SIMULATED,
 	Message: "Error condition simulated for this message",
 }
 
-var minimumVersionError = &Error{
-	Code:    ErrorCodes_MINUMUM_VERSION_NOT_REACHED,
-	Message: "Minumum version not reached for this request",
+var minimumVersionError = &pb.Error{
+	Code:    pb.ErrorCodes_MINIMUM_VERSION_NOT_REACHED,
+	Message: "Minimum version not reached for this request",
 }
 
 // Metric maps a name to a prometheus metric.
@@ -291,7 +306,8 @@ func server() {
 	r.writesEnabled = true
 	go r.run()
 
-	// spawn payment watchers
+	// spawn on-chain watchers
+
 	type watcher struct {
 		name string
 		fn   func(*ethClient) error
@@ -373,7 +389,8 @@ func server() {
 	mux.HandleFunc("/health", healthHandleFunc(r))
 	mux.HandleFunc("/sentry-test", sentryTestHandler())
 
-	// Reliablity Kludge
+	// Reliability Kludge
+	// by serving our own ipfs repository we ensure the blobs we added are immediately available
 	mux.HandleFunc("/ipfs/", ipfsCatHandleFunc())
 
 	corsOpts := cors.Options{
@@ -384,7 +401,7 @@ func server() {
 		corsOpts.Debug = true
 	}
 
-	wrappedHandler := sentrySetupHttpHandler(mux)
+	wrappedHandler := sentrySetupHTTPHandler(mux)
 
 	// Flush buffered events before the program terminates.
 	// Set the timeout to the maximum duration the program can afford to wait.
@@ -400,26 +417,11 @@ func server() {
 
 // CLI
 
-func debugObject(eventType string) {
-
-	pbData, err := io.ReadAll(os.Stdin)
-	check(err)
-
-	switch strings.ToLower(eventType) {
-	case "listing":
-		var lis Listing
-		err = proto.Unmarshal(pbData, &lis)
-		check(err)
-		spew.Dump(&lis)
-	default:
-		fmt.Fprintln(os.Stderr, "unhandled event type:"+eventType)
-		os.Exit(1)
-	}
-}
-
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage:\n")
 	fmt.Fprintf(os.Stderr, "  relay server\n")
+	fmt.Fprintf(os.Stderr, "  relay dump-shop <shop-id> <output-file>\n")
+	fmt.Fprintf(os.Stderr, "  relay cbor-decode <type> <cbor-data>\n")
 	os.Exit(1)
 }
 
@@ -442,9 +444,113 @@ func main() {
 			}
 		}()
 		server()
-	} else if cmd == "debug-obj" && len(cmdArgs) == 1 {
-		debugObject(cmdArgs[0])
+	} else if cmd == "dump-shop" {
+		if len(cmdArgs) != 2 {
+			fmt.Fprintf(os.Stderr, "Usage: relay dump-shop <shop-id> <output-file>\n")
+			os.Exit(1)
+		}
+		shopID := strings.TrimPrefix(cmdArgs[0], "0x")
+		outputFile := cmdArgs[1]
+		var output io.Writer
+		if outputFile == "-" {
+			output = os.Stdout
+		} else {
+			var err error
+			output, err = os.Create(outputFile)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to create output file: %s\n", err)
+				os.Exit(1)
+			}
+		}
+		err := dumpShop(shopID, output)
+		if err != nil {
+			fmt.Fprint(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+	} else if cmd == "cbor-decode" {
+		if len(cmdArgs) != 2 {
+			fmt.Fprintf(os.Stderr, "Usage: relay cbor-decode <type> <cbor-data>\n")
+			os.Exit(1)
+		}
+		cborData, err := hex.DecodeString(cmdArgs[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to decode hex: %s\n", err)
+			os.Exit(1)
+		}
+		switch cmdArgs[0] {
+		case "Patch":
+			var patch patch.Patch
+			err := cbor.Unmarshal([]byte(cborData), &patch)
+			check(err)
+			spew.Dump(patch)
+		case "manifest":
+			var manifest objects.Manifest
+			err := cbor.Unmarshal([]byte(cborData), &manifest)
+			check(err)
+			spew.Dump(manifest)
+		default:
+			fmt.Fprintf(os.Stderr, "Unhandled type: %s\n", cmdArgs[0])
+			os.Exit(1)
+		}
 	} else {
 		usage()
 	}
+}
+
+func dumpShop(tokenIDHex string, output io.Writer) error {
+	tokenIDBytes, err := hex.DecodeString(tokenIDHex)
+	if err != nil {
+		return fmt.Errorf("failed to decode hex: %s", err)
+	}
+	if len(tokenIDBytes) > 32 {
+		return fmt.Errorf("shop ID must be 32 bytes")
+	}
+	bigTokenID := big.NewInt(0).SetBytes(tokenIDBytes)
+
+	r := newRelay(nil)
+	r.connect()
+
+	var (
+		dbID   uint64
+		shopID ObjectIDArray
+		ctx    = context.Background()
+	)
+
+	err = r.connPool.QueryRow(ctx, `select id from shops where tokenId = $1`, bigTokenID.String()).Scan(&dbID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("shop not found (tokenId=%s)", bigTokenID)
+		}
+		return fmt.Errorf("failed to retrieve shop: %s", err)
+	}
+	binary.BigEndian.PutUint64(shopID[:], dbID)
+
+	r.hydrateShops(NewSetInts(shopID))
+	shopState, ok := r.shopIDsToShopState.GetHas(shopID)
+	if !ok {
+		return fmt.Errorf("shop not found")
+	}
+
+	w := tabwriter.NewWriter(os.Stderr, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(w, "Shop ID:\t%s\n", shopID)
+	fmt.Fprintf(w, "Shop Token ID (base 10):\t%s\n", shopState.data.Manifest.ShopID.String())
+
+	rootHash, err := shopState.data.Hash()
+	if err != nil {
+		return fmt.Errorf("failed to get shop root hash: %s", err)
+	}
+	fmt.Fprintf(w, "Shop Root Hash:\t%x\n", rootHash)
+	fmt.Fprintf(w, "PatchSets:\t%d\n", shopState.lastUsedSeq)
+	fmt.Fprintf(w, "Accounts:\t%d\n", shopState.data.Accounts.Size())
+	fmt.Fprintf(w, "Listings:\t%d\n", shopState.data.Listings.Size())
+	fmt.Fprintf(w, "Inventory:\t%d\n", shopState.data.Inventory.Size())
+	fmt.Fprintf(w, "Tags:\t%d\n", shopState.data.Tags.Size())
+	fmt.Fprintf(w, "Orders:\t%d\n", shopState.data.Orders.Size())
+	w.Flush()
+
+	err = cbor.DefaultEncoder(output).Encode(shopState.data)
+	if err != nil {
+		return fmt.Errorf("failed to encode shop: %s", err)
+	}
+	return nil
 }
