@@ -15,6 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/jackc/pgx/v5"
 	"github.com/ssgreg/repeat"
 )
@@ -48,6 +49,8 @@ var (
 	//eventSignaturePermissionRemoved = crypto.Keccak256Hash([]byte("PermissionRemoved(uint256,address,uint8)"))
 )
 
+const maxLastBlocks = 100
+
 // OnChain account actions
 func (r *Relay) subscribeAccountEvents(geth *ethClient) error {
 	log("watcher.subscribeAccountEvents.start chainID=%d", geth.chainID)
@@ -61,7 +64,13 @@ func (r *Relay) subscribeAccountEvents(geth *ethClient) error {
 		return repeat.HintTemporary(err)
 	}
 
+	lastBlock, err := getCurrentMinusNBlocks(ctx, gethClient, maxLastBlocks)
+	if err != nil {
+		return repeat.HintTemporary(err)
+	}
+
 	qry := ethereum.FilterQuery{
+		FromBlock: lastBlock,
 		Addresses: []common.Address{
 			geth.contractAddresses.ShopRegistry,
 		},
@@ -150,7 +159,7 @@ func (r *Relay) getPaymentWaiterForERC20Transfer(chainID uint64, purchaseAddr, t
 	query := `
 		SELECT shopId, orderId, paymentChosenAt, purchaseAddr, lastBlockNo, coinsTotal, erc20TokenAddr
 		FROM payments
-		WHERE payedAt IS NULL
+		WHERE paidAt IS NULL
 			AND erc20TokenAddr = $1
 			AND purchaseAddr = $2
 			AND paymentChosenAt >= NOW() - INTERVAL '1 day'
@@ -180,7 +189,7 @@ func (r *Relay) getPaymentWaiterForPaymentMade(chainID uint64, paymentIDHash com
 	const query = `SELECT shopId, orderId, paymentChosenAt
 	FROM payments
 	WHERE
-	payedAt IS NULL
+	paidAt IS NULL
 	AND paymentChosenAt >= NOW() - INTERVAL '1 day'
 	AND paymentID = $1
 	AND chainId = $2`
@@ -210,8 +219,12 @@ func (r *Relay) subscribeFilterLogsPaymentsMade(geth *ethClient) error {
 	if err != nil {
 		return repeat.HintTemporary(err)
 	}
-
+	lastBlock, err := getCurrentMinusNBlocks(ctx, gethClient, maxLastBlocks)
+	if err != nil {
+		return repeat.HintTemporary(err)
+	}
 	qry := ethereum.FilterQuery{
+		FromBlock: lastBlock,
 		Addresses: []common.Address{
 			geth.contractAddresses.Payments,
 		},
@@ -249,14 +262,11 @@ watch:
 			orderID := order.orderID
 			log("watcher.subscribeFilterLogsPaymentsMade.found orderId=%x txHash=%x", orderID, vLog.TxHash)
 
-			_, has := r.ordersByOrderID.get(order.shopID, orderID)
-			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%x", orderID))
-
 			op := PaymentFoundInternalOp{
 				shopID:    order.shopID,
 				orderID:   order.orderID,
-				txHash:    &Hash{Raw: vLog.TxHash.Bytes()},
-				blockHash: &Hash{Raw: vLog.BlockHash.Bytes()},
+				txHash:    &vLog.TxHash,
+				blockHash: vLog.BlockHash,
 				done:      make(chan struct{}),
 			}
 			r.opsInternal <- &op
@@ -280,13 +290,19 @@ func (r *Relay) subscribeFilterLogsERC20Transfers(geth *ethClient) error {
 		return repeat.HintTemporary(err)
 	}
 
-	ch := make(chan types.Log)
+	lastBlock, err := getCurrentMinusNBlocks(ctx, rpc, maxLastBlocks)
+	if err != nil {
+		return repeat.HintTemporary(err)
+	}
+
 	arg := ethereum.FilterQuery{
+		FromBlock: lastBlock,
 		Topics: [][]common.Hash{
 			{eventSignatureTransferErc20},
 		},
 	}
 
+	ch := make(chan types.Log)
 	subscription, err := rpc.SubscribeFilterLogs(ctx, arg, ch)
 	if err != nil {
 		err = fmt.Errorf("watcher.subscribeFilterLogsERC20Transfers.EthSubscribeFailed: %w", err)
@@ -328,12 +344,6 @@ func (r *Relay) subscribeFilterLogsERC20Transfers(geth *ethClient) error {
 }
 
 func (r *Relay) processERC20Transfer(geth *ethClient, order PaymentWaiter, vLog types.Log) error {
-
-	_, has := r.ordersByOrderID.get(order.shopID, order.orderID)
-	if !has {
-		return fmt.Errorf("order not found for orderId=%x", order.orderID)
-	}
-
 	evts, err := geth.erc20ContractABI.Unpack("Transfer", vLog.Data)
 	if err != nil {
 		return fmt.Errorf("failedToUnpackTransfer tx=%s err=%s", vLog.TxHash.Hex(), err)
@@ -352,8 +362,8 @@ func (r *Relay) processERC20Transfer(geth *ethClient, order PaymentWaiter, vLog 
 		op := PaymentFoundInternalOp{
 			shopID:    order.shopID,
 			orderID:   order.orderID,
-			txHash:    &Hash{Raw: vLog.TxHash.Bytes()},
-			blockHash: &Hash{Raw: vLog.BlockHash.Bytes()},
+			txHash:    &vLog.TxHash,
+			blockHash: vLog.BlockHash,
 			done:      make(chan struct{}),
 		}
 		r.opsInternal <- &op
@@ -399,12 +409,14 @@ func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
 				continue
 			}
 
-			debug("watcher.processNewHeadForEther.dbRead took=%d orders=%d", took(start), len(orders))
+			debug("watcher.processNewHeadForEther.dbRead took=%d orders=%d newHeadHeight=%s", took(start), len(orders), newHead.Number)
 
 			// Process the new block for each order
 			for _, order := range orders {
 				addr := order.purchaseAddr
-				balance, err := rpc.BalanceAt(ctx, addr, newHead.Number)
+				// we are testing 2 blocks in the past to avoid reorgs
+				checkBlock := new(big.Int).Sub(newHead.Number, big.NewInt(2))
+				balance, err := rpc.BalanceAt(ctx, addr, checkBlock)
 				if err != nil {
 					err = fmt.Errorf("subscribeNewHeadsForEther.balanceAtFailed addr=%s block=%s err=%w", addr.Hex(), newHead.Number, err)
 					debug(err.Error())
@@ -415,15 +427,20 @@ func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
 					continue
 				}
 
+				checkedBlock, err := rpc.BlockByNumber(ctx, checkBlock)
+				if err != nil {
+					err = fmt.Errorf("subscribeNewHeadsForEther.getBlockByNumberFailed block=%s err=%w", checkBlock, err)
+					debug(err.Error())
+					return repeat.HintTemporary(err)
+				}
+
 				debug("watcher.subscribeNewHeadsForEther.checkTx checkingBlock=%s to=%s", newHead.Hash().Hex(), addr.Hex())
 				orderID := order.orderID
-				_, has := r.ordersByOrderID.get(order.shopID, orderID)
-				assertWithMessage(has, fmt.Sprintf("order not found for orderId=%x", orderID))
 
 				op := PaymentFoundInternalOp{
 					shopID:    order.shopID,
 					orderID:   order.orderID,
-					blockHash: &Hash{Raw: newHead.Hash().Bytes()},
+					blockHash: checkedBlock.Hash(),
 					done:      make(chan struct{}),
 				}
 				r.opsInternal <- &op
@@ -440,7 +457,7 @@ func (r *Relay) getOpenEtherPayments(ctx context.Context, chainID uint64) (map[c
 
 	openPaymentsQry := `SELECT shopId, orderId, paymentChosenAt, purchaseAddr, coinsTotal
 			FROM payments
-			WHERE payedAt IS NULL
+			WHERE paidAt IS NULL
 				AND erc20TokenAddr IS NULL
 				AND paymentChosenAt >= NOW() - INTERVAL '1 day'
 		        AND chainId = $1
@@ -472,4 +489,16 @@ func (r *Relay) getOpenEtherPayments(ctx context.Context, chainID uint64) (map[c
 	}
 
 	return orders, nil
+}
+
+func getCurrentMinusNBlocks(ctx context.Context, geth *ethclient.Client, n int64) (*big.Int, error) {
+	header, err := geth.HeaderByNumber(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	result := new(big.Int).Sub(header.Number, big.NewInt(n))
+	if result.Sign() < 0 {
+		return big.NewInt(0), nil
+	}
+	return result, nil
 }

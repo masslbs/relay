@@ -36,14 +36,14 @@ type EventTypes struct {
 
 func main() {
 	if len(os.Args) != 3 {
-		fmt.Fprintf(os.Stderr, "usage: %s <schema-version> <schema-commit>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s <schema-version> <commit-hash>\n", os.Args[0])
 		os.Exit(1)
 		return
 	}
 	version := os.Args[1]
-	date := os.Args[2]
+	commitHash := os.Args[2]
 
-	headerTmpl := `// Generated from network-schema. Files: constants.txt at version v{{.Version}} ({{.Date}})
+	headerTmpl := `// Generated from network-schema. Files: constants.txt at version v{{.Version}} ({{.CommitHash}})
 //lint:file-ignore U1000 Ignore all unused code, it's generated
 
 package main
@@ -69,7 +69,7 @@ const (
 
 	err = tmpl.Execute(os.Stdout, map[string]interface{}{
 		"Version":    version,
-		"Date":       date,
+		"CommitHash": commitHash,
 		"Constants":  constantsTxt,
 		"EventTypes": fromSQL.EventTypes,
 	})
@@ -120,7 +120,7 @@ func processSchemaSQL(filePath string) FromSQL {
 		if line == "" {
 			continue
 		}
-		prefix := "create type eventTypeEnum as enum ("
+		prefix := "create type objectTypeEnum as enum ("
 		if strings.HasPrefix(line, prefix) {
 			trimmed := strings.Trim(line, prefix)
 			types := strings.Split(trimmed, ", ")

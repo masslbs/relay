@@ -6,12 +6,6 @@ name: test
 
 on: [push]
 
-env:
-  PGUSER: postgres
-  PGPASSWORD: postgres
-  PGHOST: localhost
-  PGPORT: 5432
-
 jobs:
   relay-tests:
     runs-on: [self-hosted, linux]
@@ -21,33 +15,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-
-    services:
-      postgres:
-        image: postgres
-        env:
-          POSTGRES_PASSWORD: postgres
-        # Set health checks to wait until postgres has started
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-
-      ipfs:
-        image: cryptix/ipfs-offline:v1
-        ports:
-          - 5001:5001
-
-      anvil:
-        image: ghcr.io/foundry-rs/foundry:latest
-        ports:
-          - 8545:8545
-        options: --entrypoint anvil
-        env:
-          ANVIL_IP_ADDR: 0.0.0.0
 
     steps:
       - uses: actions/checkout@v4
@@ -62,84 +29,81 @@ jobs:
         with:
           flake-lock-path: relay/flake.lock
 
-      - name: Compile / smoke test relay
-        run: nix build '.#relay'
-        working-directory: relay
-
-      # relay builds => run tests
-
       - name: Extract branches
         shell: bash
         run: |
-          echo "contracts=$(jq -r '.nodes.contracts.locked.rev' relay/flake.lock)" >> $GITHUB_OUTPUT
           echo "relay_pr=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
         id: branches
 
-      - name: git clone contracts
-        uses: ./relay/.github/actions/checkout
-        with:
-          repository: masslbs/contracts
-          ref: ${{ steps.branches.outputs.relay_pr }}
-          fallback-branch: ${{ steps.branches.outputs.contracts }}
-          path: contracts
-
-      - name: build ABIs and deploy market contracts
-        run: nix develop -c deploy-market
-        working-directory: contracts
+      - name: build relay and deploy services (anvil, postgres, ipfs)
+        run: nix develop -c local-testnet-dev -D -L logs/process-compose.log
+        working-directory: relay
 
       - name: git clone pystoretest
         uses: ./relay/.github/actions/checkout
         with:
           repository: masslbs/pystoretest
-          ssh-key: ${{ secrets.SSH_CHECKOUT_PYSTORETEST }}
           path: pystoretest
           ref: ${{ steps.branches.outputs.relay_pr }}
-
-      - name: prepare env file for relay
-        run: |
-          cp .env.sample .env
-          ../contracts/update_env.sh ../contracts/broadcast/deploy.s.sol/31337/run-latest.json | tee -a .env
-          sed -i 's|PORT=4444|PORT=3434|' .env
-          sed -i 's|localhost:4444|localhost:3434|' .env
-          echo "KICK_TIMEOUT=15s" >> .env
-          echo "PING_INTERVAL=5s" >> .env
-          echo "ETH_BLOCK_INTERVAL=1s" >> .env
-          cat .env
-        working-directory: relay
+          fallback-branch: network-v4
 
       - name: prepare env file for pystoretest
         run: |
           cp .env.sample .env
-          sed -i 's|localhost:4444|localhost:3434|' .env
           cat .env
         working-directory: pystoretest
 
-      - name: initdb and start relay
-        run: |
-          createdb massmarket-relay-test
-          psql massmarket-relay-test < ./db/schema.sql
-          export $(egrep -v '^#' .env | xargs)
-          ./result/bin/relay server > relay.log &
-        working-directory: relay
-
+      # TODO: we should be able to move these to probes
+      # but we still need a way to see if relay is running...
       - name: check services
+        working-directory: relay 
         run: |
           set -e
-          curl http://localhost:3434/health
+          curl http://localhost:8321/live
+          curl http://localhost:8321/processes | jq .data
+
+          timeout=10;
+          while [ $timeout -gt 0 ]; do
+            # check if relay is ready
+            processStateFname=logs/processes-${timeout}.json
+            curl http://localhost:8321/processes > $processStateFname
+            isReady=$(cat $processStateFname | jq -r '.data[] | select(.name == "relay") | .is_ready')
+            if [ "$isReady" == "Ready" ]; then
+              break
+            fi
+            echo "Relay is not ready, waiting for $timeout seconds"
+            timeout=$((timeout - 1))
+            sleep 5
+          done
+
+          if [ "$isReady" != "Ready" ]; then
+            echo "Relay is not ready"
+            nix run '.#local-testnet-dev' -- down
+            exit 1
+          fi
+
+          # should be redundant but just in case
+          curl http://localhost:4444/health
           curl http://localhost:5001/api/v0/version -X POST
           curl http://localhost:8545/ -X POST -H 'content-type: application/json' --data-raw '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":0}'
-
+        
       # test VM has 6 cores so we spare one for the relay and docker services
       - name: Run tests
         run: nix develop -c pytest -x -vv -n 5 --benchmark-skip
         working-directory: pystoretest
 
       - name: Run benchmarks
+        if: runner.name == 'ci-runner2'
         run: nix develop -c pytest --benchmark-only --benchmark-json ../bench-output.json
         working-directory: pystoretest
 
+      - name: Shutdown services
+        run: nix run '.#local-testnet-dev' -- down
+        working-directory: relay
+
       # TODO: compare against previous run
       - name: Post benchmark results
+        if: runner.name == 'ci-runner2'
         run: |
           BENCHMARK_SUMMARY=$(jq -r '
           "## Benchmark Results\n\n" +
@@ -155,9 +119,9 @@ jobs:
           echo "$BENCHMARK_SUMMARY" >> $GITHUB_STEP_SUMMARY
         working-directory: relay
 
-      - name: Upload relay log on failure
+      - name: Upload service compose log on failure
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
-          name: relay-log.txt
-          path: relay/relay.log
+          name: process-compose-log.txt
+          path: relay/logs/

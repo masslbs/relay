@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,13 +21,15 @@ import (
 	"github.com/miolini/datacounter"
 	"github.com/multiformats/go-multiaddr"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/protobuf/proto"
+
+	cbor "github.com/masslbs/network-schema/go/cbor"
+	"github.com/masslbs/network-schema/go/objects"
 )
 
 // IPFS integration
 const ipfsMaxConnectTries = 3
 
-// getIpfsClient recursivly calls itself until it was able to connect or until ipfsMaxConnectTries is reached.
+// getIpfsClient recursively calls itself until it was able to connect or until ipfsMaxConnectTries is reached.
 func getIpfsClient(ctx context.Context, errCount int, lastErr error) (*ipfsRpc.HttpApi, error) {
 	if errCount >= ipfsMaxConnectTries {
 		return nil, fmt.Errorf("getIpfsClient: tried %d times.. last error: %w", errCount, lastErr)
@@ -198,8 +201,9 @@ func ipfsCatHandleFunc() func(http.ResponseWriter, *http.Request) {
 }
 
 type savedItem struct {
-	cid       combinedID
-	versioned ipfsPath.ImmutablePath
+	cid      combinedID
+	cborHash [32]byte
+	ipfs     ipfsPath.ImmutablePath
 }
 
 type listingSnapshotter struct {
@@ -229,31 +233,35 @@ func newListingSnapshotter(m *Metric, shopID ObjectIDArray) (*listingSnapshotter
 // worker to save an listing to ipfs an pin it
 // TODO: we are saving the hole listing each call, irrespective of variations, etc.
 // we know the variations from the order, so it's okay but we should be able to de-duplicate it
-func (ls *listingSnapshotter) save(cid combinedID, item *CachedListing) {
+func (ls *listingSnapshotter) save(cid combinedID, item *objects.Listing) {
 	ctx := context.Background()
 	ls.Go(func() error {
-		data, err := proto.Marshal(item.value)
+		data, err := cbor.Marshal(item)
 		if err != nil {
-			return fmt.Errorf("mkSnapshot.encodeError item_id=%x err=%s", item.value.Id.Raw, err)
+			return fmt.Errorf("mkSnapshot.marshalError item=%d err=%s", item.ID, err)
 		}
 
 		uploadHandle := ipfsFiles.NewReaderFile(bytes.NewReader(data))
 
 		uploadedCid, err := ls.client.Unixfs().Add(ctx, uploadHandle)
 		if err != nil {
-			return fmt.Errorf("mkSnapshot.ipfsAddError item=%x err=%s", item.value.Id.Raw, err)
+			return fmt.Errorf("mkSnapshot.ipfsAddError item=%x err=%s", item.ID, err)
 		}
 
 		// TODO: wait with pinning until after the item was sold..?
-		pinKey := fmt.Sprintf("shop-%x-item-%x-%d", ls.shopID, item.value.Id.Raw, item.shopSeq)
+		pinKey := fmt.Sprintf("shop-%x-item-%d", ls.shopID, item.ID)
 		if !isDevEnv {
 			_, err = pinataPin(uploadedCid, pinKey)
 			if err != nil {
-				return fmt.Errorf("mkSnapshot.pinataFail item=%x err=%s", item.value.Id.Raw, err)
+				log("relay.mkSnapshot.pinataFail item=%x err=%s", item.ID, err)
 			}
 		}
 
-		ls.items <- savedItem{cid, uploadedCid}
+		ls.items <- savedItem{
+			cid:      cid,
+			cborHash: sha256.Sum256(data),
+			ipfs:     uploadedCid,
+		}
 
 		log("relay.mkSnapshot item=%s bytes=%d path=%s", pinKey, len(data), uploadedCid)
 		ls.metric.counterAdd("listing_snapshot", 1)
