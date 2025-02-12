@@ -34,6 +34,8 @@ import (
 	ethlog "github.com/ethereum/go-ethereum/log"
 	"github.com/ssgreg/repeat"
 
+	cbor "github.com/masslbs/network-schema/go/cbor"
+	pb "github.com/masslbs/network-schema/go/pb"
 	contractsabi "github.com/masslbs/relay/internal/contractabis"
 )
 
@@ -161,9 +163,9 @@ func newEthRPCService(chains map[uint64][]string) *ethRPCService {
 	return &r
 }
 
-func (rpc *ethRPCService) signEvent(data []byte) (*Signature, error) {
+func (rpc *ethRPCService) signEvent(data []byte) (*cbor.Signature, error) {
 	sig, err := eventSign(data, rpc.keyPair.secret)
-	return &Signature{Raw: sig}, err
+	return sig, err
 }
 
 func (rpc *ethRPCService) discoveryHandleFunc(w http.ResponseWriter, _ *http.Request) {
@@ -271,24 +273,24 @@ type erc20Metadata struct {
 	tokenName string
 }
 
-func (t erc20Metadata) validate() *Error {
+func (t erc20Metadata) validate() *pb.Error {
 	if t.decimals < 1 || t.decimals > 18 {
-		return &Error{Code: ErrorCodes_INVALID, Message: "invalid token decimals"}
+		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid token decimals"}
 	}
 	if t.symbol == "" {
-		return &Error{Code: ErrorCodes_INVALID, Message: "invalid token symbol"}
+		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid token symbol"}
 	}
 	if t.tokenName == "" {
-		return &Error{Code: ErrorCodes_INVALID, Message: "invalid token name"}
+		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid token name"}
 	}
 	return nil
 }
 
 // CheckValidERC20Metadata validates the existance of the token contract
-func (rpc *ethRPCService) CheckValidERC20Metadata(chainID uint64, tokenAddr common.Address) *Error {
+func (rpc *ethRPCService) CheckValidERC20Metadata(chainID uint64, tokenAddr common.Address) *pb.Error {
 	t, err := rpc.GetERC20Metadata(chainID, tokenAddr)
 	if err != nil {
-		return &Error{Code: ErrorCodes_INVALID, Message: err.Error()}
+		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: err.Error()}
 	}
 	return t.validate()
 }

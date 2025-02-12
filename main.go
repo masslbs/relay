@@ -7,25 +7,21 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/pprof"
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/getsentry/sentry-go"
+	pb "github.com/masslbs/network-schema/go/pb"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
-	"github.com/ssgreg/repeat"
-	"google.golang.org/protobuf/proto"
 )
 
 // set via ldflags during build
@@ -113,11 +109,12 @@ func initLogging() {
 	}
 }
 
-func (err *Error) Error() string {
-	return "(" + ErrorCodes_name[int32(err.Code)] + "): " + err.Message
-}
+// TODO: differentiate network-schema errors from relay errors
+// func (err *Error) Error() string {
+// 	return "(" + ErrorCodes_name[int32(err.Code)] + "): " + err.Message
+// }
 
-func coalesce(errs ...*Error) *Error {
+func coalesce(errs ...*pb.Error) *pb.Error {
 	for _, err := range errs {
 		if err != nil {
 			return err
@@ -126,48 +123,48 @@ func coalesce(errs ...*Error) *Error {
 	return nil
 }
 
-var tooManyConcurrentRequestsError = &Error{
-	Code:    ErrorCodes_TOO_MANY_CONCURRENT_REQUESTS,
+var tooManyConcurrentRequestsError = &pb.Error{
+	Code:    pb.ErrorCodes_TOO_MANY_CONCURRENT_REQUESTS,
 	Message: "Too many concurrent requests sent to server",
 }
 
-var alreadyAuthenticatedError = &Error{
-	Code:    ErrorCodes_ALREADY_AUTHENTICATED,
+var alreadyAuthenticatedError = &pb.Error{
+	Code:    pb.ErrorCodes_ALREADY_AUTHENTICATED,
 	Message: "Already authenticated in a previous message",
 }
 
-var notAuthenticatedError = &Error{
-	Code:    ErrorCodes_NOT_AUTHENTICATED,
+var notAuthenticatedError = &pb.Error{
+	Code:    pb.ErrorCodes_NOT_AUTHENTICATED,
 	Message: "Must authenticate before sending any other messages",
 }
 
-var alreadyConnectedError = &Error{
-	Code:    ErrorCodes_ALREADY_CONNECTED,
+var alreadyConnectedError = &pb.Error{
+	Code:    pb.ErrorCodes_ALREADY_CONNECTED,
 	Message: "Already connected from this device in another session",
 }
 
-var unlinkedKeyCardError = &Error{
-	Code:    ErrorCodes_UNLINKED_KEYCARD,
+var unlinkedKeyCardError = &pb.Error{
+	Code:    pb.ErrorCodes_UNLINKED_KEYCARD,
 	Message: "Key Card was removed from the Shop",
 }
 
-var notFoundError = &Error{
-	Code:    ErrorCodes_NOT_FOUND,
+var notFoundError = &pb.Error{
+	Code:    pb.ErrorCodes_NOT_FOUND,
 	Message: "Item not found",
 }
 
-var notEnoughStockError = &Error{
-	Code:    ErrorCodes_OUT_OF_STOCK,
+var notEnoughStockError = &pb.Error{
+	Code:    pb.ErrorCodes_OUT_OF_STOCK,
 	Message: "not enough stock",
 }
 
-var simulateError = &Error{
-	Code:    ErrorCodes_SIMULATED,
+var simulateError = &pb.Error{
+	Code:    pb.ErrorCodes_SIMULATED,
 	Message: "Error condition simulated for this message",
 }
 
-var minimumVersionError = &Error{
-	Code:    ErrorCodes_MINUMUM_VERSION_NOT_REACHED,
+var minimumVersionError = &pb.Error{
+	Code:    pb.ErrorCodes_MINUMUM_VERSION_NOT_REACHED,
 	Message: "Minumum version not reached for this request",
 }
 
@@ -291,68 +288,70 @@ func server() {
 	r.writesEnabled = true
 	go r.run()
 
-	// spawn payment watchers
-	type watcher struct {
-		name string
-		fn   func(*ethClient) error
-	}
-	var (
-		fns = []watcher{
-			{"paymentMade", r.subscribeFilterLogsPaymentsMade},
-			{"erc20", r.subscribeFilterLogsERC20Transfers},
-			{"vanilla-eth", r.subscribeNewHeadsForEther},
+	// spawn on-chain watchers
+
+	/*
+		type watcher struct {
+			name string
+			fn   func(*ethClient) error
 		}
-	)
-
-	delay := repeat.FullJitterBackoff(250 * time.Millisecond)
-	delay.MaxDelay = ethereumBlockInterval
-
-	// onchain accounts only need to happen on the chain where the shop registry contract is hosted
-	go func() {
-		defer sentryRecover()
-		chainID := r.ethereum.registryChainID
-		geth, has := r.ethereum.chains[chainID]
-		assert(has)
-
-		countError := repeat.FnOnError(repeat.FnES(func(err error) {
-			log("watcher.error name=onchain-accounts chainId=%d err=%s", chainID, err)
-			r.metric.counterAdd("relay_watchError_error", 1)
-		}))
-
-		err := repeat.Repeat(
-			repeat.Fn(func() error {
-				return r.subscribeAccountEvents(geth)
-			}),
-			repeat.WithDelay(delay.Set()),
-			countError,
+		var (
+			fns = []watcher{
+				{"paymentMade", r.subscribeFilterLogsPaymentsMade},
+				{"erc20", r.subscribeFilterLogsERC20Transfers},
+				{"vanilla-eth", r.subscribeNewHeadsForEther},
+			}
 		)
-		panic(err) // TODO: panic reporting
-	}()
 
-	for _, geth := range r.ethereum.chains {
-		for _, w := range fns {
-			go func(w watcher, c *ethClient) {
-				defer sentryRecover()
-				log("watcher.spawned name=%s chainId=%d", w.name, c.chainID)
+		delay := repeat.FullJitterBackoff(250 * time.Millisecond)
+		delay.MaxDelay = ethereumBlockInterval
 
-				countError := repeat.FnOnError(repeat.FnES(func(err error) {
-					log("watcher.error name=%s chainId=%d err=%s", w.name, c.chainID, err)
-					r.metric.counterAdd("relay_watchError_error", 1)
-				}))
-				waitForNextBlock := repeat.FnOnSuccess(repeat.FnS(func() {
-					log("watcher.success name=%s chainId=%d", w.name, c.chainID)
-				}))
-				err := repeat.Repeat(
-					repeat.Fn(func() error { return w.fn(c) }),
-					waitForNextBlock,
-					countError,
-					repeat.WithDelay(delay.Set()),
-				)
-				panic(err) // TODO: panic reporting
-			}(w, geth)
+		// onchain accounts only need to happen on the chain where the shop registry contract is hosted
+		go func() {
+			defer sentryRecover()
+			chainID := r.ethereum.registryChainID
+			geth, has := r.ethereum.chains[chainID]
+			assert(has)
+
+			countError := repeat.FnOnError(repeat.FnES(func(err error) {
+				log("watcher.error name=onchain-accounts chainId=%d err=%s", chainID, err)
+				r.metric.counterAdd("relay_watchError_error", 1)
+			}))
+
+			err := repeat.Repeat(
+				repeat.Fn(func() error {
+					return r.subscribeAccountEvents(geth)
+				}),
+				repeat.WithDelay(delay.Set()),
+				countError,
+			)
+			panic(err) // TODO: panic reporting
+		}()
+
+		for _, geth := range r.ethereum.chains {
+			for _, w := range fns {
+				go func(w watcher, c *ethClient) {
+					defer sentryRecover()
+					log("watcher.spawned name=%s chainId=%d", w.name, c.chainID)
+
+					countError := repeat.FnOnError(repeat.FnES(func(err error) {
+						log("watcher.error name=%s chainId=%d err=%s", w.name, c.chainID, err)
+						r.metric.counterAdd("relay_watchError_error", 1)
+					}))
+					waitForNextBlock := repeat.FnOnSuccess(repeat.FnS(func() {
+						log("watcher.success name=%s chainId=%d", w.name, c.chainID)
+					}))
+					err := repeat.Repeat(
+						repeat.Fn(func() error { return w.fn(c) }),
+						waitForNextBlock,
+						countError,
+						repeat.WithDelay(delay.Set()),
+					)
+					panic(err) // TODO: panic reporting
+				}(w, geth)
+			}
 		}
-	}
-
+	*/
 	// open metrics and pprof after relay & ethclient booted
 	openPProfEndpoint()
 	go metric.connect()
@@ -400,23 +399,6 @@ func server() {
 
 // CLI
 
-func debugObject(eventType string) {
-
-	pbData, err := io.ReadAll(os.Stdin)
-	check(err)
-
-	switch strings.ToLower(eventType) {
-	case "listing":
-		var lis Listing
-		err = proto.Unmarshal(pbData, &lis)
-		check(err)
-		spew.Dump(&lis)
-	default:
-		fmt.Fprintln(os.Stderr, "unhandled event type:"+eventType)
-		os.Exit(1)
-	}
-}
-
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage:\n")
 	fmt.Fprintf(os.Stderr, "  relay server\n")
@@ -442,8 +424,6 @@ func main() {
 			}
 		}()
 		server()
-	} else if cmd == "debug-obj" && len(cmdArgs) == 1 {
-		debugObject(cmdArgs[0])
 	} else {
 		usage()
 	}

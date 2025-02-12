@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
+	"time"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -36,12 +37,12 @@ type EventTypes struct {
 
 func main() {
 	if len(os.Args) != 3 {
-		fmt.Fprintf(os.Stderr, "usage: %s <schema-version> <schema-commit>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s <schema-version>\n", os.Args[0])
 		os.Exit(1)
 		return
 	}
 	version := os.Args[1]
-	date := os.Args[2]
+	date := time.Now().Format("2006-01-02")
 
 	headerTmpl := `// Generated from network-schema. Files: constants.txt at version v{{.Version}} ({{.Date}})
 //lint:file-ignore U1000 Ignore all unused code, it's generated

@@ -9,12 +9,14 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
-	"net/url"
 	"os"
 	"slices"
 	"strconv"
 	"time"
 	"unicode/utf8"
+
+	cbor "github.com/masslbs/network-schema/go/cbor"
+	pb "github.com/masslbs/network-schema/go/pb"
 )
 
 var (
@@ -68,7 +70,7 @@ func assertWithMessage(testing bool, message string) {
 	}
 }
 
-func assertNilError(err *Error) {
+func assertNilError(err *pb.Error) {
 	assertWithMessage(err == nil, fmt.Sprintf("error was not nil: %+v", err))
 }
 
@@ -76,27 +78,27 @@ func assertNonemptyString(s string) {
 	assertWithMessage(s != "", "string was empty")
 }
 
-func validateObjectID(x *ObjectId, field string) *Error {
-	if x == nil {
-		return &Error{
-			Code:    ErrorCodes_INVALID,
-			Message: fmt.Sprintf("Field `%s` must be a non-zero objectId", field),
-		}
-	}
-	return validateBytes(x.Raw, field+".id", 8)
-}
+// func validateObjectID(x *ObjectId, field string) *Error {
+// 	if x == nil {
+// 		return &Error{
+// 			Code:    ErrorCodes_INVALID,
+// 			Message: fmt.Sprintf("Field `%s` must be a non-zero objectId", field),
+// 		}
+// 	}
+// 	return validateBytes(x.Raw, field+".id", 8)
+// }
 
-func validateString(s string, field string, maxLength int) *Error {
+func validateString(s string, field string, maxLength int) *pb.Error {
 	if s == "" {
-		return &Error{
-			Code:    ErrorCodes_INVALID,
+		return &pb.Error{
+			Code:    pb.ErrorCodes_INVALID,
 			Message: fmt.Sprintf("Field `%s` must be a non-empty string", field),
 		}
 	}
 	runeCount := utf8.RuneCountInString(s)
 	if runeCount > maxLength {
-		return &Error{
-			Code:    ErrorCodes_INVALID,
+		return &pb.Error{
+			Code:    pb.ErrorCodes_INVALID,
 			Message: fmt.Sprintf("Field `%s` must be no more than %d characters, got %d", field, maxLength, runeCount),
 		}
 	}
@@ -108,141 +110,142 @@ const (
 	signatureBytes = 65
 )
 
-func validateBytes(val []byte, field string, want uint) *Error {
+func validateBytes(val []byte, field string, want uint) *pb.Error {
 	if n := len(val); uint(n) != want {
-		return &Error{
-			Code:    ErrorCodes_INVALID,
+		return &pb.Error{
+			Code:    pb.ErrorCodes_INVALID,
 			Message: fmt.Sprintf("Field `%s` must have correct amount of bytes, got %d", field, n),
 		}
 	}
 	return nil
 }
 
-func validateChainID(val uint64, field string) *Error {
+func validateChainID(val uint64, field string) *pb.Error {
 	if val == 0 {
-		return &Error{
-			Code:    ErrorCodes_INVALID,
+		return &pb.Error{
+			Code:    pb.ErrorCodes_INVALID,
 			Message: fmt.Sprintf("Field `%s` must be a valid chainID, not 0", field)}
 
 	}
 	return nil
 }
 
-func (payee *Payee) validate(field string) *Error {
-	return coalesce(
-		validateString(payee.Name, field+".name", 128),
-		payee.Address.validate(field+".address"),
-		validateChainID(payee.ChainId, field+".chain_id"),
-	)
-}
-
-func (pk *PublicKey) validate() *Error {
-	return validateBytes(pk.Raw, "public_key", publicKeyBytes)
-}
-
-func (sig *Signature) validate() *Error {
-	return validateBytes(sig.Raw, "signature", signatureBytes)
-}
-
-func (curr *ShopCurrency) validate(field string) *Error {
-	return coalesce(
-		curr.Address.validate(field+".address"),
-		validateChainID(curr.ChainId, field+".chain_id"),
-	)
-}
-
-func (addr *EthereumAddress) validate(field string) *Error {
-	return validateEthAddressBytes(addr.Raw, field)
-}
-
-func validateEthAddressBytes(addr []byte, field string) *Error {
-	return validateBytes(addr, field, 20)
-}
-
-func (lo *ListingOption) validate(field string) *Error {
-	errs := []*Error{
-		validateObjectID(lo.Id, field+".id"),
-		validateString(lo.Title, field+".title", 512),
-	}
-	for i, v := range lo.Variations {
-		field := field + fmt.Sprintf(".variation[%d]", i)
-		errs = append(errs, v.validate(field))
-	}
-	return coalesce(errs...)
-}
-
-func (lv *ListingVariation) validate(field string) *Error {
-	errs := []*Error{
-		validateObjectID(lv.Id, field+".id"),
-		lv.VariationInfo.validate(field + ".variation_info"),
-	}
-	return coalesce(errs...)
-
-}
-
-func (lm *ListingMetadata) validate(field string) *Error {
-	errs := []*Error{
-		validateString(lm.Title, field+".title", 512),
-		validateString(lm.Description, field+".description", 512),
-	}
-	for i, img := range lm.Images {
-		field := field + fmt.Sprintf(".image[%d]", i)
-		errs = append(errs, validateURL(img, field))
-	}
-	return coalesce(errs...)
-}
-
-func (region *ShippingRegion) validate(field string) *Error {
-	errs := []*Error{
-		validateString(region.Name, field+".name", 128),
-	}
-	// if city is non-empty, the fields before it also have to be non-empty, etc.
-	if region.PostalCode != "" && region.Country == "" {
-		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + ": country needs to be set if postal_code is"})
+/*
+	func (payee *Payee) validate(field string) *Error {
+		return coalesce(
+			validateString(payee.Name, field+".name", 128),
+			payee.Address.validate(field+".address"),
+			validateChainID(payee.ChainId, field+".chain_id"),
+		)
 	}
 
-	if region.City != "" && (region.PostalCode == "" || region.Country == "") {
-		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + ": country and postal_code need to be set if city is"})
-	}
-	for i, mod := range region.OrderPriceModifiers {
-		modField := field + fmt.Sprintf(".order_price_modifier_id[%d]", i)
-		errs = append(errs, mod.validate(modField))
-	}
-	return coalesce(errs...)
-}
-
-func (mod *OrderPriceModifier) validate(field string) *Error {
-	errs := []*Error{
-		validateString(mod.Title, field+".title", 128),
-	}
-	switch tv := mod.Modification.(type) {
-	case *OrderPriceModifier_Absolute:
-		abs := tv.Absolute
-		errs = append(errs, abs.Diff.validate(field+".modification/absolute.diff"))
-	case *OrderPriceModifier_Percentage:
-		perc := tv.Percentage
-		errs = append(errs, perc.validate(field+".modification/percentage"))
-	default:
-		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + fmt.Sprintf(".modification: unhandled type: %T", tv)})
+	func (pk *PublicKey) validate() *Error {
+		return validateBytes(pk.Raw, "public_key", publicKeyBytes)
 	}
 
-	return coalesce(errs...)
-}
+	func (sig *Signature) validate() *Error {
+		return validateBytes(sig.Raw, "signature", signatureBytes)
+	}
 
-func (i *Uint256) validate(field string) *Error {
-	return validateBytes(i.Raw, field, 32)
-}
+	func (curr *ShopCurrency) validate(field string) *Error {
+		return coalesce(
+			curr.Address.validate(field+".address"),
+			validateChainID(curr.ChainId, field+".chain_id"),
+		)
+	}
 
-func validateURL(k string, field string) *Error {
-	if _, err := url.Parse(k); err != nil {
-		return &Error{
-			Code:    ErrorCodes_INVALID,
-			Message: fmt.Sprintf("Field `%s` must be a valid URL", field),
+	func (addr *EthereumAddress) validate(field string) *Error {
+		return validateEthAddressBytes(addr.Raw, field)
+	}
+
+	func validateEthAddressBytes(addr []byte, field string) *Error {
+		return validateBytes(addr, field, 20)
+	}
+
+	func (lo *ListingOption) validate(field string) *Error {
+		errs := []*Error{
+			validateObjectID(lo.Id, field+".id"),
+			validateString(lo.Title, field+".title", 512),
 		}
+		for i, v := range lo.Variations {
+			field := field + fmt.Sprintf(".variation[%d]", i)
+			errs = append(errs, v.validate(field))
+		}
+		return coalesce(errs...)
 	}
-	return nil
+
+	func (lv *ListingVariation) validate(field string) *Error {
+		errs := []*Error{
+			validateObjectID(lv.Id, field+".id"),
+			lv.VariationInfo.validate(field + ".variation_info"),
+		}
+		return coalesce(errs...)
+
 }
 
+	func (lm *ListingMetadata) validate(field string) *Error {
+		errs := []*Error{
+			validateString(lm.Title, field+".title", 512),
+			validateString(lm.Description, field+".description", 512),
+		}
+		for i, img := range lm.Images {
+			field := field + fmt.Sprintf(".image[%d]", i)
+			errs = append(errs, validateURL(img, field))
+		}
+		return coalesce(errs...)
+	}
+
+	func (region *ShippingRegion) validate(field string) *Error {
+		errs := []*Error{
+			validateString(region.Name, field+".name", 128),
+		}
+		// if city is non-empty, the fields before it also have to be non-empty, etc.
+		if region.PostalCode != "" && region.Country == "" {
+			errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + ": country needs to be set if postal_code is"})
+		}
+
+		if region.City != "" && (region.PostalCode == "" || region.Country == "") {
+			errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + ": country and postal_code need to be set if city is"})
+		}
+		for i, mod := range region.OrderPriceModifiers {
+			modField := field + fmt.Sprintf(".order_price_modifier_id[%d]", i)
+			errs = append(errs, mod.validate(modField))
+		}
+		return coalesce(errs...)
+	}
+
+	func (mod *OrderPriceModifier) validate(field string) *Error {
+		errs := []*Error{
+			validateString(mod.Title, field+".title", 128),
+		}
+		switch tv := mod.Modification.(type) {
+		case *OrderPriceModifier_Absolute:
+			abs := tv.Absolute
+			errs = append(errs, abs.Diff.validate(field+".modification/absolute.diff"))
+		case *OrderPriceModifier_Percentage:
+			perc := tv.Percentage
+			errs = append(errs, perc.validate(field+".modification/percentage"))
+		default:
+			errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + fmt.Sprintf(".modification: unhandled type: %T", tv)})
+		}
+
+		return coalesce(errs...)
+	}
+
+	func (i *Uint256) validate(field string) *Error {
+		return validateBytes(i.Raw, field, 32)
+	}
+
+	func validateURL(k string, field string) *Error {
+		if _, err := url.Parse(k); err != nil {
+			return &Error{
+				Code:    ErrorCodes_INVALID,
+				Message: fmt.Sprintf("Field `%s` must be a valid URL", field),
+			}
+		}
+		return nil
+	}
+*/
 func assertLTE(v int, max int) {
 	assertWithMessage(v <= max, fmt.Sprintf("value was greater than max: %d > %d", v, max))
 }
@@ -371,7 +374,7 @@ func (ui *SQLUint64Bytes) Uint64() uint64 {
 }
 
 // ScoreRegions compares all configured regions to a chosen address and picks the one most applicable.
-func ScoreRegions(configured map[string]*ShippingRegion, chosen *AddressDetails) (*ShippingRegion, error) {
+func ScoreRegions(configured map[string]*cbor.AddressDetails, chosen *cbor.AddressDetails) (*cbor.AddressDetails, error) {
 	type score struct {
 		Name   string
 		Points int

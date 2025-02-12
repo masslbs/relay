@@ -73,7 +73,7 @@ in
         go-ethereum # for abigen
         gotools # for stringer
         ipfs
-        contracts_abi # for run-and-deploy
+        contracts_abi # abi code generation
       ]);
 
     shellHook =

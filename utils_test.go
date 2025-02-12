@@ -7,13 +7,14 @@ package main
 import (
 	"testing"
 
+	cbor "github.com/masslbs/network-schema/go/cbor"
 	"github.com/stretchr/testify/require"
 )
 
 func TestScoreRegions_CountryMatch(t *testing.T) {
 	r := require.New(t)
 
-	configured := map[string]*ShippingRegion{
+	configured := map[string]*cbor.AddressDetails{
 		"A": {
 			Name:    "A",
 			Country: "Some",
@@ -23,12 +24,12 @@ func TestScoreRegions_CountryMatch(t *testing.T) {
 		},
 	}
 
-	one := &AddressDetails{Country: "Some"}
+	one := &cbor.AddressDetails{Country: "Some"}
 	found, err := ScoreRegions(configured, one)
 	r.NoError(err)
 	r.Equal(found.Name, "A")
 
-	two := &AddressDetails{Country: "Other"}
+	two := &cbor.AddressDetails{Country: "Other"}
 	found, err = ScoreRegions(configured, two)
 	r.NoError(err)
 	r.Equal(found.Name, "B")
@@ -38,7 +39,7 @@ func TestScoreRegions_NoMatch(t *testing.T) {
 	r := require.New(t)
 
 	// no blank/catch-all -> no match
-	configured := map[string]*ShippingRegion{
+	configured := map[string]*cbor.AddressDetails{
 		"A": {
 			Name:    "A",
 			Country: "Some",
@@ -49,12 +50,12 @@ func TestScoreRegions_NoMatch(t *testing.T) {
 		},
 	}
 
-	one := &AddressDetails{Country: "Some"}
+	one := &cbor.AddressDetails{Country: "Some"}
 	found, err := ScoreRegions(configured, one)
 	r.NoError(err)
 	r.Equal(found.Name, "A")
 
-	two := &AddressDetails{Country: "Different One"}
+	two := &cbor.AddressDetails{Country: "Different One"}
 	found, err = ScoreRegions(configured, two)
 	r.Error(err)
 	r.Nil(found)
@@ -63,7 +64,7 @@ func TestScoreRegions_NoMatch(t *testing.T) {
 func TestScoreRegions_CityMatch(t *testing.T) {
 	r := require.New(t)
 
-	configured := map[string]*ShippingRegion{
+	configured := map[string]*cbor.AddressDetails{
 		"A": {
 			Name:       "A",
 			Country:    "Same",
@@ -77,7 +78,7 @@ func TestScoreRegions_CityMatch(t *testing.T) {
 		},
 	}
 
-	one := &AddressDetails{
+	one := &cbor.AddressDetails{
 		Country:    "Same",
 		PostalCode: "1234",
 		City:       "yup",
@@ -90,7 +91,7 @@ func TestScoreRegions_CityMatch(t *testing.T) {
 func TestScoreRegions_EdgeCase_SameCityDifferentPC(t *testing.T) {
 	r := require.New(t)
 
-	configured := map[string]*ShippingRegion{
+	configured := map[string]*cbor.AddressDetails{
 		"A": {
 			Name:       "A",
 			Country:    "Same",
@@ -105,7 +106,7 @@ func TestScoreRegions_EdgeCase_SameCityDifferentPC(t *testing.T) {
 		},
 	}
 
-	one := &AddressDetails{
+	one := &cbor.AddressDetails{
 		Country:    "Same",
 		PostalCode: "1234",
 		City:       "yup",

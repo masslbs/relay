@@ -13,6 +13,8 @@ import (
 
 	"github.com/gobwas/ws/wsutil"
 	"google.golang.org/protobuf/proto"
+
+	pb "github.com/masslbs/network-schema/go/pb"
 )
 
 // Session represents a connection to a client
@@ -20,7 +22,7 @@ type Session struct {
 	id                sessionID
 	version           uint
 	conn              net.Conn
-	messages          chan *Envelope
+	messages          chan *pb.Envelope
 	lastRequestID     int64
 	activeInRequests  *MapInts[int64, time.Time]
 	activeOutRequests *MapInts[int64, responseHandler]
@@ -41,7 +43,7 @@ func newSession(version uint, conn net.Conn, databaseOps chan RelayOp, metric *M
 		activeOutRequests: NewMapInts[int64, responseHandler](),
 		activePushes:      NewMapInts[int64, SessionOp](),
 		// TODO: Think more carefully about channel sizes.
-		messages:    make(chan *Envelope, limitMaxInRequests*2),
+		messages:    make(chan *pb.Envelope, limitMaxInRequests*2),
 		ops:         make(chan SessionOp, (limitMaxInRequests+limitMaxOutRequests)*2),
 		databaseOps: databaseOps,
 		metric:      metric,
@@ -49,9 +51,9 @@ func newSession(version uint, conn net.Conn, databaseOps chan RelayOp, metric *M
 	}
 }
 
-func (sess *Session) nextRequestID() *RequestId {
+func (sess *Session) nextRequestID() *pb.RequestId {
 	next := sess.lastRequestID + 1
-	reqID := &RequestId{Raw: next}
+	reqID := &pb.RequestId{Raw: next}
 	sess.lastRequestID = next
 	return reqID
 }
@@ -83,7 +85,7 @@ func (sess *Session) readerRun() {
 
 const limitMaxMessageSize = 128 * 1024
 
-func (sess *Session) readerReadMessage() (*Envelope, error) {
+func (sess *Session) readerReadMessage() (*pb.Envelope, error) {
 	bytes, err := wsutil.ReadClientBinary(sess.conn)
 	if err != nil {
 		logS(sess.id, "session.reader.readMessage.readError %+v", err)
@@ -96,7 +98,7 @@ func (sess *Session) readerReadMessage() (*Envelope, error) {
 
 	}
 
-	var envl Envelope
+	var envl pb.Envelope
 	err = proto.Unmarshal(bytes, &envl)
 	if err != nil {
 		logS(sess.id, "session.reader.readMessage.envelopeUnmarshalError %+v", err)
@@ -122,10 +124,10 @@ func (sess *Session) readerReadMessage() (*Envelope, error) {
 	return &envl, nil
 }
 
-func (sess *Session) writeResponse(reqID *RequestId, resp *Envelope_GenericResponse) {
-	envl := &Envelope{
+func (sess *Session) writeResponse(reqID *pb.RequestId, resp *pb.Envelope_GenericResponse) {
+	envl := &pb.Envelope{
 		RequestId: reqID,
-		Message:   &Envelope_Response{resp},
+		Message:   &pb.Envelope_Response{Response: resp},
 	}
 	requestID := reqID.Raw
 
@@ -164,8 +166,8 @@ func (sess *Session) writeResponse(reqID *RequestId, resp *Envelope_GenericRespo
 	sess.metric.counterAdd("sessions_messages_response_type_"+typeName, 1)
 }
 
-func (sess *Session) writeRequest(reqID *RequestId, msg isEnvelope_Message) {
-	envl := &Envelope{
+func (sess *Session) writeRequest(reqID *pb.RequestId, msg pb.IsEnvelope_Message) {
+	envl := &pb.Envelope{
 		RequestId: reqID,
 		Message:   msg,
 	}
@@ -175,12 +177,12 @@ func (sess *Session) writeRequest(reqID *RequestId, msg isEnvelope_Message) {
 	assert(!sess.activeOutRequests.Has(requestID))
 	var handler responseHandler
 	switch tv := msg.(type) {
-	case *Envelope_PingRequest:
+	case *pb.Envelope_PingRequest:
 		handler = handlePingResponse
-	case *Envelope_SyncStatusRequest:
-		handler = handleSyncStatusResponse
-	case *Envelope_SubscriptionPushRequest:
-		handler = handleSubscriptionPushResponse
+	// case *pb.Envelope_SyncStatusRequest:
+	// 	handler = handleSyncStatusResponse
+	// case *pb.Envelope_SubscriptionPushRequest:
+	// 	handler = handleSubscriptionPushResponse
 	default:
 		panic(fmt.Sprintf("unhandled request type: %T", tv))
 	}
@@ -206,7 +208,7 @@ func (sess *Session) writeRequest(reqID *RequestId, msg isEnvelope_Message) {
 	sess.metric.counterAdd("sessions_messages_request_type_"+typeName, 1)
 }
 
-func (sess *Session) handleMessage(im *Envelope) {
+func (sess *Session) handleMessage(im *pb.Envelope) {
 	// This accounting and verification happen here, instead of readMessage (which would be symmetric
 	// with comparable code in writeMessage) because we need everything to happen in the same
 	// goroutine, and readMessage is on a separate goroutine.
@@ -221,7 +223,7 @@ func (sess *Session) handleMessage(im *Envelope) {
 	}
 
 	var handlerFn responseHandler
-	if irm, isReq := im.isRequest(); isReq {
+	if irm, isReq := isRequest(im); isReq {
 		// Requests must not duplicate client-originating request IDs.
 		// If the client makes this error we can't coherently respond to them.
 		if sess.activeInRequests.Has(requestID.Raw) {
@@ -286,35 +288,35 @@ func (sess *Session) handleMessage(im *Envelope) {
 
 	// Handle message-specific logic.
 	switch tv := im.Message.(type) {
-	case *Envelope_Response:
+	case *pb.Envelope_Response:
 		assert(handlerFn != nil)
 		handlerFn(sess, im.RequestId, tv.Response)
 
-	case *Envelope_AuthRequest:
-		tv.AuthRequest.handle(sess, im.RequestId)
-	case *Envelope_ChallengeSolutionRequest:
-		tv.ChallengeSolutionRequest.handle(sess, im.RequestId)
+	case *pb.Envelope_AuthRequest:
+		handleAuthRequest(sess, im.RequestId, tv.AuthRequest)
+	case *pb.Envelope_ChallengeSolutionRequest:
+		handleChallengeSolutionRequest(sess, im.RequestId, tv.ChallengeSolutionRequest)
 
-	case *Envelope_GetBlobUploadUrlRequest:
-		tv.GetBlobUploadUrlRequest.handle(sess, im.RequestId)
+	// case *pb.Envelope_GetBlobUploadUrlRequest:
+	// 	tv.GetBlobUploadUrlRequest.handle(sess, im.RequestId)
 
-	case *Envelope_EventWriteRequest:
-		tv.EventWriteRequest.handle(sess, im.RequestId)
+	// case *pb.Envelope_EventWriteRequest:
+	// 	tv.EventWriteRequest.handle(sess, im.RequestId)
 
-	case *Envelope_SubscriptionRequest:
-		tv.SubscriptionRequest.handle(sess, im.RequestId)
-	case *Envelope_SubscriptionCancelRequest:
-		tv.SubscriptionCancelRequest.handle(sess, im.RequestId)
+	// case *pb.Envelope_SubscriptionRequest:
+	// 	tv.SubscriptionRequest.handle(sess, im.RequestId)
+	// case *pb.Envelope_SubscriptionCancelRequest:
+	// 	tv.SubscriptionCancelRequest.handle(sess, im.RequestId)
 
 	default:
 		panic(fmt.Sprintf("envelope.handle: unhandled message type! %T", tv))
 	}
 }
 
-func newGenericResponse(err *Error) *Envelope_GenericResponse {
-	r := &Envelope_GenericResponse{}
+func newGenericResponse(err *pb.Error) *pb.Envelope_GenericResponse {
+	r := &pb.Envelope_GenericResponse{}
 	if err != nil {
-		r.Response = &Envelope_GenericResponse_Error{Error: err}
+		r.Response = &pb.Envelope_GenericResponse_Error{Error: err}
 	}
 	return r
 }
@@ -333,7 +335,7 @@ func (sess *Session) sendDatabaseOp(op RelayOp) {
 
 func (sess *Session) heartbeat() {
 	logS(sess.id, "session.heartbeat")
-	sess.writeRequest(sess.nextRequestID(), &Envelope_PingRequest{&PingRequest{}})
+	sess.writeRequest(sess.nextRequestID(), &pb.Envelope_PingRequest{PingRequest: &pb.PingRequest{}})
 }
 
 func (sess *Session) run() {

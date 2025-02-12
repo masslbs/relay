@@ -11,6 +11,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/crypto"
+
+	cbor "github.com/masslbs/network-schema/go/cbor"
 )
 
 func ecrecoverEIP191(message, signature []byte) ([]byte, error) {
@@ -59,17 +61,21 @@ func verifyChallengeResponse(publicKey, challange, signature []byte) error {
 }
 
 // Verify verifies the signature of the event
-func (evt *SignedEvent) Verify(publicKey []byte) error {
-	return ecrecoverEIP191AndCompare(evt.Event.Value, evt.Signature.Raw, publicKey)
+func VerifyPatchSet(pset *cbor.PatchSetHeader, publicKey []byte) error {
+	// return ecrecoverEIP191AndCompare(pset.Value, pset.Signature.Raw, publicKey)
+	return fmt.Errorf("TODO: verify patch set")
 }
 
-func eventSign(evtData []byte, secret *ecdsa.PrivateKey) ([]byte, error) {
+func eventSign(evtData []byte, secret *ecdsa.PrivateKey) (*cbor.Signature, error) {
 	sighash := accounts.TextHash(evtData)
 
 	signature, err := crypto.Sign(sighash, secret)
 	if err != nil {
 		return nil, fmt.Errorf("signEvent: crypto.Sign failed: %w", err)
 	}
-
-	return signature, nil
+	if len(signature) != 65 {
+		return nil, fmt.Errorf("signEvent: signature length is not 65")
+	}
+	wrapped := cbor.Signature(signature)
+	return &wrapped, nil
 }

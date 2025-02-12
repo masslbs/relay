@@ -11,7 +11,6 @@ import (
 	"math/big"
 	"net/url"
 	"os"
-	reflect "reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -22,9 +21,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/time/rate"
-	"google.golang.org/protobuf/proto"
-	anypb "google.golang.org/protobuf/types/known/anypb"
-	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
+
+	cbor "github.com/masslbs/network-schema/go/cbor"
 )
 
 // EventState represents the state of an event in the database.
@@ -32,7 +30,7 @@ type EventState struct {
 	seq   uint64
 	acked bool
 
-	encodedEvent SignedEvent
+	// encodedEvent SignedEvent
 }
 
 // SessionState represents the state of a client in the database.
@@ -93,12 +91,11 @@ type cachedShopCurrency struct {
 	ChainID uint64
 }
 
-func (sc *ShopCurrency) cached() cachedShopCurrency {
-	assert(sc.Address != nil && sc.Address.validate("") == nil)
-	assert(sc.ChainId != 0)
+func newCachedShopCurrency(sc *cbor.ChainAddress) cachedShopCurrency {
+	assert(sc.ChainID != 0)
 	return cachedShopCurrency{
-		Addr:    common.Address(sc.Address.Raw),
-		ChainID: sc.ChainId,
+		Addr:    common.Address(sc.Address),
+		ChainID: sc.ChainID,
 	}
 }
 
@@ -108,342 +105,6 @@ func (a cachedShopCurrency) Equal(b cachedShopCurrency) bool {
 
 type cachedCurrenciesMap map[cachedShopCurrency]struct{}
 
-// </move>
-
-// CachedShopManifest is latest reduction of a ShopManifest.
-// It combines the intial ShopManifest and all UpdateShopManifests
-type CachedShopManifest struct {
-	CachedMetadata
-	init sync.Once
-
-	shopTokenID        []byte
-	payees             map[string]*Payee
-	acceptedCurrencies cachedCurrenciesMap
-	pricingCurrency    cachedShopCurrency
-	shippingRegions    map[string]*ShippingRegion
-	orderModifiers     map[ObjectIDArray]*OrderPriceModifier
-}
-
-func (current *CachedShopManifest) update(union *ShopEvent, meta CachedMetadata) {
-	current.init.Do(func() {
-		current.acceptedCurrencies = make(cachedCurrenciesMap)
-		current.payees = make(map[string]*Payee)
-		current.shippingRegions = make(map[string]*ShippingRegion)
-		current.orderModifiers = make(map[ObjectIDArray]*OrderPriceModifier)
-	})
-	switch union.Union.(type) {
-	case *ShopEvent_Manifest:
-		sm := union.GetManifest()
-		current.CachedMetadata = meta
-		current.shopTokenID = sm.TokenId.Raw
-		for _, add := range sm.AcceptedCurrencies {
-			current.acceptedCurrencies[cachedShopCurrency{
-				common.Address(add.Address.Raw),
-				add.ChainId,
-			}] = struct{}{}
-		}
-		for _, payee := range sm.Payees {
-			_, has := current.payees[payee.Name]
-			assert(!has)
-			current.payees[payee.Name] = payee
-		}
-		current.pricingCurrency = cachedShopCurrency{
-			common.Address(sm.PricingCurrency.Address.Raw),
-			sm.PricingCurrency.ChainId,
-		}
-		for _, region := range sm.ShippingRegions {
-			current.shippingRegions[region.Name] = region
-		}
-	case *ShopEvent_UpdateManifest:
-		um := union.GetUpdateManifest()
-		if adds := um.AddAcceptedCurrencies; len(adds) > 0 {
-			for _, add := range adds {
-				c := cachedShopCurrency{
-					common.Address(add.Address.Raw),
-					add.ChainId,
-				}
-				current.acceptedCurrencies[c] = struct{}{}
-			}
-		}
-		if rms := um.RemoveAcceptedCurrencies; len(rms) > 0 {
-			for _, rm := range rms {
-				c := cachedShopCurrency{
-					common.Address(rm.Address.Raw),
-					rm.ChainId,
-				}
-				delete(current.acceptedCurrencies, c)
-			}
-		}
-		if bc := um.SetPricingCurrency; bc != nil {
-			current.pricingCurrency = cachedShopCurrency{
-				Addr:    common.Address(bc.Address.Raw),
-				ChainID: bc.ChainId,
-			}
-		}
-		if p := um.AddPayee; p != nil {
-			_, taken := current.payees[p.Name]
-			assert(!taken)
-			current.payees[p.Name] = p
-		}
-		if p := um.RemovePayee; p != nil {
-			delete(current.payees, p.Name)
-		}
-		for _, add := range um.AddShippingRegions {
-			current.shippingRegions[add.Name] = add
-		}
-		for _, rm := range um.RemoveShippingRegions {
-			delete(current.shippingRegions, rm)
-		}
-	}
-}
-
-// CachedListing is the latest reduction of an Item.
-// It combines the initial CreateItem and all UpdateItems
-type CachedListing struct {
-	CachedMetadata
-	init sync.Once
-
-	value *Listing
-
-	// utility map
-	// optionID:variationID
-	options map[ObjectIDArray]map[ObjectIDArray]*ListingVariation
-}
-
-func (current *CachedListing) update(union *ShopEvent, meta CachedMetadata) {
-	current.init.Do(func() {
-		current.options = make(map[ObjectIDArray]map[ObjectIDArray]*ListingVariation)
-
-	})
-	switch tv := union.Union.(type) {
-	case *ShopEvent_Listing:
-		current.CachedMetadata = meta
-		current.value = tv.Listing
-	case *ShopEvent_UpdateListing:
-		current.CachedMetadata = meta
-		ui := tv.UpdateListing
-		if p := ui.Price; p != nil {
-			current.value.Price = p
-		}
-		if meta := ui.Metadata; meta != nil {
-			if t := meta.Title; t != "" {
-				current.value.Metadata.Title = t
-			}
-			if d := meta.Description; d != "" {
-				current.value.Metadata.Description = d
-			}
-			if i := meta.Images; i != nil {
-				current.value.Metadata.Images = i
-			}
-		}
-		// TODO: the stuff below here is a pile of poo. we shouldn't reduce the amount of duplication here
-		for _, add := range ui.AddOptions {
-			_, has := current.options[add.Id.Array()]
-			assert(!has)
-			newOpt := make(map[ObjectIDArray]*ListingVariation, len(add.Variations))
-			for _, variation := range add.Variations {
-				newOpt[variation.Id.Array()] = variation
-			}
-			current.options[add.Id.Array()] = newOpt
-			current.value.Options = append(current.value.Options, add)
-		}
-		for _, rm := range ui.RemoveOptionIds {
-			_, has := current.options[rm.Array()]
-			assert(has)
-			delete(current.options, rm.Array())
-			found := -1
-			opts := current.value.Options
-			for idx, opt := range opts {
-				if opt.Id.Equal(rm) {
-					found = idx
-					break
-				}
-			}
-			assert(found != -1)
-			opts = append(opts[:found], opts[found+1:]...)
-			current.value.Options = opts
-		}
-		for _, add := range ui.AddVariations {
-			opt, has := current.options[add.OptionId.Array()]
-			assert(has)
-			opt[add.Variation.Id.Array()] = add.Variation
-			found := -1
-			opts := current.value.Options
-			for idx, opt := range opts {
-				if opt.Id.Equal(add.OptionId) {
-					found = idx
-					break
-				}
-			}
-			assert(found != -1)
-			opts[found].Variations = append(opts[found].Variations, add.Variation)
-		}
-		for _, rm := range ui.RemoveVariationIds {
-			for _, vars := range current.options {
-				_, has := vars[rm.Array()]
-				if has {
-					delete(vars, rm.Array())
-				}
-			}
-			found := [2]int{-1, -1}
-			opts := current.value.Options
-			for idxOpt, opt := range opts {
-				for idxVar, variation := range opt.Variations {
-					if variation.Id.Equal(rm) {
-						found[0] = idxOpt
-						found[1] = idxVar
-						break
-					}
-				}
-			}
-			assert(found[0] != -1)
-			foundVars := opts[found[0]].Variations
-			foundVars = append(foundVars[:found[1]], foundVars[found[1]+1:]...)
-			opts[found[0]].Variations = foundVars
-		}
-	default:
-		panic(fmt.Sprintf("unhandled event type: %T", union.Union))
-	}
-}
-
-// CachedTag is the latest reduction of a Tag.
-// It combines the initial CreateTag and all AddToTag, RemoveFromTag, RenameTag, and DeleteTag
-type CachedTag struct {
-	CachedMetadata
-	init sync.Once
-
-	tagID   ObjectIDArray
-	name    string
-	deleted bool
-	items   *SetInts[uint64]
-}
-
-func (current *CachedTag) update(evt *ShopEvent, meta CachedMetadata) {
-	current.init.Do(func() {
-		current.items = NewSetInts[uint64]()
-	})
-	switch evt.Union.(type) {
-	case *ShopEvent_Tag:
-		current.CachedMetadata = meta
-		ct := evt.GetTag()
-		current.name = ct.Name
-		current.tagID = ct.Id.Array()
-	case *ShopEvent_UpdateTag:
-		ut := evt.GetUpdateTag()
-		for _, id := range ut.AddListingIds {
-			current.items.Add(id.Uint64())
-		}
-		for _, id := range ut.RemoveListingIds {
-			current.items.Delete(id.Uint64())
-		}
-		if r := ut.Rename; r != nil {
-			current.name = *r
-		}
-		if d := ut.Delete; d != nil && *d {
-			current.deleted = true
-		}
-	default:
-		panic(fmt.Sprintf("unhandled event type: %T", evt.Union))
-	}
-}
-
-// CachedOrder is the latest reduction of a Order.
-// It combines the initial CreateOrder and all ChangeOrder events
-type CachedOrder struct {
-	CachedMetadata
-	init sync.Once
-
-	order Order
-
-	paymentID []byte
-	items     *MapInts[combinedID, uint32]
-}
-
-func (current *CachedOrder) update(evt *ShopEvent, meta CachedMetadata) {
-	current.init.Do(func() {
-		current.items = NewMapInts[combinedID, uint32]()
-	})
-	switch msg := evt.Union.(type) {
-	case *ShopEvent_CreateOrder:
-		ct := msg.CreateOrder
-		current.CachedMetadata = meta
-		current.order.Id = ct.Id
-	case *ShopEvent_UpdateOrder:
-		uo := msg.UpdateOrder
-		switch action := uo.Action.(type) {
-		case *UpdateOrder_ChangeItems_:
-			ci := action.ChangeItems
-			for _, id := range ci.Adds {
-				sid := newCombinedID(id.ListingId, id.VariationIds...)
-				count := current.items.Get(sid)
-				count += id.Quantity
-				current.items.Set(sid, count)
-			}
-			for _, id := range ci.Removes {
-				sid := newCombinedID(id.ListingId, id.VariationIds...)
-				count := current.items.Get(sid)
-				if id.Quantity > count {
-					count = 0
-				} else {
-					count -= id.Quantity
-				}
-				current.items.Set(sid, count)
-			}
-		case *UpdateOrder_CommitItems_:
-			current.order.CommitedAt = evt.Timestamp
-		case *UpdateOrder_SetInvoiceAddress:
-			current.order.InvoiceAddress = action.SetInvoiceAddress
-			current.order.AddressUpdatedAt = evt.Timestamp
-		case *UpdateOrder_SetShippingAddress:
-			current.order.ShippingAddress = action.SetShippingAddress
-			current.order.AddressUpdatedAt = evt.Timestamp
-		case *UpdateOrder_SetPaymentDetails:
-			fin := action.SetPaymentDetails
-			current.paymentID = fin.PaymentId.Raw
-			current.order.PaymentDetailsCreatedAt = evt.Timestamp
-		case *UpdateOrder_Cancel_:
-			current.order.CanceledAt = evt.Timestamp
-		case *UpdateOrder_AddPaymentTx:
-			current.order.PaymentTransactions = append(current.order.PaymentTransactions, action.AddPaymentTx)
-		case *UpdateOrder_SetShippingStatus:
-			current.order.ShippingStatus = action.SetShippingStatus
-		}
-	default:
-		panic(fmt.Sprintf("unhandled event type: %T", evt.Union))
-
-	}
-}
-
-// CachedStock represents the latest reduction of a Shop's stock.
-// It combines all ChangeStock events.
-type CachedStock struct {
-	CachedMetadata
-
-	init sync.Once
-
-	inventory *MapInts[combinedID, int32]
-}
-
-func (current *CachedStock) update(evt *ShopEvent, _ CachedMetadata) {
-	cs := evt.GetChangeInventory()
-	if cs == nil {
-		return
-	}
-	current.init.Do(func() {
-		current.inventory = NewMapInts[combinedID, int32]()
-	})
-	cid := newCombinedID(cs.Id, cs.VariationIds...)
-	stock := current.inventory.Get(cid)
-	stock += cs.Diff
-	current.inventory.Set(cid, stock)
-}
-
-// CachedEvent is the interface for all cached events
-type CachedEvent interface {
-	comparable
-	update(*ShopEvent, CachedMetadata)
-}
-
 // ShopState helps with writing events to the database
 type ShopState struct {
 	lastUsedSeq    uint64
@@ -451,7 +112,7 @@ type ShopState struct {
 
 	relayKeyCardID             keyCardID
 	lastWrittenRelayEventNonce uint64
-	shopTokenID                Uint256
+	shopTokenID                big.Int
 }
 
 func (ss *ShopState) nextRelayEventNonce() uint64 {
@@ -485,19 +146,19 @@ type Relay struct {
 	baseURL *url.URL
 
 	// persistence
-	syncTx               pgx.Tx
-	queuedEventInserts   []*EventInsert
+	syncTx pgx.Tx
+	// queuedEventInserts   []*EventInsert
 	shopIDsToShopState   *MapInts[ObjectIDArray, *ShopState] // Changed from shopIdsToShopState
 	lastUsedServerSeq    uint64
 	lastWrittenServerSeq uint64
 
 	// caching layer
-	shopManifestsByShopID *ReductionLoader[*CachedShopManifest]
-	listingsByListingID   *ReductionLoader[*CachedListing]
-	stockByShopID         *ReductionLoader[*CachedStock]
-	tagsByTagID           *ReductionLoader[*CachedTag]
-	ordersByOrderID       *ReductionLoader[*CachedOrder]
-	allLoaders            []Loader
+	// shopManifestsByShopID *ReductionLoader[*CachedShopManifest]
+	// listingsByListingID   *ReductionLoader[*CachedListing]
+	// stockByShopID         *ReductionLoader[*CachedStock]
+	// tagsByTagID           *ReductionLoader[*CachedTag]
+	// ordersByOrderID       *ReductionLoader[*CachedOrder]
+	// allLoaders            []Loader
 
 	connectionLimiter *rate.Limiter
 	connectionCount   atomic.Int64
@@ -524,59 +185,60 @@ func newRelay(metric *Metric) *Relay {
 	r.ops = make(chan RelayOp, databaseOpsChanSize)
 	r.shopIDsToShopState = NewMapInts[ObjectIDArray, *ShopState]()
 
-	shopFieldFn := func(_ *ShopEvent, meta CachedMetadata) (ShopObjectIDArray, bool) {
-		return newShopObjectID(meta.createdByShopID, meta.createdByShopID), true
-	}
-	r.shopManifestsByShopID = newReductionLoader[*CachedShopManifest](r, shopFieldFn, []eventType{
-		eventTypeManifest,
-		eventTypeUpdateManifest,
-		eventTypeAccount,
-	}, "createdByShopId")
-	r.stockByShopID = newReductionLoader[*CachedStock](r, shopFieldFn, []eventType{eventTypeChangeInventory}, "createdByShopId")
-
-	itemsFieldFn := func(evt *ShopEvent, meta CachedMetadata) (ShopObjectIDArray, bool) {
-		switch tv := evt.Union.(type) {
-		case *ShopEvent_Listing:
-			return newShopObjectID(meta.createdByShopID, tv.Listing.Id.Array()), true
-		case *ShopEvent_UpdateListing:
-			return newShopObjectID(meta.createdByShopID, tv.UpdateListing.Id.Array()), true
+	/*
+		shopFieldFn := func(_ *ShopEvent, meta CachedMetadata) (ShopObjectIDArray, bool) {
+			return newShopObjectID(meta.createdByShopID, meta.createdByShopID), true
 		}
-		return ShopObjectIDArray{}, false
-	}
-	r.listingsByListingID = newReductionLoader[*CachedListing](r, itemsFieldFn, []eventType{
-		eventTypeListing,
-		eventTypeUpdateListing,
-	}, "objectID")
+		r.shopManifestsByShopID = newReductionLoader[*CachedShopManifest](r, shopFieldFn, []eventType{
+			eventTypeManifest,
+			eventTypeUpdateManifest,
+			eventTypeAccount,
+		}, "createdByShopId")
+		r.stockByShopID = newReductionLoader[*CachedStock](r, shopFieldFn, []eventType{eventTypeChangeInventory}, "createdByShopId")
 
-	tagsFieldFn := func(evt *ShopEvent, meta CachedMetadata) (ShopObjectIDArray, bool) {
-		switch tv := evt.Union.(type) {
-		case *ShopEvent_Tag:
-			return newShopObjectID(meta.createdByShopID, tv.Tag.Id.Array()), true
-		case *ShopEvent_UpdateTag:
-			return newShopObjectID(meta.createdByShopID, tv.UpdateTag.Id.Array()), true
+		itemsFieldFn := func(evt *ShopEvent, meta CachedMetadata) (ShopObjectIDArray, bool) {
+			switch tv := evt.Union.(type) {
+			case *ShopEvent_Listing:
+				return newShopObjectID(meta.createdByShopID, tv.Listing.Id.Array()), true
+			case *ShopEvent_UpdateListing:
+				return newShopObjectID(meta.createdByShopID, tv.UpdateListing.Id.Array()), true
+			}
+			return ShopObjectIDArray{}, false
 		}
-		return ShopObjectIDArray{}, false
-	}
-	r.tagsByTagID = newReductionLoader[*CachedTag](r, tagsFieldFn, []eventType{
-		eventTypeTag,
-		eventTypeUpdateTag,
-	}, "objectID")
+		r.listingsByListingID = newReductionLoader[*CachedListing](r, itemsFieldFn, []eventType{
+			eventTypeListing,
+			eventTypeUpdateListing,
+		}, "objectID")
 
-	ordersFieldFn := func(evt *ShopEvent, meta CachedMetadata) (ShopObjectIDArray, bool) {
-		switch tv := evt.Union.(type) {
-		case *ShopEvent_CreateOrder:
-			return newShopObjectID(meta.createdByShopID, tv.CreateOrder.Id.Array()), true
-		case *ShopEvent_UpdateOrder:
-			return newShopObjectID(meta.createdByShopID, tv.UpdateOrder.Id.Array()), true
+		tagsFieldFn := func(evt *ShopEvent, meta CachedMetadata) (ShopObjectIDArray, bool) {
+			switch tv := evt.Union.(type) {
+			case *ShopEvent_Tag:
+				return newShopObjectID(meta.createdByShopID, tv.Tag.Id.Array()), true
+			case *ShopEvent_UpdateTag:
+				return newShopObjectID(meta.createdByShopID, tv.UpdateTag.Id.Array()), true
+			}
+			return ShopObjectIDArray{}, false
 		}
+		r.tagsByTagID = newReductionLoader[*CachedTag](r, tagsFieldFn, []eventType{
+			eventTypeTag,
+			eventTypeUpdateTag,
+		}, "objectID")
 
-		return ShopObjectIDArray{}, false
-	}
-	r.ordersByOrderID = newReductionLoader[*CachedOrder](r, ordersFieldFn, []eventType{
-		eventTypeCreateOrder,
-		eventTypeUpdateOrder,
-	}, "objectID")
+		ordersFieldFn := func(evt *ShopEvent, meta CachedMetadata) (ShopObjectIDArray, bool) {
+			switch tv := evt.Union.(type) {
+			case *ShopEvent_CreateOrder:
+				return newShopObjectID(meta.createdByShopID, tv.CreateOrder.Id.Array()), true
+			case *ShopEvent_UpdateOrder:
+				return newShopObjectID(meta.createdByShopID, tv.UpdateOrder.Id.Array()), true
+			}
 
+			return ShopObjectIDArray{}, false
+		}
+		r.ordersByOrderID = newReductionLoader[*CachedOrder](r, ordersFieldFn, []eventType{
+			eventTypeCreateOrder,
+			eventTypeUpdateOrder,
+		}, "objectID")
+	*/
 	r.blobUploadTokens = make(map[string]struct{})
 	r.blobUploadTokensMu = &sync.Mutex{}
 
@@ -827,516 +489,521 @@ func (r *Relay) loadServerSeq() {
 	log("relay.loadServerSeq.finish serverSeq=%d elapsed=%d", r.lastUsedServerSeq, took(start))
 }
 
+/*
 // readEvents from the database according to some
 // `whereFragment` criteria, assumed to have a single `$1` arg for a
 // slice of indexedIds.
 // Does not change any in-memory caches; to be done by caller.
-func (r *Relay) readEvents(whereFragment string, shopID, objectID ObjectIDArray) []EventInsert {
-	// Index: events(field in whereFragment)
-	// The indicies eventsOnEventTypeAnd* should correspond to the various Loaders defined in newDatabase.
-	query := fmt.Sprintf(`select serverSeq, shopSeq, eventType, createdByKeyCardId, createdAt, createdByNetworkSchemaVersion, encoded
+
+	func (r *Relay) readEvents(whereFragment string, shopID, objectID ObjectIDArray) []EventInsert {
+		// Index: events(field in whereFragment)
+		// The indicies eventsOnEventTypeAnd* should correspond to the various Loaders defined in newDatabase.
+		query := fmt.Sprintf(`select serverSeq, shopSeq, eventType, createdByKeyCardId, createdAt, createdByNetworkSchemaVersion, encoded
+
 from events where createdByShopID = $1 and %s order by serverSeq asc`, whereFragment)
-	var rows pgx.Rows
-	var err error
-	if r.syncTx != nil {
-		rows, err = r.syncTx.Query(context.Background(), query, shopID[:], objectID[:])
-	} else {
-		rows, err = r.connPool.Query(context.Background(), query, shopID[:], objectID[:])
-	}
-	check(err)
-	defer rows.Close()
-	events := make([]EventInsert, 0)
-	for rows.Next() {
-		var (
-			m         CachedMetadata
-			eventType eventType
-			createdAt time.Time
-			encoded   []byte
-		)
-		err := rows.Scan(&m.serverSeq, &m.shopSeq, &eventType, &m.createdByKeyCardID, &createdAt, &m.createdByNetworkVersion, &encoded)
+
+		var rows pgx.Rows
+		var err error
+		if r.syncTx != nil {
+			rows, err = r.syncTx.Query(context.Background(), query, shopID[:], objectID[:])
+		} else {
+			rows, err = r.connPool.Query(context.Background(), query, shopID[:], objectID[:])
+		}
 		check(err)
-		m.createdByShopID = ObjectIDArray(shopID)
-		m.objectID = &objectID
-		var e ShopEvent
-		err = proto.Unmarshal(encoded, &e)
-		check(err)
-		events = append(events, EventInsert{
-			CachedMetadata: m,
-			evt:            &e,
-			evtType:        eventType,
-		})
+		defer rows.Close()
+		events := make([]EventInsert, 0)
+		for rows.Next() {
+			var (
+				m         CachedMetadata
+				eventType eventType
+				createdAt time.Time
+				encoded   []byte
+			)
+			err := rows.Scan(&m.serverSeq, &m.shopSeq, &eventType, &m.createdByKeyCardID, &createdAt, &m.createdByNetworkVersion, &encoded)
+			check(err)
+			m.createdByShopID = ObjectIDArray(shopID)
+			m.objectID = &objectID
+			var e ShopEvent
+			err = proto.Unmarshal(encoded, &e)
+			check(err)
+			events = append(events, EventInsert{
+				CachedMetadata: m,
+				evt:            &e,
+				evtType:        eventType,
+			})
+		}
+		check(rows.Err())
+		return events
 	}
-	check(rows.Err())
-	return events
-}
 
 // EventInsert is a struct that represents an event to be inserted into the database
-type EventInsert struct {
-	CachedMetadata
-	evtType eventType
-	evt     *ShopEvent
-	pbany   *SignedEvent
-}
 
-func newEventInsert(evt *ShopEvent, meta CachedMetadata, abstract *SignedEvent) *EventInsert {
-	return &EventInsert{
-		CachedMetadata: meta,
-		evt:            evt,
-		pbany:          abstract,
-	}
-}
-
-func (r *Relay) writeEvent(evt *ShopEvent, cm CachedMetadata, abstract *SignedEvent) {
-	assert(r.writesEnabled)
-
-	nextServerSeq := r.lastUsedServerSeq + 1
-	cm.serverSeq = nextServerSeq
-	r.lastUsedServerSeq = nextServerSeq
-
-	shopSeqPair := r.shopIDsToShopState.MustGet(cm.createdByShopID)
-	cm.shopSeq = shopSeqPair.lastUsedSeq + 1
-	shopSeqPair.lastUsedSeq = cm.shopSeq
-
-	insert := newEventInsert(evt, cm, abstract)
-	r.queuedEventInserts = append(r.queuedEventInserts, insert)
-	r.applyEvent(insert)
-}
-
-func (r *Relay) createRelayEvent(shopID ObjectIDArray, event isShopEvent_Union) {
-	shopState := r.shopIDsToShopState.MustGet(shopID)
-	evt := &ShopEvent{
-		Nonce:     shopState.nextRelayEventNonce(),
-		ShopId:    &shopState.shopTokenID,
-		Timestamp: timestamppb.Now(),
-		Union:     event,
+	type EventInsert struct {
+		CachedMetadata
+		evtType eventType
+		evt     *ShopEvent
+		pbany   *SignedEvent
 	}
 
-	var sigEvt SignedEvent
-	var err error
-	sigEvt.Event, err = anypb.New(evt)
-	check(err)
+	func newEventInsert(evt *ShopEvent, meta CachedMetadata, abstract *SignedEvent) *EventInsert {
+		return &EventInsert{
+			CachedMetadata: meta,
+			evt:            evt,
+			pbany:          abstract,
+		}
+	}
 
-	sigEvt.Signature, err = r.ethereum.signEvent(sigEvt.Event.Value)
-	check(err)
+	func (r *Relay) writeEvent(evt *ShopEvent, cm CachedMetadata, abstract *SignedEvent) {
+		assert(r.writesEnabled)
 
-	meta := newMetadata(shopState.relayKeyCardID, shopID, currentRelayVersion)
-	meta.writtenByRelay = true
-	r.writeEvent(evt, meta, &sigEvt)
-}
+		nextServerSeq := r.lastUsedServerSeq + 1
+		cm.serverSeq = nextServerSeq
+		r.lastUsedServerSeq = nextServerSeq
 
-func (r *Relay) beginSyncTransaction() {
-	assert(r.queuedEventInserts == nil)
-	assert(r.syncTx == nil)
-	r.queuedEventInserts = make([]*EventInsert, 0)
-	ctx := context.Background()
-	tx, err := r.connPool.Begin(ctx)
-	check(err)
-	r.syncTx = tx
-}
+		shopSeqPair := r.shopIDsToShopState.MustGet(cm.createdByShopID)
+		cm.shopSeq = shopSeqPair.lastUsedSeq + 1
+		shopSeqPair.lastUsedSeq = cm.shopSeq
 
-func (r *Relay) commitSyncTransaction() {
-	assert(r.queuedEventInserts != nil)
-	assert(r.syncTx != nil)
-	ctx := context.Background()
-	r.flushEvents()
-	check(r.syncTx.Commit(ctx))
-	r.queuedEventInserts = nil
-	r.syncTx = nil
-}
+		insert := newEventInsert(evt, cm, abstract)
+		r.queuedEventInserts = append(r.queuedEventInserts, insert)
+		r.applyEvent(insert)
+	}
 
-func (r *Relay) rollbackSyncTransaction() {
-	assert(r.queuedEventInserts != nil)
-	assert(r.syncTx != nil)
-	ctx := context.Background()
-	check(r.syncTx.Rollback(ctx))
-	r.queuedEventInserts = nil
-	r.syncTx = nil
-}
+	func (r *Relay) createRelayEvent(shopID ObjectIDArray, event isShopEvent_Union) {
+		shopState := r.shopIDsToShopState.MustGet(shopID)
+		evt := &ShopEvent{
+			Nonce:     shopState.nextRelayEventNonce(),
+			ShopId:    &shopState.shopTokenID,
+			Timestamp: timestamppb.Now(),
+			Union:     event,
+		}
+
+		var sigEvt SignedEvent
+		var err error
+		sigEvt.Event, err = anypb.New(evt)
+		check(err)
+
+		sigEvt.Signature, err = r.ethereum.signEvent(sigEvt.Event.Value)
+		check(err)
+
+		meta := newMetadata(shopState.relayKeyCardID, shopID, currentRelayVersion)
+		meta.writtenByRelay = true
+		r.writeEvent(evt, meta, &sigEvt)
+	}
+
+	func (r *Relay) beginSyncTransaction() {
+		assert(r.queuedEventInserts == nil)
+		assert(r.syncTx == nil)
+		r.queuedEventInserts = make([]*EventInsert, 0)
+		ctx := context.Background()
+		tx, err := r.connPool.Begin(ctx)
+		check(err)
+		r.syncTx = tx
+	}
+
+	func (r *Relay) commitSyncTransaction() {
+		assert(r.queuedEventInserts != nil)
+		assert(r.syncTx != nil)
+		ctx := context.Background()
+		r.flushEvents()
+		check(r.syncTx.Commit(ctx))
+		r.queuedEventInserts = nil
+		r.syncTx = nil
+	}
+
+	func (r *Relay) rollbackSyncTransaction() {
+		assert(r.queuedEventInserts != nil)
+		assert(r.syncTx != nil)
+		ctx := context.Background()
+		check(r.syncTx.Rollback(ctx))
+		r.queuedEventInserts = nil
+		r.syncTx = nil
+	}
 
 var dbEventInsertColumns = []string{"eventType", "eventNonce", "createdByKeyCardId", "createdByShopId", "shopSeq", "createdAt", "createdByNetworkSchemaVersion", "serverSeq", "encoded", "signature", "objectID"}
 
-func formInsert(ins *EventInsert) []interface{} {
-	var (
-		evtType = eventTypeInvalid
-		objID   *[]byte // used to stich together related events
-	)
-	switch tv := ins.evt.Union.(type) {
-	case *ShopEvent_Manifest:
-		evtType = eventTypeManifest
-	case *ShopEvent_UpdateManifest:
-		evtType = eventTypeUpdateManifest
-	case *ShopEvent_Listing:
-		evtType = eventTypeListing
-		arr := tv.Listing.Id.Raw
-		objID = &arr
-	case *ShopEvent_UpdateListing:
-		evtType = eventTypeUpdateListing
-		arr := tv.UpdateListing.Id.Raw
-		objID = &arr
-	case *ShopEvent_Tag:
-		evtType = eventTypeTag
-		arr := tv.Tag.Id.Raw
-		objID = &arr
-	case *ShopEvent_UpdateTag:
-		evtType = eventTypeUpdateTag
-		arr := tv.UpdateTag.Id.Raw
-		objID = &arr
-	case *ShopEvent_ChangeInventory:
-		evtType = eventTypeChangeInventory
-	case *ShopEvent_CreateOrder:
-		evtType = eventTypeCreateOrder
-		arr := tv.CreateOrder.Id.Raw
-		objID = &arr
-	case *ShopEvent_UpdateOrder:
-		evtType = eventTypeUpdateOrder
-		arr := tv.UpdateOrder.Id.Raw
-		objID = &arr
-	case *ShopEvent_Account:
-		evtType = eventTypeAccount
-	default:
-		panic(fmt.Errorf("formInsert.unrecognizeType eventType=%T", ins.evt.Union))
+	func formInsert(ins *EventInsert) []interface{} {
+		var (
+			evtType = eventTypeInvalid
+			objID   *[]byte // used to stich together related events
+		)
+		switch tv := ins.evt.Union.(type) {
+		case *ShopEvent_Manifest:
+			evtType = eventTypeManifest
+		case *ShopEvent_UpdateManifest:
+			evtType = eventTypeUpdateManifest
+		case *ShopEvent_Listing:
+			evtType = eventTypeListing
+			arr := tv.Listing.Id.Raw
+			objID = &arr
+		case *ShopEvent_UpdateListing:
+			evtType = eventTypeUpdateListing
+			arr := tv.UpdateListing.Id.Raw
+			objID = &arr
+		case *ShopEvent_Tag:
+			evtType = eventTypeTag
+			arr := tv.Tag.Id.Raw
+			objID = &arr
+		case *ShopEvent_UpdateTag:
+			evtType = eventTypeUpdateTag
+			arr := tv.UpdateTag.Id.Raw
+			objID = &arr
+		case *ShopEvent_ChangeInventory:
+			evtType = eventTypeChangeInventory
+		case *ShopEvent_CreateOrder:
+			evtType = eventTypeCreateOrder
+			arr := tv.CreateOrder.Id.Raw
+			objID = &arr
+		case *ShopEvent_UpdateOrder:
+			evtType = eventTypeUpdateOrder
+			arr := tv.UpdateOrder.Id.Raw
+			objID = &arr
+		case *ShopEvent_Account:
+			evtType = eventTypeAccount
+		default:
+			panic(fmt.Errorf("formInsert.unrecognizeType eventType=%T", ins.evt.Union))
+		}
+		assert(evtType != eventTypeInvalid)
+		return []interface{}{
+			evtType,                     // eventType
+			ins.evt.Nonce,               // eventNonce
+			ins.createdByKeyCardID,      // createdByKeyCardId
+			ins.createdByShopID[:],      // createdByShopId
+			ins.shopSeq,                 // shopSeq
+			now(),                       // createdAt
+			ins.createdByNetworkVersion, // createdByNetworkSchemaVersion
+			ins.serverSeq,               // serverSeq
+			ins.pbany.Event.Value,       // encoded
+			ins.pbany.Signature.Raw,     // signature
+			objID,                       // objectID
+		}
 	}
-	assert(evtType != eventTypeInvalid)
-	return []interface{}{
-		evtType,                     // eventType
-		ins.evt.Nonce,               // eventNonce
-		ins.createdByKeyCardID,      // createdByKeyCardId
-		ins.createdByShopID[:],      // createdByShopId
-		ins.shopSeq,                 // shopSeq
-		now(),                       // createdAt
-		ins.createdByNetworkVersion, // createdByNetworkSchemaVersion
-		ins.serverSeq,               // serverSeq
-		ins.pbany.Event.Value,       // encoded
-		ins.pbany.Signature.Raw,     // signature
-		objID,                       // objectID
-	}
-}
 
-func (r *Relay) flushEvents() {
-	if len(r.queuedEventInserts) == 0 {
-		return
-	}
-	assert(r.writesEnabled)
-	log("relay.flushEvents.start entries=%d", len(r.queuedEventInserts))
-	start := now()
+	func (r *Relay) flushEvents() {
+		if len(r.queuedEventInserts) == 0 {
+			return
+		}
+		assert(r.writesEnabled)
+		log("relay.flushEvents.start entries=%d", len(r.queuedEventInserts))
+		start := now()
 
-	eventTuples := make([][]any, len(r.queuedEventInserts))
-	relayEvents := make(map[keyCardID]uint64)
-	for i, ei := range r.queuedEventInserts {
-		eventTuples[i] = formInsert(ei)
-		if ei.writtenByRelay {
-			last := relayEvents[ei.createdByKeyCardID]
-			if last < ei.evt.Nonce {
-				relayEvents[ei.createdByKeyCardID] = ei.evt.Nonce
+		eventTuples := make([][]any, len(r.queuedEventInserts))
+		relayEvents := make(map[keyCardID]uint64)
+		for i, ei := range r.queuedEventInserts {
+			eventTuples[i] = formInsert(ei)
+			if ei.writtenByRelay {
+				last := relayEvents[ei.createdByKeyCardID]
+				if last < ei.evt.Nonce {
+					relayEvents[ei.createdByKeyCardID] = ei.evt.Nonce
+				}
 			}
 		}
-	}
-	assert(r.lastWrittenServerSeq < r.lastUsedServerSeq)
+		assert(r.lastWrittenServerSeq < r.lastUsedServerSeq)
 
-	insertedEventRows, conflictedEventRows := r.bulkInsert("events", dbEventInsertColumns, eventTuples)
-	for _, row := range insertedEventRows {
-		rowServerSeq := row[7].(uint64)
-		assert(r.lastWrittenServerSeq < rowServerSeq)
-		assert(rowServerSeq <= r.lastUsedServerSeq)
-		r.lastWrittenServerSeq = rowServerSeq
-		rowShopID := row[3].([]byte)
-		assert(len(rowShopID) == 8)
-		rowShopSeq := row[4].(uint64)
-		shopState := r.shopIDsToShopState.MustGet(ObjectIDArray(rowShopID))
-		assert(shopState.lastWrittenSeq < rowShopSeq)
-		assert(rowShopSeq <= shopState.lastUsedSeq)
-		shopState.lastWrittenSeq = rowShopSeq
-	}
-	assert(r.lastWrittenServerSeq <= r.lastUsedServerSeq)
-	r.queuedEventInserts = nil
-	log("relay.flushEvents.events insertedEntries=%d conflictedEntries=%d", len(insertedEventRows), len(conflictedEventRows))
-
-	ctx := context.Background()
-	if len(relayEvents) > 0 {
-		const updateRelayNonce = `UPDATE relayKeyCards set lastWrittenEventNonce=$2, lastUsedAt=now() where id = $1`
-		// TODO: there must be nicer way to do this but i'm on a train right now
-		// preferably building tuples and sending a single query but here we are...
-		for kcID, lastNonce := range relayEvents {
-			assert(kcID != 0)
-			res, err := r.syncTx.Exec(ctx, updateRelayNonce, kcID, lastNonce)
-			check(err)
-			aff := res.RowsAffected()
-			assertWithMessage(aff == 1, fmt.Sprintf("keyCards affected not 1 but %d", aff))
+		insertedEventRows, conflictedEventRows := r.bulkInsert("events", dbEventInsertColumns, eventTuples)
+		for _, row := range insertedEventRows {
+			rowServerSeq := row[7].(uint64)
+			assert(r.lastWrittenServerSeq < rowServerSeq)
+			assert(rowServerSeq <= r.lastUsedServerSeq)
+			r.lastWrittenServerSeq = rowServerSeq
+			rowShopID := row[3].([]byte)
+			assert(len(rowShopID) == 8)
+			rowShopSeq := row[4].(uint64)
+			shopState := r.shopIDsToShopState.MustGet(ObjectIDArray(rowShopID))
+			assert(shopState.lastWrittenSeq < rowShopSeq)
+			assert(rowShopSeq <= shopState.lastUsedSeq)
+			shopState.lastWrittenSeq = rowShopSeq
 		}
-	}
+		assert(r.lastWrittenServerSeq <= r.lastUsedServerSeq)
+		r.queuedEventInserts = nil
+		log("relay.flushEvents.events insertedEntries=%d conflictedEntries=%d", len(insertedEventRows), len(conflictedEventRows))
 
-	log("relay.flushEvents.finish took=%d", took(start))
-}
+		ctx := context.Background()
+		if len(relayEvents) > 0 {
+			const updateRelayNonce = `UPDATE relayKeyCards set lastWrittenEventNonce=$2, lastUsedAt=now() where id = $1`
+			// TODO: there must be nicer way to do this but i'm on a train right now
+			// preferably building tuples and sending a single query but here we are...
+			for kcID, lastNonce := range relayEvents {
+				assert(kcID != 0)
+				res, err := r.syncTx.Exec(ctx, updateRelayNonce, kcID, lastNonce)
+				check(err)
+				aff := res.RowsAffected()
+				assertWithMessage(aff == 1, fmt.Sprintf("keyCards affected not 1 but %d", aff))
+			}
+		}
+
+		log("relay.flushEvents.finish took=%d", took(start))
+	}
 
 // Loader is an interface for all loaders.
 // Loaders represent the read-through cache layer.
-type Loader interface {
-	applyEvent(*EventInsert)
-}
+
+	type Loader interface {
+		applyEvent(*EventInsert)
+	}
 
 type fieldFn func(*ShopEvent, CachedMetadata) (ShopObjectIDArray, bool)
 
 // ReductionLoader is a struct that represents a loader for a specific event type
-type ReductionLoader[T CachedEvent] struct {
-	db            *Relay
-	fieldFn       fieldFn
-	loaded        *ShopEventMap[T]
-	whereFragment string
-}
 
-func newReductionLoader[T CachedEvent](r *Relay, fn fieldFn, pgTypes []eventType, pgField string) *ReductionLoader[T] {
-	sl := &ReductionLoader[T]{}
-	sl.db = r
-	sl.fieldFn = fn
-	sl.loaded = NewShopEventMap[T]()
-	var quotedTypes = make([]string, len(pgTypes))
-	for i, pgType := range pgTypes {
-		quotedTypes[i] = fmt.Sprintf("'%s'", string(pgType))
+	type ReductionLoader[T CachedEvent] struct {
+		db            *Relay
+		fieldFn       fieldFn
+		loaded        *ShopEventMap[T]
+		whereFragment string
 	}
-	sl.whereFragment = fmt.Sprintf(`eventType IN (%s) and %s = $2`, strings.Join(quotedTypes, ","), pgField)
-	r.allLoaders = append(r.allLoaders, sl)
-	return sl
-}
 
-var zeroObjectIDArr [8]byte
-
-func (sl *ReductionLoader[T]) applyEvent(e *EventInsert) {
-	fieldID, has := sl.fieldFn(e.evt, e.CachedMetadata)
-	if !has {
-		return
-	}
-	v, has := sl.loaded.GetHas(fieldID)
-	if has {
-		v.update(e.evt, e.CachedMetadata)
-	}
-}
-
-func (sl *ReductionLoader[T]) get(shopID ObjectIDArray, objectID ObjectIDArray) (T, bool) {
-	var indexedID ShopObjectIDArray
-	copy(indexedID[:8], shopID[:])
-	copy(indexedID[8:], objectID[:])
-	var zero T
-	_, known := sl.loaded.GetHas(indexedID)
-	if !known {
-		entries := sl.db.readEvents(sl.whereFragment, shopID, objectID)
-		n := len(entries)
-		if n == 0 {
-			return zero, false
+	func newReductionLoader[T CachedEvent](r *Relay, fn fieldFn, pgTypes []eventType, pgField string) *ReductionLoader[T] {
+		sl := &ReductionLoader[T]{}
+		sl.db = r
+		sl.fieldFn = fn
+		sl.loaded = NewShopEventMap[T]()
+		var quotedTypes = make([]string, len(pgTypes))
+		for i, pgType := range pgTypes {
+			quotedTypes[i] = fmt.Sprintf("'%s'", string(pgType))
 		}
-		var empty T
-		typeOf := reflect.TypeOf(empty)
-		var zeroValT = reflect.New(typeOf.Elem())
-		var zeroVal = zeroValT.Interface().(T)
-		sl.loaded.Set(indexedID, zeroVal)
-		for _, e := range entries {
-			sl.applyEvent(&e)
+		sl.whereFragment = fmt.Sprintf(`eventType IN (%s) and %s = $2`, strings.Join(quotedTypes, ","), pgField)
+		r.allLoaders = append(r.allLoaders, sl)
+		return sl
+	}
+
+	func (sl *ReductionLoader[T]) applyEvent(e *EventInsert) {
+		fieldID, has := sl.fieldFn(e.evt, e.CachedMetadata)
+		if !has {
+			return
 		}
-		for _, qei := range sl.db.queuedEventInserts {
-			sl.applyEvent(qei)
+		v, has := sl.loaded.GetHas(fieldID)
+		if has {
+			v.update(e.evt, e.CachedMetadata)
 		}
 	}
-	all, has := sl.loaded.GetHas(indexedID)
-	return all, has
-}
 
-func (r *Relay) applyEvent(e *EventInsert) {
-	for _, loader := range r.allLoaders {
-		loader.applyEvent(e)
+	func (sl *ReductionLoader[T]) get(shopID ObjectIDArray, objectID ObjectIDArray) (T, bool) {
+		var indexedID ShopObjectIDArray
+		copy(indexedID[:8], shopID[:])
+		copy(indexedID[8:], objectID[:])
+		var zero T
+		_, known := sl.loaded.GetHas(indexedID)
+		if !known {
+			entries := sl.db.readEvents(sl.whereFragment, shopID, objectID)
+			n := len(entries)
+			if n == 0 {
+				return zero, false
+			}
+			var empty T
+			typeOf := reflect.TypeOf(empty)
+			var zeroValT = reflect.New(typeOf.Elem())
+			var zeroVal = zeroValT.Interface().(T)
+			sl.loaded.Set(indexedID, zeroVal)
+			for _, e := range entries {
+				sl.applyEvent(&e)
+			}
+			for _, qei := range sl.db.queuedEventInserts {
+				sl.applyEvent(qei)
+			}
+		}
+		all, has := sl.loaded.GetHas(indexedID)
+		return all, has
 	}
-}
+
+	func (r *Relay) applyEvent(e *EventInsert) {
+		for _, loader := range r.allLoaders {
+			loader.applyEvent(e)
+		}
+	}
 
 // Database processing
 
-func (r *Relay) debounceSessions() {
-	// Process each session.
-	// Only log if there is substantial activity because this is polling constantly and usually a no-op.
-	start := now()
+	func (r *Relay) debounceSessions() {
+		// Process each session.
+		// Only log if there is substantial activity because this is polling constantly and usually a no-op.
+		start := now()
 
-	r.sessionIDsToSessionStates.All(func(sessionID sessionID, sessionState *SessionState) bool {
-		// Kick the session if we haven't received any recent messages from it, including ping responses.
-		if time.Since(sessionState.lastSeenAt) > sessionKickTimeout {
-			r.metric.counterAdd("sessions_kick", 1)
-			logS(sessionID, "relay.debounceSessions.kick")
-			op := &StopOp{sessionID: sessionID}
-			r.sendSessionOp(sessionState, op)
-			return false
-		}
-
-		for subID, subscription := range sessionState.subscriptions {
-			r.pushOutShopLog(sessionID, sessionState, subID, subscription)
-		}
-
-		return false
-	})
-
-	// Since we're polling this loop constantly, only log if takes a non-trivial amount of time.
-	debounceTook := took(start)
-	if debounceTook > 0 {
-		r.metric.counterAdd("relay_debounceSessions_took", float64(debounceTook))
-		log("relay.debounceSessions.finish sessions=%d elapsed=%d", r.sessionIDsToSessionStates.Size(), debounceTook)
-	}
-}
-
-func (r *Relay) pushOutShopLog(sessionID sessionID, session *SessionState, subID uint16, sub *SubscriptionState) {
-	ctx := context.Background()
-
-	// If the session is authenticated, we can get user info.
-	shopState := r.shopIDsToShopState.MustGet(sub.shopID)
-	r.assertCursors(sessionID, shopState, sub)
-
-	// Calculate the new keyCard seq up to which the device has acked all pushes.
-	// Slice the buffer to drop such entries as they have completed their lifecycle.
-	// Do this all first to trim down the buffer before reading more, if possible.
-	var (
-		advancedFrom uint64
-		advancedTo   uint64
-		i            = 0
-	)
-	for ; i < len(sub.buffer); i++ {
-		entryState := sub.buffer[i]
-		if !entryState.acked {
-			break
-		}
-		assert(entryState.seq > sub.lastAckedSeq)
-		if i == 0 {
-			advancedFrom = sub.lastAckedSeq
-		}
-		sub.lastAckedSeq = entryState.seq
-		advancedTo = entryState.seq
-	}
-	if i != 0 {
-		sub.buffer = sub.buffer[i:]
-		sub.nextPushIndex -= i
-		logS(sessionID, "relay.debounceSessions.advanceSeq reason=entries from=%d to=%d", advancedFrom, advancedTo)
-		r.assertCursors(sessionID, shopState, sub)
-	}
-
-	// Check if a sync status is needed, and if so query and send it.
-	// Use the boolean to ensure we always send an initial sync status for the session,
-	// including if the user has no writes yet.
-	// If everything for the device has been pushed, advance the buffered and pushed cursors too.
-	if !sub.initialStatus || sub.lastStatusedSeq < shopState.lastWrittenSeq {
-		syncStatusStart := now()
-		op := &SyncStatusOp{
-			sessionID:      sessionID,
-			subscriptionID: subID,
-		}
-		// Index: events(createdByShopId, shopSeq)
-		query := `select count(*) from events
-			where createdByShopId = $1 and shopSeq > $2
-			  and (` + sub.whereFragment + `)`
-		err := r.connPool.QueryRow(ctx, query, sub.shopID[:], sub.lastPushedSeq).
-			Scan(&op.unpushedEvents)
-		if err != pgx.ErrNoRows {
-			check(err)
-		}
-		r.sendSessionOp(session, op)
-		sub.initialStatus = true
-		sub.lastStatusedSeq = shopState.lastWrittenSeq
-		if op.unpushedEvents == 0 {
-			sub.lastBufferedSeq = sub.lastStatusedSeq
-			sub.lastPushedSeq = sub.lastStatusedSeq
-		}
-		logS(sessionID, "relay.debounceSessions.syncStatus initialStatus=%t unpushedEvents=%d elapsed=%d", sub.initialStatus, op.unpushedEvents, took(syncStatusStart))
-		r.assertCursors(sessionID, shopState, sub)
-	}
-
-	// Check if more buffering is needed, and if so fill buffer.
-	writesNotBuffered := sub.lastBufferedSeq < shopState.lastWrittenSeq
-	var readsAllowed int
-	if len(sub.buffer) >= sessionBufferSizeRefill {
-		readsAllowed = 0
-	} else {
-		readsAllowed = sessionBufferSizeMax - len(sub.buffer)
-	}
-	if writesNotBuffered && readsAllowed > 0 {
-		readStart := now()
-		reads := 0
-		// Index: events(shopId, shopSeq)
-		query := `select e.shopSeq, e.encoded, e.signature
-			from events e
-			where e.createdByShopId = $1
-			    and e.shopSeq > $2
-				and (` + sub.whereFragment + `) order by e.shopSeq asc limit $3`
-		rows, err := r.connPool.Query(ctx, query, sub.shopID[:], sub.lastPushedSeq, readsAllowed)
-		check(err)
-		defer rows.Close()
-		for rows.Next() {
-			var (
-				eventState         = &EventState{}
-				encoded, signature []byte
-			)
-			err := rows.Scan(&eventState.seq, &encoded, &signature)
-			check(err)
-			reads++
-			// log("relay.debounceSessions.debug event=%x", eventState.eventID)
-
-			eventState.acked = false
-			sub.buffer = append(sub.buffer, eventState)
-			assert(eventState.seq > sub.lastBufferedSeq)
-			sub.lastBufferedSeq = eventState.seq
-
-			// re-create pb object from encoded database data
-			eventState.encodedEvent.Event = &anypb.Any{
-				// TODO: would prever to not craft this manually
-				TypeUrl: shopEventTypeURL,
-				Value:   encoded,
+		r.sessionIDsToSessionStates.All(func(sessionID sessionID, sessionState *SessionState) bool {
+			// Kick the session if we haven't received any recent messages from it, including ping responses.
+			if time.Since(sessionState.lastSeenAt) > sessionKickTimeout {
+				r.metric.counterAdd("sessions_kick", 1)
+				logS(sessionID, "relay.debounceSessions.kick")
+				op := &StopOp{sessionID: sessionID}
+				r.sendSessionOp(sessionState, op)
+				return false
 			}
-			eventState.encodedEvent.Signature = &Signature{Raw: signature}
-		}
-		check(rows.Err())
 
-		// If the read rows didn't use the full limit, that means we must be at the end
-		// of this user's writes.
-		if reads < readsAllowed {
-			sub.lastBufferedSeq = shopState.lastWrittenSeq
-		}
+			for subID, subscription := range sessionState.subscriptions {
+				r.pushOutShopLog(sessionID, sessionState, subID, subscription)
+			}
 
-		logS(sessionID, "relay.debounceSessions.read shopId=%x reads=%d readsAllowed=%d bufferLen=%d lastWrittenSeq=%d, lastBufferedSeq=%d elapsed=%d", sub.shopID, reads, readsAllowed, len(sub.buffer), shopState.lastWrittenSeq, sub.lastBufferedSeq, took(readStart))
-		r.metric.counterAdd("relay_events_read", float64(reads))
+			return false
+		})
+
+		// Since we're polling this loop constantly, only log if takes a non-trivial amount of time.
+		debounceTook := took(start)
+		if debounceTook > 0 {
+			r.metric.counterAdd("relay_debounceSessions_took", float64(debounceTook))
+			log("relay.debounceSessions.finish sessions=%d elapsed=%d", r.sessionIDsToSessionStates.Size(), debounceTook)
+		}
 	}
-	r.assertCursors(sessionID, shopState, sub)
 
-	// Push any events as needed.
-	const maxPushes = limitMaxOutRequests * limitMaxOutBatchSize
-	pushes := 0
-	var eventPushOp *SubscriptionPushOp
-	pushOps := make([]SessionOp, 0)
-	for ; sub.nextPushIndex < len(sub.buffer) && sub.nextPushIndex < maxPushes; sub.nextPushIndex++ {
-		entryState := sub.buffer[sub.nextPushIndex]
-		if eventPushOp != nil && len(eventPushOp.eventStates) == limitMaxOutBatchSize {
-			eventPushOp = nil
+	func (r *Relay) pushOutShopLog(sessionID sessionID, session *SessionState, subID uint16, sub *SubscriptionState) {
+		ctx := context.Background()
+
+		// If the session is authenticated, we can get user info.
+		shopState := r.shopIDsToShopState.MustGet(sub.shopID)
+		r.assertCursors(sessionID, shopState, sub)
+
+		// Calculate the new keyCard seq up to which the device has acked all pushes.
+		// Slice the buffer to drop such entries as they have completed their lifecycle.
+		// Do this all first to trim down the buffer before reading more, if possible.
+		var (
+			advancedFrom uint64
+			advancedTo   uint64
+			i            = 0
+		)
+		for ; i < len(sub.buffer); i++ {
+			entryState := sub.buffer[i]
+			if !entryState.acked {
+				break
+			}
+			assert(entryState.seq > sub.lastAckedSeq)
+			if i == 0 {
+				advancedFrom = sub.lastAckedSeq
+			}
+			sub.lastAckedSeq = entryState.seq
+			advancedTo = entryState.seq
 		}
-		if eventPushOp == nil {
-			eventPushOp = &SubscriptionPushOp{
+		if i != 0 {
+			sub.buffer = sub.buffer[i:]
+			sub.nextPushIndex -= i
+			logS(sessionID, "relay.debounceSessions.advanceSeq reason=entries from=%d to=%d", advancedFrom, advancedTo)
+			r.assertCursors(sessionID, shopState, sub)
+		}
+
+		// Check if a sync status is needed, and if so query and send it.
+		// Use the boolean to ensure we always send an initial sync status for the session,
+		// including if the user has no writes yet.
+		// If everything for the device has been pushed, advance the buffered and pushed cursors too.
+		if !sub.initialStatus || sub.lastStatusedSeq < shopState.lastWrittenSeq {
+			syncStatusStart := now()
+			op := &SyncStatusOp{
 				sessionID:      sessionID,
 				subscriptionID: subID,
-				eventStates:    make([]*EventState, 0),
 			}
-			pushOps = append(pushOps, eventPushOp)
+			// Index: events(createdByShopId, shopSeq)
+			query := `select count(*) from events
+				where createdByShopId = $1 and shopSeq > $2
+				  and (` + sub.whereFragment + `)`
+			err := r.connPool.QueryRow(ctx, query, sub.shopID[:], sub.lastPushedSeq).
+				Scan(&op.unpushedEvents)
+			if err != pgx.ErrNoRows {
+				check(err)
+			}
+			r.sendSessionOp(session, op)
+			sub.initialStatus = true
+			sub.lastStatusedSeq = shopState.lastWrittenSeq
+			if op.unpushedEvents == 0 {
+				sub.lastBufferedSeq = sub.lastStatusedSeq
+				sub.lastPushedSeq = sub.lastStatusedSeq
+			}
+			logS(sessionID, "relay.debounceSessions.syncStatus initialStatus=%t unpushedEvents=%d elapsed=%d", sub.initialStatus, op.unpushedEvents, took(syncStatusStart))
+			r.assertCursors(sessionID, shopState, sub)
 		}
-		eventPushOp.eventStates = append(eventPushOp.eventStates, entryState)
-		sub.lastPushedSeq = entryState.seq
-		pushes++
-	}
-	for _, pushOp := range pushOps {
-		r.sendSessionOp(session, pushOp)
-	}
-	if pushes > 0 {
-		logS(sessionID, "relay.debounce.push pushes=%d ops=%d", pushes, len(pushOps))
-	}
-	r.assertCursors(sessionID, shopState, sub)
 
-	// If there are no buffered events at this point, it's safe to advance the acked pointer.
-	if len(sub.buffer) == 0 && sub.lastAckedSeq < sub.lastPushedSeq {
-		logS(sessionID, "relay.debounceSessions.advanceSeq reason=emptyBuffer from=%d to=%d", sub.lastAckedSeq, sub.lastPushedSeq)
-		sub.lastAckedSeq = sub.lastPushedSeq
+		// Check if more buffering is needed, and if so fill buffer.
+		writesNotBuffered := sub.lastBufferedSeq < shopState.lastWrittenSeq
+		var readsAllowed int
+		if len(sub.buffer) >= sessionBufferSizeRefill {
+			readsAllowed = 0
+		} else {
+			readsAllowed = sessionBufferSizeMax - len(sub.buffer)
+		}
+		if writesNotBuffered && readsAllowed > 0 {
+			readStart := now()
+			reads := 0
+			// Index: events(shopId, shopSeq)
+			query := `select e.shopSeq, e.encoded, e.signature
+				from events e
+				where e.createdByShopId = $1
+				    and e.shopSeq > $2
+					and (` + sub.whereFragment + `) order by e.shopSeq asc limit $3`
+			rows, err := r.connPool.Query(ctx, query, sub.shopID[:], sub.lastPushedSeq, readsAllowed)
+			check(err)
+			defer rows.Close()
+			for rows.Next() {
+				var (
+					eventState         = &EventState{}
+					encoded, signature []byte
+				)
+				err := rows.Scan(&eventState.seq, &encoded, &signature)
+				check(err)
+				reads++
+				// log("relay.debounceSessions.debug event=%x", eventState.eventID)
+
+				eventState.acked = false
+				sub.buffer = append(sub.buffer, eventState)
+				assert(eventState.seq > sub.lastBufferedSeq)
+				sub.lastBufferedSeq = eventState.seq
+
+				// re-create pb object from encoded database data
+				eventState.encodedEvent.Event = &anypb.Any{
+					// TODO: would prever to not craft this manually
+					TypeUrl: shopEventTypeURL,
+					Value:   encoded,
+				}
+				eventState.encodedEvent.Signature = &Signature{Raw: signature}
+			}
+			check(rows.Err())
+
+			// If the read rows didn't use the full limit, that means we must be at the end
+			// of this user's writes.
+			if reads < readsAllowed {
+				sub.lastBufferedSeq = shopState.lastWrittenSeq
+			}
+
+			logS(sessionID, "relay.debounceSessions.read shopId=%x reads=%d readsAllowed=%d bufferLen=%d lastWrittenSeq=%d, lastBufferedSeq=%d elapsed=%d", sub.shopID, reads, readsAllowed, len(sub.buffer), shopState.lastWrittenSeq, sub.lastBufferedSeq, took(readStart))
+			r.metric.counterAdd("relay_events_read", float64(reads))
+		}
+		r.assertCursors(sessionID, shopState, sub)
+
+		// Push any events as needed.
+		const maxPushes = limitMaxOutRequests * limitMaxOutBatchSize
+		pushes := 0
+		var eventPushOp *SubscriptionPushOp
+		pushOps := make([]SessionOp, 0)
+		for ; sub.nextPushIndex < len(sub.buffer) && sub.nextPushIndex < maxPushes; sub.nextPushIndex++ {
+			entryState := sub.buffer[sub.nextPushIndex]
+			if eventPushOp != nil && len(eventPushOp.eventStates) == limitMaxOutBatchSize {
+				eventPushOp = nil
+			}
+			if eventPushOp == nil {
+				eventPushOp = &SubscriptionPushOp{
+					sessionID:      sessionID,
+					subscriptionID: subID,
+					eventStates:    make([]*EventState, 0),
+				}
+				pushOps = append(pushOps, eventPushOp)
+			}
+			eventPushOp.eventStates = append(eventPushOp.eventStates, entryState)
+			sub.lastPushedSeq = entryState.seq
+			pushes++
+		}
+		for _, pushOp := range pushOps {
+			r.sendSessionOp(session, pushOp)
+		}
+		if pushes > 0 {
+			logS(sessionID, "relay.debounce.push pushes=%d ops=%d", pushes, len(pushOps))
+		}
+		r.assertCursors(sessionID, shopState, sub)
+
+		// If there are no buffered events at this point, it's safe to advance the acked pointer.
+		if len(sub.buffer) == 0 && sub.lastAckedSeq < sub.lastPushedSeq {
+			logS(sessionID, "relay.debounceSessions.advanceSeq reason=emptyBuffer from=%d to=%d", sub.lastAckedSeq, sub.lastPushedSeq)
+			sub.lastAckedSeq = sub.lastPushedSeq
+		}
+		r.assertCursors(sessionID, shopState, sub)
+
+		// logS(sessionID, "relay.debounce.cursors lastWrittenSeq=%d lastStatusedshopSeq=%d lastBufferedshopSeq=%d lastPushedshopSeq=%d lastAckedSeq=%d", userState.lastWrittenSeq, sessionState.lastStatusedshopSeq, sessionState.lastBufferedshopSeq, sessionState.lastPushedshopSeq, sessionState.lastAckedSeq)
 	}
-	r.assertCursors(sessionID, shopState, sub)
-
-	// logS(sessionID, "relay.debounce.cursors lastWrittenSeq=%d lastStatusedshopSeq=%d lastBufferedshopSeq=%d lastPushedshopSeq=%d lastAckedSeq=%d", userState.lastWrittenSeq, sessionState.lastStatusedshopSeq, sessionState.lastBufferedshopSeq, sessionState.lastPushedshopSeq, sessionState.lastAckedSeq)
-}
-
+*/
 func (r *Relay) memoryStats() {
 	start := now()
 	debug("relay.memoryStats.start")
@@ -1440,9 +1107,10 @@ func (r *Relay) run() {
 			op.process(r)
 
 		case <-debounceSessionsTimer.C:
-			tickType, tickSelected = timeTick(ttDebounceSessions)
-			r.debounceSessions()
-			debounceSessionsTimer.Rewind()
+			log("TODO: re-enable sessions debounce")
+			// 	tickType, tickSelected = timeTick(ttDebounceSessions)
+			// 	r.debounceSessions()
+			// 	debounceSessionsTimer.Rewind()
 
 		case <-memoryStatsTimer.C:
 			tickType, tickSelected = timeTick(ttMemoryStats)

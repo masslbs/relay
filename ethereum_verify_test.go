@@ -5,22 +5,13 @@
 package main
 
 import (
-	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
-	"testing"
-
-	"github.com/ethereum/go-ethereum/accounts"
-	tassert "github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
-	"google.golang.org/protobuf/proto"
 )
 
+/* TODO: cbor vectors
 func TestVerifyEventVectors(t *testing.T) {
 	r := require.New(t)
 	a := tassert.New(t)
@@ -65,7 +56,7 @@ type schemaTestVectors struct {
 	}
 	Reduced struct{} `json:"reduced"`
 }
-
+*/
 // HexString can be used to turn a byteslice into a JSON hexadecimal string
 type HexString []byte
 

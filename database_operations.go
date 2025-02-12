@@ -8,23 +8,18 @@ import (
 	"bytes"
 	"context"
 	crand "crypto/rand"
-	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math"
 	"math/big"
-	"net/url"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	contractsabi "github.com/masslbs/relay/internal/contractabis"
-	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
+
+	pb "github.com/masslbs/network-schema/go/pb"
 )
 
 // SessionOp are operations that are sent to the database and are specific to a session
@@ -57,20 +52,21 @@ type HeartbeatOp struct {
 // AuthenticateOp starts authentication of a session
 type AuthenticateOp struct {
 	sessionID sessionID
-	requestID *RequestId
-	im        *AuthenticateRequest
-	err       *Error
+	requestID *pb.RequestId
+	im        *pb.AuthenticateRequest
+	err       *pb.Error
 	challenge []byte
 }
 
 // ChallengeSolvedOp finishes authentication of a session
 type ChallengeSolvedOp struct {
 	sessionID sessionID
-	requestID *RequestId
-	im        *ChallengeSolvedRequest
-	err       *Error
+	requestID *pb.RequestId
+	im        *pb.ChallengeSolvedRequest
+	err       *pb.Error
 }
 
+/*
 // SyncStatusOp sends a SyncStatusRequest to the client
 type SyncStatusOp struct {
 	sessionID      sessionID
@@ -81,11 +77,11 @@ type SyncStatusOp struct {
 // EventWriteOp processes a write of an event to the database
 type EventWriteOp struct {
 	sessionID      sessionID
-	requestID      *RequestId
-	im             *EventWriteRequest
+	requestID      *pb.RequestId
+	im             *pb.EventWriteRequest
 	decodedShopEvt *ShopEvent
 	newShopHash    []byte
-	err            *Error
+	err            *pb.Error
 }
 
 // SubscriptionRequestOp represents an operation to request a subscription.
@@ -93,19 +89,19 @@ type EventWriteOp struct {
 // the ID of the subscription to be created, and an error if any.
 type SubscriptionRequestOp struct {
 	sessionID      sessionID
-	requestID      *RequestId
-	im             *SubscriptionRequest
+	requestID      *pb.RequestId
+	im             *pb.SubscriptionRequest
 	subscriptionID uint16
-	err            *Error
+	err            *pb.Error
 }
 
 // SubscriptionCancelOp represents an operation to cancel a subscription.
 // It contains the session ID, request ID, and the subscription cancel request details.
 type SubscriptionCancelOp struct {
 	sessionID sessionID
-	requestID *RequestId
-	im        *SubscriptionCancelRequest
-	err       *Error
+	requestID *pb.RequestId
+	im        *pb.SubscriptionCancelRequest
+	err       *pb.Error
 }
 
 // SubscriptionPushOp represents an operation to push events to the client.
@@ -119,12 +115,12 @@ type SubscriptionPushOp struct {
 // GetBlobUploadURLOp processes a GetBlobUploadURLRequest from the client.
 type GetBlobUploadURLOp struct {
 	sessionID sessionID
-	requestID *RequestId
-	im        *GetBlobUploadURLRequest
+	requestID *pb.RequestId
+	im        *pb.GetBlobUploadURLRequest
 	uploadURL *url.URL
-	err       *Error
+	err       *pb.Error
 }
-
+*/
 // Internal Ops
 
 // EventLoopPingInternalOp is used by the health check
@@ -152,6 +148,7 @@ type KeyCardEnrolledInternalOp struct {
 	done             chan error
 }
 
+/*
 // OnchainActionInternalOp are the result of on-chain access control changes of a shop
 type OnchainActionInternalOp struct {
 	shopID ObjectIDArray
@@ -164,51 +161,51 @@ type OnchainActionInternalOp struct {
 type PaymentFoundInternalOp struct {
 	orderID   ObjectIDArray
 	shopID    ObjectIDArray
-	txHash    *Hash
-	blockHash *Hash
+	txHash    *cbor.Hash
+	blockHash *cbor.Hash
 
 	done chan struct{}
 }
+*/
 
 type requestMessage interface {
-	validate(uint) *Error
+	validate(uint) *pb.Error
 }
 
-func (e *Envelope) isRequest() (requestMessage, bool) {
+func isRequest(e *pb.Envelope) (requestMessage, bool) {
 	switch tv := e.Message.(type) {
 
-	case *Envelope_Response:
+	case *pb.Envelope_Response:
 		return nil, false
 
-	case *Envelope_SubscriptionRequest:
-		return tv.SubscriptionRequest, true
-	case *Envelope_SubscriptionCancelRequest:
-		return tv.SubscriptionCancelRequest, true
-
-	case *Envelope_EventWriteRequest:
-		return tv.EventWriteRequest, true
-
-	case *Envelope_AuthRequest:
+	case *pb.Envelope_AuthRequest:
 		return tv.AuthRequest, true
-	case *Envelope_ChallengeSolutionRequest:
+	case *pb.Envelope_ChallengeSolutionRequest:
 		return tv.ChallengeSolutionRequest, true
-	case *Envelope_GetBlobUploadUrlRequest:
-		return tv.GetBlobUploadUrlRequest, true
-
+		/*
+			case *pb.Envelope_SubscriptionRequest:
+				return tv.SubscriptionRequest, true
+			case *pb.Envelope_SubscriptionCancelRequest:
+				return tv.SubscriptionCancelRequest, true
+			case *pb.Envelope_EventWriteRequest:
+				return tv.EventWriteRequest, true
+			case *Envelope_GetBlobUploadUrlRequest:
+				return tv.GetBlobUploadUrlRequest, true
+		*/
 	default:
 		panic(fmt.Sprintf("Envelope.isRequest: unhandeled type: %T", tv))
 	}
 }
 
 // App/Client Sessions
-type responseHandler func(*Session, *RequestId, *Envelope_GenericResponse)
+type responseHandler func(*Session, *pb.RequestId, *pb.Envelope_GenericResponse)
 
 func (op *StopOp) handle(sess *Session) {
 	logS(sess.id, "session.stopOp")
 	sess.stopping = true
 }
 
-func handlePingResponse(sess *Session, _ *RequestId, resp *Envelope_GenericResponse) {
+func handlePingResponse(sess *Session, _ *pb.RequestId, resp *pb.Envelope_GenericResponse) {
 	assertNilError(resp.GetError())
 	op := &HeartbeatOp{
 		sessionID: sess.id,
@@ -216,14 +213,15 @@ func handlePingResponse(sess *Session, _ *RequestId, resp *Envelope_GenericRespo
 	sess.sendDatabaseOp(op)
 }
 
-func (im *AuthenticateRequest) validate(version uint) *Error {
-	if version < 3 {
-		return minimumVersionError
-	}
-	return im.PublicKey.validate()
-}
+// TODO: implement validate
+// func (im *AuthenticateRequest) validate(version uint) *pb.Error {
+// 	if version < 3 {
+// 		return minimumVersionError
+// 	}
+// 	return im.PublicKey.validate()
+// }
 
-func (im *AuthenticateRequest) handle(sess *Session, reqID *RequestId) {
+func handleAuthRequest(sess *Session, reqID *pb.RequestId, im *pb.AuthenticateRequest) {
 	op := &AuthenticateOp{
 		requestID: reqID,
 		sessionID: sess.id,
@@ -235,19 +233,20 @@ func (im *AuthenticateRequest) handle(sess *Session, reqID *RequestId) {
 func (op *AuthenticateOp) handle(sess *Session) {
 	resp := newGenericResponse(op.err)
 	if op.err == nil {
-		resp.Response = &Envelope_GenericResponse_Payload{op.challenge}
+		resp.Response = &pb.Envelope_GenericResponse_Payload{Payload: op.challenge}
 	}
 	sess.writeResponse(op.requestID, resp)
 }
 
-func (im *ChallengeSolvedRequest) validate(version uint) *Error {
-	if version < 3 {
-		return minimumVersionError
-	}
-	return im.Signature.validate()
-}
+// TODO: implement validate
+// func (im *ChallengeSolvedRequest) validate(version uint) *pb.Error {
+// 	if version < 3 {
+// 		return minimumVersionError
+// 	}
+// 	return im.Signature.validate()
+// }
 
-func (im *ChallengeSolvedRequest) handle(sess *Session, reqID *RequestId) {
+func handleChallengeSolutionRequest(sess *Session, reqID *pb.RequestId, im *pb.ChallengeSolvedRequest) {
 	op := &ChallengeSolvedOp{
 		sessionID: sess.id,
 		requestID: reqID,
@@ -261,6 +260,7 @@ func (op *ChallengeSolvedOp) handle(sess *Session) {
 	sess.writeResponse(op.requestID, resp)
 }
 
+/*
 func (op *SyncStatusOp) handle(sess *Session) {
 	reqID := sess.nextRequestID()
 	msg := &Envelope_SyncStatusRequest{
@@ -733,7 +733,7 @@ func (op *SubscriptionCancelOp) handle(sess *Session) {
 	om := newGenericResponse(op.err)
 	sess.writeResponse(op.requestID, om)
 }
-
+*/
 // database processing
 
 func (op *StartOp) process(r *Relay) {
@@ -844,7 +844,7 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 		return
 	} else if sessionState.keyCardID == 0 {
 		logS(op.sessionID, "relay.challengeSolvedOp.invalidSessionState")
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "authentication not started"}
+		op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "authentication not started"}
 		r.sendSessionOp(sessionState, op)
 		return
 	} else if !sessionState.shopID.Equal(zeroObjectIDArr) {
@@ -976,6 +976,7 @@ func (r *Relay) shopRootHash(_ ObjectIDArray) []byte {
 	return bytes.Repeat([]byte("todo"), 8)
 }
 
+/*
 func (op *EventWriteOp) process(r *Relay) {
 	ctx := context.Background()
 	sessionID := op.sessionID
@@ -1792,7 +1793,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIDA
 			}
 			return strings.Compare(a.cid.variations, b.cid.variations)
 		})
-		/* TODO: merkleization
+		// TODO: merkleization
 		for _, it := range items {
 			h := it.cid.Hash()
 			//debug("DEBUG/itemHash id=%v hash=%s ipfs=%s", it.cid, h.Hex(), it.versioned)
@@ -1800,7 +1801,6 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIDA
 		}
 		hs := hasher.Sum(nil)
 		copy(orderHash[:], hs)
-		*/
 		close(done)
 	}()
 	err = snapshotter.Wait() // also closes saveItems channel
@@ -1836,7 +1836,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIDA
 
 	if n := len(bigTotal.Bytes()); n > 32 {
 		logS(sessionID, "relay.orderPaymentChoiceOp.totalTooBig got=%d", n)
-		return &Error{Code: ErrorCodes_INVALID, Message: "payment amount exceeded uint256"}
+		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "payment amount exceeded uint256"}
 	}
 
 	// create payment address for order content
@@ -1851,7 +1851,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIDA
 		bigTotal, err = r.prices.Convert(shop.pricingCurrency, chosenCurrency, bigTotal)
 		if err != nil {
 			logS(sessionID, "relay.orderPaymentChoiceOp.priceConversion err=%s", err)
-			return &Error{Code: ErrorCodes_INVALID, Message: "failed to establish conversion price"}
+			return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to establish conversion price"}
 		}
 	}
 
@@ -1860,7 +1860,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIDA
 	ownerAddr, err := r.ethereum.GetOwnerOfShop(bigShopTokenID)
 	if err != nil {
 		logS(sessionID, "relay.orderPaymentChoiceOp.shopOwnerFailed err=%s", err)
-		return &Error{Code: ErrorCodes_INVALID, Message: "failed to get shop owner"}
+		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to get shop owner"}
 	}
 
 	// ttl
@@ -2207,6 +2207,7 @@ func (op *GetBlobUploadURLOp) process(r *Relay) {
 	r.sendSessionOp(sessionState, op)
 	logSR("relay.getBlobUploadURLOp.finish token=%s took=%d", sessionID, requestID, token, took(start))
 }
+*/
 
 // Internal ops
 
@@ -2256,116 +2257,119 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 	log("relay.KeyCardEnrolledOp.finish shopId=%d took=%d", shopDBID, took(start))
 }
 
-func (op *OnchainActionInternalOp) process(r *Relay) {
-	assert(!op.shopID.Equal(zeroObjectIDArr))
-	assert(op.user.Cmp(ZeroAddress) != 0)
-	log("db.onchainActionInternalOp.start shopID=%x user=%s", op.shopID, op.user)
-	start := now()
+/*
+	func (op *OnchainActionInternalOp) process(r *Relay) {
+		assert(!op.shopID.Equal(zeroObjectIDArr))
+		assert(op.user.Cmp(ZeroAddress) != 0)
+		log("db.onchainActionInternalOp.start shopID=%x user=%s", op.shopID, op.user)
+		start := now()
 
-	var action isAccount_Action
-	if op.add {
-		action = &Account_Add{
-			Add: &Account_OnchainAction{
-				AccountAddress: &EthereumAddress{
-					Raw: op.user.Bytes(),
+		var action isAccount_Action
+		if op.add {
+			action = &Account_Add{
+				Add: &Account_OnchainAction{
+					AccountAddress: &EthereumAddress{
+						Raw: op.user.Bytes(),
+					},
+					Tx: &Hash{Raw: op.txHash.Bytes()},
 				},
-				Tx: &Hash{Raw: op.txHash.Bytes()},
-			},
-		}
-	} else {
-		action = &Account_Remove{
-			Remove: &Account_OnchainAction{
-				AccountAddress: &EthereumAddress{
-					Raw: op.user.Bytes(),
+			}
+		} else {
+			action = &Account_Remove{
+				Remove: &Account_OnchainAction{
+					AccountAddress: &EthereumAddress{
+						Raw: op.user.Bytes(),
+					},
+					Tx: &Hash{Raw: op.txHash.Bytes()},
 				},
-				Tx: &Hash{Raw: op.txHash.Bytes()},
-			},
+			}
 		}
-	}
 
-	r.beginSyncTransaction()
-	r.hydrateShops(NewSetInts(op.shopID))
-	r.createRelayEvent(op.shopID,
-		&ShopEvent_Account{
-			&Account{
-				Action: action,
+		r.beginSyncTransaction()
+		r.hydrateShops(NewSetInts(op.shopID))
+		r.createRelayEvent(op.shopID,
+			&ShopEvent_Account{
+				&Account{
+					Action: action,
+				},
 			},
-		},
-	)
-	r.commitSyncTransaction()
+		)
+		r.commitSyncTransaction()
 
-	log("db.onchainActionInternalOp.finish took=%d", took(start))
-}
-
-func (op *PaymentFoundInternalOp) process(r *Relay) {
-	shopID := op.shopID
-	assert(!shopID.Equal(zeroObjectIDArr))
-	orderID := op.orderID
-	assert(!orderID.Equal(zeroObjectIDArr))
-	assert(op.blockHash != nil)
-
-	log("db.paymentFoundInternalOp.start shopID=%x orderID=%x", shopID, orderID)
-	start := now()
-
-	order, has := r.ordersByOrderID.get(shopID, orderID)
-	assertWithMessage(has, fmt.Sprintf("order not found for orderId=%x", orderID))
-
-	r.beginSyncTransaction()
-
-	paid := &OrderTransaction{
-		BlockHash: op.blockHash,
-	}
-	var txHash, blockHash *[]byte // for sql
-	blockHash = &op.blockHash.Raw
-	if t := op.txHash; t != nil { // we only get the tx hash for non-internal tx's
-		paid.TxHash = t
-		txHash = &t.Raw
+		log("db.onchainActionInternalOp.finish took=%d", took(start))
 	}
 
-	const markOrderAsPayedQuery = `UPDATE payments SET
+	func (op *PaymentFoundInternalOp) process(r *Relay) {
+		shopID := op.shopID
+		assert(!shopID.Equal(zeroObjectIDArr))
+		orderID := op.orderID
+		assert(!orderID.Equal(zeroObjectIDArr))
+		assert(op.blockHash != nil)
+
+		log("db.paymentFoundInternalOp.start shopID=%x orderID=%x", shopID, orderID)
+		start := now()
+
+		order, has := r.ordersByOrderID.get(shopID, orderID)
+		assertWithMessage(has, fmt.Sprintf("order not found for orderId=%x", orderID))
+
+		r.beginSyncTransaction()
+
+		paid := &OrderTransaction{
+			BlockHash: op.blockHash,
+		}
+		var txHash, blockHash *[]byte // for sql
+		blockHash = &op.blockHash.Raw
+		if t := op.txHash; t != nil { // we only get the tx hash for non-internal tx's
+			paid.TxHash = t
+			txHash = &t.Raw
+		}
+
+		const markOrderAsPayedQuery = `UPDATE payments SET
+
 payedAt = NOW(),
 payedTx = $1,
 payedBlock = $2
 WHERE shopID = $3 and orderId = $4;`
-	_, err := r.syncTx.Exec(context.Background(), markOrderAsPayedQuery, txHash, blockHash, op.shopID[:], op.orderID[:])
-	check(err)
 
-	r.hydrateShops(NewSetInts(shopID))
+		_, err := r.syncTx.Exec(context.Background(), markOrderAsPayedQuery, txHash, blockHash, op.shopID[:], op.orderID[:])
+		check(err)
 
-	// emit changeInventory events for each item
-	order.items.All(func(cid combinedID, quantity uint32) bool {
-		assert(quantity < math.MaxInt32)
-		varIDArrs := cid.Variations()
-		varIDs := make([]*ObjectId, len(varIDArrs))
-		for i, v := range varIDArrs {
-			varIDs[i] = &ObjectId{Raw: v[:]}
-		}
-		r.createRelayEvent(shopID, &ShopEvent_ChangeInventory{
-			&ChangeInventory{
-				Id:           &ObjectId{Raw: cid.listingID[:]},
-				VariationIds: varIDs,
-				Diff:         -int32(quantity),
-			},
+		r.hydrateShops(NewSetInts(shopID))
+
+		// emit changeInventory events for each item
+		order.items.All(func(cid combinedID, quantity uint32) bool {
+			assert(quantity < math.MaxInt32)
+			varIDArrs := cid.Variations()
+			varIDs := make([]*ObjectId, len(varIDArrs))
+			for i, v := range varIDArrs {
+				varIDs[i] = &ObjectId{Raw: v[:]}
+			}
+			r.createRelayEvent(shopID, &ShopEvent_ChangeInventory{
+				&ChangeInventory{
+					Id:           &ObjectId{Raw: cid.listingID[:]},
+					VariationIds: varIDs,
+					Diff:         -int32(quantity),
+				},
+			})
+			return false
 		})
-		return false
-	})
 
-	r.createRelayEvent(shopID,
-		&ShopEvent_UpdateOrder{
-			&UpdateOrder{
-				Id: &ObjectId{Raw: orderID[:]},
-				Action: &UpdateOrder_AddPaymentTx{
-					paid,
+		r.createRelayEvent(shopID,
+			&ShopEvent_UpdateOrder{
+				&UpdateOrder{
+					Id: &ObjectId{Raw: orderID[:]},
+					Action: &UpdateOrder_AddPaymentTx{
+						paid,
+					},
 				},
 			},
-		},
-	)
+		)
 
-	r.commitSyncTransaction()
-	log("db.paymentFoundInternalOp.finish orderID=%x took=%d", orderID, took(start))
-	close(op.done)
-}
-
+		r.commitSyncTransaction()
+		log("db.paymentFoundInternalOp.finish orderID=%x took=%d", orderID, took(start))
+		close(op.done)
+	}
+*/
 func (op *EventLoopPingInternalOp) process(_ *Relay) {
 	close(op.done)
 }

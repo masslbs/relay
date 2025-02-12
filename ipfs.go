@@ -20,7 +20,8 @@ import (
 	"github.com/miolini/datacounter"
 	"github.com/multiformats/go-multiaddr"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/protobuf/proto"
+
+	cbor "github.com/masslbs/network-schema/go/cbor"
 )
 
 // IPFS integration
@@ -229,27 +230,27 @@ func newListingSnapshotter(m *Metric, shopID ObjectIDArray) (*listingSnapshotter
 // worker to save an listing to ipfs an pin it
 // TODO: we are saving the hole listing each call, irrespective of variations, etc.
 // we know the variations from the order, so it's okay but we should be able to de-duplicate it
-func (ls *listingSnapshotter) save(cid combinedID, item *CachedListing) {
+func (ls *listingSnapshotter) save(cid combinedID, item *cbor.Listing) {
 	ctx := context.Background()
 	ls.Go(func() error {
-		data, err := proto.Marshal(item.value)
+		data, err := cbor.Marshal(item)
 		if err != nil {
-			return fmt.Errorf("mkSnapshot.encodeError item_id=%x err=%s", item.value.Id.Raw, err)
+			return fmt.Errorf("mkSnapshot.marshalError item=%d err=%s", item.ID, err)
 		}
 
 		uploadHandle := ipfsFiles.NewReaderFile(bytes.NewReader(data))
 
 		uploadedCid, err := ls.client.Unixfs().Add(ctx, uploadHandle)
 		if err != nil {
-			return fmt.Errorf("mkSnapshot.ipfsAddError item=%x err=%s", item.value.Id.Raw, err)
+			return fmt.Errorf("mkSnapshot.ipfsAddError item=%x err=%s", item.ID, err)
 		}
 
 		// TODO: wait with pinning until after the item was sold..?
-		pinKey := fmt.Sprintf("shop-%x-item-%x-%d", ls.shopID, item.value.Id.Raw, item.shopSeq)
+		pinKey := fmt.Sprintf("shop-%x-item-%x", ls.shopID, item.ID)
 		if !isDevEnv {
 			_, err = pinataPin(uploadedCid, pinKey)
 			if err != nil {
-				return fmt.Errorf("mkSnapshot.pinataFail item=%x err=%s", item.value.Id.Raw, err)
+				return fmt.Errorf("mkSnapshot.pinataFail item=%x err=%s", item.ID, err)
 			}
 		}
 

@@ -237,11 +237,6 @@ func (cg *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int
 			return nil, fmt.Errorf("convert: metadata for base %v: %w", a, err)
 		}
 
-		// let's not assume these contracts are static code
-		if err := tok.validate(); err != nil {
-			return nil, err
-		}
-
 		decimalsBased = tok.decimals
 
 		basePrice, err = cg.GetERC20Price(a)
@@ -258,11 +253,6 @@ func (cg *coinGecko) Convert(a, b cachedShopCurrency, amount *big.Int) (*big.Int
 		tok, err = cg.ethereum.GetERC20Metadata(b.ChainID, b.Addr)
 		if err != nil {
 			return nil, fmt.Errorf("convert: metadata for chosen %v: %w", b, err)
-		}
-
-		// let's not assume these contracts are static code
-		if err := tok.validate(); err != nil {
-			return nil, err
 		}
 
 		decimalsChosen = tok.decimals
