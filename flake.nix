@@ -11,11 +11,7 @@
     pre-commit-hooks.url = "github:cachix/pre-commit-hooks.nix";
 
     contracts.url = "github:masslbs/contracts";
-    contracts.inputs.nixpkgs.follows = "nixpkgs";
-    schema = {
-      url = "github:masslbs/network-schema/v3.0";
-      flake = false;
-    };
+    schema.url = "github:masslbs/network-schema/cbor";
   };
 
   outputs = {
@@ -35,7 +31,7 @@
       callPackage = pkgs.darwin.apple_sdk_11_0.callPackage or pkgs.callPackage;
     in {
       packages = rec {
-        relay = callPackage ./default.nix { };
+        relay = callPackage ./default.nix {};
         default = relay;
       };
       apps = rec {

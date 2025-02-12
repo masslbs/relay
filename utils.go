@@ -9,12 +9,13 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
-	"net/url"
 	"os"
 	"slices"
 	"strconv"
 	"time"
-	"unicode/utf8"
+
+	"github.com/masslbs/network-schema/go/objects"
+	pb "github.com/masslbs/network-schema/go/pb"
 )
 
 var (
@@ -68,7 +69,7 @@ func assertWithMessage(testing bool, message string) {
 	}
 }
 
-func assertNilError(err *Error) {
+func assertNilError(err *pb.Error) {
 	assertWithMessage(err == nil, fmt.Sprintf("error was not nil: %+v", err))
 }
 
@@ -76,171 +77,27 @@ func assertNonemptyString(s string) {
 	assertWithMessage(s != "", "string was empty")
 }
 
-func validateObjectID(x *ObjectId, field string) *Error {
-	if x == nil {
-		return &Error{
-			Code:    ErrorCodes_INVALID,
-			Message: fmt.Sprintf("Field `%s` must be a non-zero objectId", field),
-		}
-	}
-	return validateBytes(x.Raw, field+".id", 8)
-}
-
-func validateString(s string, field string, maxLength int) *Error {
-	if s == "" {
-		return &Error{
-			Code:    ErrorCodes_INVALID,
-			Message: fmt.Sprintf("Field `%s` must be a non-empty string", field),
-		}
-	}
-	runeCount := utf8.RuneCountInString(s)
-	if runeCount > maxLength {
-		return &Error{
-			Code:    ErrorCodes_INVALID,
-			Message: fmt.Sprintf("Field `%s` must be no more than %d characters, got %d", field, maxLength, runeCount),
-		}
-	}
-	return nil
-}
-
 const (
-	publicKeyBytes = 64
-	signatureBytes = 65
+	publicKeyBytes = objects.PublicKeySize
+	signatureBytes = objects.SignatureSize
 )
 
-func validateBytes(val []byte, field string, want uint) *Error {
+func validateBytes(val []byte, field string, want uint) *pb.Error {
 	if n := len(val); uint(n) != want {
-		return &Error{
-			Code:    ErrorCodes_INVALID,
-			Message: fmt.Sprintf("Field `%s` must have correct amount of bytes, got %d", field, n),
+		return &pb.Error{
+			Code:    pb.ErrorCodes_INVALID,
+			Message: fmt.Sprintf("Field `%s` must have correct amount of bytes (got %d, want %d)", field, n, want),
 		}
 	}
 	return nil
 }
 
-func validateChainID(val uint64, field string) *Error {
-	if val == 0 {
-		return &Error{
-			Code:    ErrorCodes_INVALID,
-			Message: fmt.Sprintf("Field `%s` must be a valid chainID, not 0", field)}
-
-	}
-	return nil
-}
-
-func (payee *Payee) validate(field string) *Error {
-	return coalesce(
-		validateString(payee.Name, field+".name", 128),
-		payee.Address.validate(field+".address"),
-		validateChainID(payee.ChainId, field+".chain_id"),
-	)
-}
-
-func (pk *PublicKey) validate() *Error {
+func validatePublicKey(pk *pb.PublicKey) *pb.Error {
 	return validateBytes(pk.Raw, "public_key", publicKeyBytes)
 }
 
-func (sig *Signature) validate() *Error {
+func validateSignature(sig *pb.Signature) *pb.Error {
 	return validateBytes(sig.Raw, "signature", signatureBytes)
-}
-
-func (curr *ShopCurrency) validate(field string) *Error {
-	return coalesce(
-		curr.Address.validate(field+".address"),
-		validateChainID(curr.ChainId, field+".chain_id"),
-	)
-}
-
-func (addr *EthereumAddress) validate(field string) *Error {
-	return validateEthAddressBytes(addr.Raw, field)
-}
-
-func validateEthAddressBytes(addr []byte, field string) *Error {
-	return validateBytes(addr, field, 20)
-}
-
-func (lo *ListingOption) validate(field string) *Error {
-	errs := []*Error{
-		validateObjectID(lo.Id, field+".id"),
-		validateString(lo.Title, field+".title", 512),
-	}
-	for i, v := range lo.Variations {
-		field := field + fmt.Sprintf(".variation[%d]", i)
-		errs = append(errs, v.validate(field))
-	}
-	return coalesce(errs...)
-}
-
-func (lv *ListingVariation) validate(field string) *Error {
-	errs := []*Error{
-		validateObjectID(lv.Id, field+".id"),
-		lv.VariationInfo.validate(field + ".variation_info"),
-	}
-	return coalesce(errs...)
-
-}
-
-func (lm *ListingMetadata) validate(field string) *Error {
-	errs := []*Error{
-		validateString(lm.Title, field+".title", 512),
-		validateString(lm.Description, field+".description", 512),
-	}
-	for i, img := range lm.Images {
-		field := field + fmt.Sprintf(".image[%d]", i)
-		errs = append(errs, validateURL(img, field))
-	}
-	return coalesce(errs...)
-}
-
-func (region *ShippingRegion) validate(field string) *Error {
-	errs := []*Error{
-		validateString(region.Name, field+".name", 128),
-	}
-	// if city is non-empty, the fields before it also have to be non-empty, etc.
-	if region.PostalCode != "" && region.Country == "" {
-		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + ": country needs to be set if postal_code is"})
-	}
-
-	if region.City != "" && (region.PostalCode == "" || region.Country == "") {
-		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + ": country and postal_code need to be set if city is"})
-	}
-	for i, mod := range region.OrderPriceModifiers {
-		modField := field + fmt.Sprintf(".order_price_modifier_id[%d]", i)
-		errs = append(errs, mod.validate(modField))
-	}
-	return coalesce(errs...)
-}
-
-func (mod *OrderPriceModifier) validate(field string) *Error {
-	errs := []*Error{
-		validateString(mod.Title, field+".title", 128),
-	}
-	switch tv := mod.Modification.(type) {
-	case *OrderPriceModifier_Absolute:
-		abs := tv.Absolute
-		errs = append(errs, abs.Diff.validate(field+".modification/absolute.diff"))
-	case *OrderPriceModifier_Percentage:
-		perc := tv.Percentage
-		errs = append(errs, perc.validate(field+".modification/percentage"))
-	default:
-		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + fmt.Sprintf(".modification: unhandled type: %T", tv)})
-	}
-
-	return coalesce(errs...)
-}
-
-func (i *Uint256) validate(field string) *Error {
-	return validateBytes(i.Raw, field, 32)
-}
-
-func validateURL(k string, field string) *Error {
-	if _, err := url.Parse(k); err != nil {
-		return &Error{
-			Code:    ErrorCodes_INVALID,
-			Message: fmt.Sprintf("Field `%s` must be a valid URL", field),
-		}
-	}
-	return nil
 }
 
 func assertLTE(v int, max int) {
@@ -366,12 +223,13 @@ func (ui *SQLUint64Bytes) Scan(src interface{}) error {
 	return nil
 }
 
+// Uint64 returns the uint64 value of the SQLUint64Bytes
 func (ui *SQLUint64Bytes) Uint64() uint64 {
 	return binary.BigEndian.Uint64(ui.Data[:])
 }
 
 // ScoreRegions compares all configured regions to a chosen address and picks the one most applicable.
-func ScoreRegions(configured map[string]*ShippingRegion, chosen *AddressDetails) (*ShippingRegion, error) {
+func ScoreRegions(configured objects.ShippingRegions, chosen *objects.AddressDetails) (string, error) {
 	type score struct {
 		Name   string
 		Points int
@@ -401,7 +259,7 @@ func ScoreRegions(configured map[string]*ShippingRegion, chosen *AddressDetails)
 	}
 
 	if len(scores) == 0 {
-		return nil, fmt.Errorf("no shipping region matched")
+		return "", fmt.Errorf("no shipping region matched")
 	}
 
 	//spew.Dump(scores)
@@ -420,7 +278,7 @@ func ScoreRegions(configured map[string]*ShippingRegion, chosen *AddressDetails)
 		})
 	}
 
-	reg, has := configured[scores[0].Name]
+	_, has := configured[scores[0].Name]
 	assert(has)
-	return reg, nil
+	return scores[0].Name, nil
 }

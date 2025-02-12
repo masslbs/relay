@@ -6,26 +6,28 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/pprof"
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/getsentry/sentry-go"
+	cbor "github.com/masslbs/network-schema/go/cbor"
+	"github.com/masslbs/network-schema/go/objects"
+	"github.com/masslbs/network-schema/go/patch"
+	pb "github.com/masslbs/network-schema/go/pb"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
 	"github.com/ssgreg/repeat"
-	"google.golang.org/protobuf/proto"
 )
 
 // set via ldflags during build
@@ -67,8 +69,8 @@ var simulateErrorRate = 0
 var simulateIgnoreRate = 0
 
 var (
-	networkVersions            = []uint{3}
-	currentRelayVersion uint16 = 3
+	networkVersions            = []uint{4}
+	currentRelayVersion uint16 = 4
 )
 
 var initLoggingOnce sync.Once
@@ -113,11 +115,12 @@ func initLogging() {
 	}
 }
 
-func (err *Error) Error() string {
-	return "(" + ErrorCodes_name[int32(err.Code)] + "): " + err.Message
-}
+// TODO: differentiate network-schema errors from relay errors
+// func (err *Error) Error() string {
+// 	return "(" + ErrorCodes_name[int32(err.Code)] + "): " + err.Message
+// }
 
-func coalesce(errs ...*Error) *Error {
+func coalesce(errs ...*pb.Error) *pb.Error {
 	for _, err := range errs {
 		if err != nil {
 			return err
@@ -126,48 +129,48 @@ func coalesce(errs ...*Error) *Error {
 	return nil
 }
 
-var tooManyConcurrentRequestsError = &Error{
-	Code:    ErrorCodes_TOO_MANY_CONCURRENT_REQUESTS,
+var tooManyConcurrentRequestsError = &pb.Error{
+	Code:    pb.ErrorCodes_TOO_MANY_CONCURRENT_REQUESTS,
 	Message: "Too many concurrent requests sent to server",
 }
 
-var alreadyAuthenticatedError = &Error{
-	Code:    ErrorCodes_ALREADY_AUTHENTICATED,
+var alreadyAuthenticatedError = &pb.Error{
+	Code:    pb.ErrorCodes_ALREADY_AUTHENTICATED,
 	Message: "Already authenticated in a previous message",
 }
 
-var notAuthenticatedError = &Error{
-	Code:    ErrorCodes_NOT_AUTHENTICATED,
+var notAuthenticatedError = &pb.Error{
+	Code:    pb.ErrorCodes_NOT_AUTHENTICATED,
 	Message: "Must authenticate before sending any other messages",
 }
 
-var alreadyConnectedError = &Error{
-	Code:    ErrorCodes_ALREADY_CONNECTED,
+var alreadyConnectedError = &pb.Error{
+	Code:    pb.ErrorCodes_ALREADY_CONNECTED,
 	Message: "Already connected from this device in another session",
 }
 
-var unlinkedKeyCardError = &Error{
-	Code:    ErrorCodes_UNLINKED_KEYCARD,
+var unlinkedKeyCardError = &pb.Error{
+	Code:    pb.ErrorCodes_UNLINKED_KEYCARD,
 	Message: "Key Card was removed from the Shop",
 }
 
-var notFoundError = &Error{
-	Code:    ErrorCodes_NOT_FOUND,
+var notFoundError = &pb.Error{
+	Code:    pb.ErrorCodes_NOT_FOUND,
 	Message: "Item not found",
 }
 
-var notEnoughStockError = &Error{
-	Code:    ErrorCodes_OUT_OF_STOCK,
+var notEnoughStockError = &pb.Error{
+	Code:    pb.ErrorCodes_OUT_OF_STOCK,
 	Message: "not enough stock",
 }
 
-var simulateError = &Error{
-	Code:    ErrorCodes_SIMULATED,
+var simulateError = &pb.Error{
+	Code:    pb.ErrorCodes_SIMULATED,
 	Message: "Error condition simulated for this message",
 }
 
-var minimumVersionError = &Error{
-	Code:    ErrorCodes_MINUMUM_VERSION_NOT_REACHED,
+var minimumVersionError = &pb.Error{
+	Code:    pb.ErrorCodes_MINUMUM_VERSION_NOT_REACHED,
 	Message: "Minumum version not reached for this request",
 }
 
@@ -291,7 +294,8 @@ func server() {
 	r.writesEnabled = true
 	go r.run()
 
-	// spawn payment watchers
+	// spawn on-chain watchers
+
 	type watcher struct {
 		name string
 		fn   func(*ethClient) error
@@ -384,7 +388,7 @@ func server() {
 		corsOpts.Debug = true
 	}
 
-	wrappedHandler := sentrySetupHttpHandler(mux)
+	wrappedHandler := sentrySetupHTTPHandler(mux)
 
 	// Flush buffered events before the program terminates.
 	// Set the timeout to the maximum duration the program can afford to wait.
@@ -399,23 +403,6 @@ func server() {
 }
 
 // CLI
-
-func debugObject(eventType string) {
-
-	pbData, err := io.ReadAll(os.Stdin)
-	check(err)
-
-	switch strings.ToLower(eventType) {
-	case "listing":
-		var lis Listing
-		err = proto.Unmarshal(pbData, &lis)
-		check(err)
-		spew.Dump(&lis)
-	default:
-		fmt.Fprintln(os.Stderr, "unhandled event type:"+eventType)
-		os.Exit(1)
-	}
-}
 
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage:\n")
@@ -442,8 +429,31 @@ func main() {
 			}
 		}()
 		server()
-	} else if cmd == "debug-obj" && len(cmdArgs) == 1 {
-		debugObject(cmdArgs[0])
+	} else if cmd == "cbor-decode" {
+		if len(cmdArgs) != 2 {
+			fmt.Fprintf(os.Stderr, "Usage: relay cbor-decode <type> <cbor-data>\n")
+			os.Exit(1)
+		}
+		cborData, err := hex.DecodeString(cmdArgs[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to decode hex: %s\n", err)
+			os.Exit(1)
+		}
+		switch cmdArgs[0] {
+		case "Patch":
+			var patch patch.Patch
+			err := cbor.Unmarshal([]byte(cborData), &patch)
+			check(err)
+			spew.Dump(patch)
+		case "manifest":
+			var manifest objects.Manifest
+			err := cbor.Unmarshal([]byte(cborData), &manifest)
+			check(err)
+			spew.Dump(manifest)
+		default:
+			fmt.Fprintf(os.Stderr, "Unhandled type: %s\n", cmdArgs[0])
+			os.Exit(1)
+		}
 	} else {
 		usage()
 	}
