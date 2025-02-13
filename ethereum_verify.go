@@ -66,7 +66,7 @@ func VerifyPatchSet(pset *cbor.PatchSetHeader, publicKey []byte) error {
 	return fmt.Errorf("TODO: verify patch set")
 }
 
-func eventSign(evtData []byte, secret *ecdsa.PrivateKey) (*cbor.Signature, error) {
+func signEIP191(evtData []byte, secret *ecdsa.PrivateKey) (*cbor.Signature, error) {
 	sighash := accounts.TextHash(evtData)
 
 	signature, err := crypto.Sign(sighash, secret)

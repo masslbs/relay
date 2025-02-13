@@ -13,11 +13,11 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	cbor "github.com/masslbs/network-schema/go/cbor"
 	pb "github.com/masslbs/network-schema/go/pb"
 )
 
@@ -142,8 +142,8 @@ func NewEventLoopPing() (<-chan struct{}, *EventLoopPingInternalOp) {
 type KeyCardEnrolledInternalOp struct {
 	shopNFT          big.Int
 	keyCardIsGuest   bool
-	keyCardPublicKey []byte
-	userWallet       common.Address
+	keyCardPublicKey cbor.PublicKey
+	userWallet       cbor.EthereumAddress
 	done             chan error
 }
 
@@ -2175,7 +2175,7 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 
 	const insertKeyCard = `insert into keyCards (shopId, cardPublicKey, userWalletAddr, isGuest, lastVersion,  lastAckedSeq, linkedAt, lastSeenAt)
 		VALUES ($1, $2, $3, $4, 0, 0, now(), now() )`
-	_, err := r.syncTx.Exec(dbCtx, insertKeyCard, shopDBID, op.keyCardPublicKey, op.userWallet.Bytes(), op.keyCardIsGuest)
+	_, err := r.syncTx.Exec(dbCtx, insertKeyCard, shopDBID, op.keyCardPublicKey, op.userWallet[:], op.keyCardIsGuest)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
@@ -2186,20 +2186,26 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 				return
 			}
 		}
+		check(err)
 	}
+
+	// TODO: check if account already exists
+	// if it does we need to append the keycard to the list instead
+	account := cbor.Account{
+		Guest: false,
+		KeyCards: []cbor.PublicKey{
+			op.keyCardPublicKey,
+		},
+	}
+	accountBytes, err := cbor.Marshal(account)
 	check(err)
 
 	// emit new keycard event
-	r.createRelayEvent(shopID,
-		&ShopEvent_Account{
-			Account: &Account{
-				Action: &Account_EnrollKeycard{
-					&Account_KeyCardEnroll{
-						KeycardPubkey: &PublicKey{Raw: op.keyCardPublicKey},
-						UserWallet:    &EthereumAddress{Raw: op.userWallet[:]},
-					},
-				},
-			},
+	r.createRelayPatch(shopID,
+		cbor.Patch{
+			Op:    cbor.AddOp,
+			Path:  cbor.PatchPath{Type: cbor.ObjectTypeAccount, AccountID: &op.userWallet},
+			Value: accountBytes,
 		},
 	)
 

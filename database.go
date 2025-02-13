@@ -146,11 +146,11 @@ type Relay struct {
 	baseURL *url.URL
 
 	// persistence
-	syncTx pgx.Tx
-	// queuedEventInserts   []*EventInsert
-	shopIDsToShopState   *MapInts[ObjectIDArray, *ShopState] // Changed from shopIdsToShopState
-	lastUsedServerSeq    uint64
-	lastWrittenServerSeq uint64
+	syncTx                pgx.Tx
+	queuedPatchSetInserts []*PatchSetInsert
+	shopIDsToShopState    *MapInts[ObjectIDArray, *ShopState] // Changed from shopIdsToShopState
+	lastUsedServerSeq     uint64
+	lastWrittenServerSeq  uint64
 
 	// caching layer
 	// shopManifestsByShopID *ReductionLoader[*CachedShopManifest]
@@ -489,521 +489,232 @@ func (r *Relay) loadServerSeq() {
 	log("relay.loadServerSeq.finish serverSeq=%d elapsed=%d", r.lastUsedServerSeq, took(start))
 }
 
-/*
 // readEvents from the database according to some
 // `whereFragment` criteria, assumed to have a single `$1` arg for a
 // slice of indexedIds.
 // Does not change any in-memory caches; to be done by caller.
 
-	func (r *Relay) readEvents(whereFragment string, shopID, objectID ObjectIDArray) []EventInsert {
-		// Index: events(field in whereFragment)
-		// The indicies eventsOnEventTypeAnd* should correspond to the various Loaders defined in newDatabase.
-		query := fmt.Sprintf(`select serverSeq, shopSeq, eventType, createdByKeyCardId, createdAt, createdByNetworkSchemaVersion, encoded
+// func (r *Relay) readEvents(whereFragment string, shopID, objectID ObjectIDArray) []PatchSetInsert {
+// 	// Index: events(field in whereFragment)
+// 	// The indicies eventsOnEventTypeAnd* should correspond to the various Loaders defined in newDatabase.
+// 	query := fmt.Sprintf(`select serverSeq, shopSeq, eventType, createdByKeyCardId, createdAt, createdByNetworkSchemaVersion, encoded
 
-from events where createdByShopID = $1 and %s order by serverSeq asc`, whereFragment)
+// from events where createdByShopID = $1 and %s order by serverSeq asc`, whereFragment)
 
-		var rows pgx.Rows
-		var err error
-		if r.syncTx != nil {
-			rows, err = r.syncTx.Query(context.Background(), query, shopID[:], objectID[:])
-		} else {
-			rows, err = r.connPool.Query(context.Background(), query, shopID[:], objectID[:])
+// 	var rows pgx.Rows
+// 	var err error
+// 	if r.syncTx != nil {
+// 		rows, err = r.syncTx.Query(context.Background(), query, shopID[:], objectID[:])
+// 	} else {
+// 		rows, err = r.connPool.Query(context.Background(), query, shopID[:], objectID[:])
+// 	}
+// 	check(err)
+// 	defer rows.Close()
+// 	events := make([]PatchSetInsert, 0)
+// 	for rows.Next() {
+// 		var (
+// 			m         CachedMetadata
+// 			eventType eventType
+// 			createdAt time.Time
+// 			encoded   []byte
+// 		)
+// 		err := rows.Scan(&m.serverSeq, &m.shopSeq, &eventType, &m.createdByKeyCardID, &createdAt, &m.createdByNetworkVersion, &encoded)
+// 		check(err)
+// 		m.createdByShopID = ObjectIDArray(shopID)
+// 		m.objectID = &objectID
+// 		var e ShopEvent
+// 		err = proto.Unmarshal(encoded, &e)
+// 		check(err)
+// 		events = append(events, PatchSetInsert{
+// 			CachedMetadata: m,
+// 			evt:            &e,
+// 			evtType:        eventType,
+// 		})
+// 	}
+// 	check(rows.Err())
+// 	return events
+// }
+
+// PatchSetInsert is a struct that represents an event to be inserted into the database
+type PatchSetInsert struct {
+	CachedMetadata
+	evtType eventType
+	pset    *cbor.SignedPatchSet
+}
+
+func newPatchSetInsert(pset *cbor.SignedPatchSet, meta CachedMetadata) *PatchSetInsert {
+	return &PatchSetInsert{
+		CachedMetadata: meta,
+		pset:           pset,
+	}
+}
+
+func (r *Relay) queuePatchSet(pset *cbor.SignedPatchSet, cm CachedMetadata) {
+	assert(r.writesEnabled)
+
+	nextServerSeq := r.lastUsedServerSeq + 1
+	cm.serverSeq = nextServerSeq
+	r.lastUsedServerSeq = nextServerSeq
+
+	shopSeqPair := r.shopIDsToShopState.MustGet(cm.createdByShopID)
+	cm.shopSeq = shopSeqPair.lastUsedSeq + 1
+	shopSeqPair.lastUsedSeq = cm.shopSeq
+
+	insert := newPatchSetInsert(pset, cm)
+	r.queuedPatchSetInserts = append(r.queuedPatchSetInserts, insert)
+	// r.applyEvent(insert)
+}
+
+func (r *Relay) createRelayPatch(shopID ObjectIDArray, patch cbor.Patch) {
+	shopState := r.shopIDsToShopState.MustGet(shopID)
+	header := &cbor.PatchSetHeader{
+		KeyCardNonce: shopState.nextRelayEventNonce(),
+		ShopID:       shopState.shopTokenID,
+		Timestamp:    time.Now(),
+	}
+
+	var patches []cbor.Patch
+	patches = append(patches, patch)
+	var err error
+	header.RootHash, _, err = cbor.RootHash(patches)
+	check(err)
+
+	var pset cbor.SignedPatchSet
+	pset.Header = *header
+	pset.Patches = patches
+
+	sig, err := r.ethereum.signPatchsetHeader(pset.Header)
+	check(err)
+	pset.Signature = *sig
+
+	meta := newMetadata(shopState.relayKeyCardID, shopID, currentRelayVersion)
+	meta.writtenByRelay = true
+	r.queuePatchSet(&pset, meta)
+}
+
+func (r *Relay) beginSyncTransaction() {
+	assert(r.queuedPatchSetInserts == nil)
+	assert(r.syncTx == nil)
+	r.queuedPatchSetInserts = make([]*PatchSetInsert, 0)
+	ctx := context.Background()
+	tx, err := r.connPool.Begin(ctx)
+	check(err)
+	r.syncTx = tx
+}
+
+func (r *Relay) commitSyncTransaction() {
+	assert(r.queuedPatchSetInserts != nil)
+	assert(r.syncTx != nil)
+	ctx := context.Background()
+	r.flushPatchSets()
+	check(r.syncTx.Commit(ctx))
+	r.queuedPatchSetInserts = nil
+	r.syncTx = nil
+}
+
+func (r *Relay) rollbackSyncTransaction() {
+	assert(r.queuedPatchSetInserts != nil)
+	assert(r.syncTx != nil)
+	ctx := context.Background()
+	check(r.syncTx.Rollback(ctx))
+	r.queuedPatchSetInserts = nil
+	r.syncTx = nil
+}
+
+// var dbEventInsertColumns = []string{"eventType", "eventNonce", "createdByKeyCardId", "createdByShopId", "shopSeq", "createdAt", "createdByNetworkSchemaVersion", "serverSeq", "encoded", "signature", "objectID"}
+
+func formPatchSetHeaderInsert(ins *PatchSetInsert) []interface{} {
+	return []interface{}{
+		ins.pset.Header.KeyCardNonce, // keycard_nonce
+		nil,                          // created_by_keycard_id
+		ins.pset.Header.ShopID,       // created_by_shop_id
+		ins.shopSeq,                  // shop_seq
+		ins.pset.Header.Timestamp,    // created_at
+		ins.createdByNetworkVersion,  // created_by_network_schema_version
+		now(),                        // received_at
+		ins.serverSeq,                // server_seq
+		ins.pset.Header.RootHash,     // root_hash
+		ins.pset.Signature,           // signature
+	}
+}
+
+func formPatchSetPatchesInserts(ins *PatchSetInsert, pachSetDBID uint64) [][]interface{} {
+	patches := make([][]interface{}, len(ins.pset.Patches))
+	for i, patch := range ins.pset.Patches {
+		patches[i] = formPatchInsert(patch)
+	}
+	return patches
+}
+
+func formPatchInsert(patch cbor.Patch, pachSetDBID uint64) []interface{} {
+	return []interface{}{
+		pachSetDBID,           // patch_set_id
+		patch.Op,              // op
+		patch.Path.Type,       // object_type
+		patch.Path.ObjectID,   // object_id
+		patch.Path.AccountID,  // account_id
+		patch.Path.TagName,    // tag_name
+		patch.Value,           // encoded
+		[]byte("dummy_proof"), // mmr_proof
+	}
+}
+
+func (r *Relay) flushPatchSets() {
+	if len(r.queuedPatchSetInserts) == 0 {
+		return
+	}
+	assert(r.writesEnabled)
+	log("relay.flushPatchSets.start entries=%d", len(r.queuedPatchSetInserts))
+	start := now()
+
+	eventTuples := make([][]any, len(r.queuedPatchSetInserts))
+	relayEvents := make(map[keyCardID]uint64)
+	for i, ins := range r.queuedPatchSetInserts {
+		eventTuples[i] = formInsert(ins)
+		if ins.writtenByRelay {
+			last := relayEvents[ins.createdByKeyCardID]
+			if last < ins.pset.Header.KeyCardNonce {
+				relayEvents[ins.createdByKeyCardID] = ins.pset.Header.KeyCardNonce
+			}
 		}
-		check(err)
-		defer rows.Close()
-		events := make([]EventInsert, 0)
-		for rows.Next() {
-			var (
-				m         CachedMetadata
-				eventType eventType
-				createdAt time.Time
-				encoded   []byte
-			)
-			err := rows.Scan(&m.serverSeq, &m.shopSeq, &eventType, &m.createdByKeyCardID, &createdAt, &m.createdByNetworkVersion, &encoded)
+	}
+	assert(r.lastWrittenServerSeq < r.lastUsedServerSeq)
+
+	insertedEventRows, conflictedEventRows := r.bulkInsert("events", dbEventInsertColumns, eventTuples)
+	for _, row := range insertedEventRows {
+		rowServerSeq := row[7].(uint64)
+		assert(r.lastWrittenServerSeq < rowServerSeq)
+		assert(rowServerSeq <= r.lastUsedServerSeq)
+		r.lastWrittenServerSeq = rowServerSeq
+		rowShopID := row[3].([]byte)
+		assert(len(rowShopID) == 8)
+		rowShopSeq := row[4].(uint64)
+		shopState := r.shopIDsToShopState.MustGet(ObjectIDArray(rowShopID))
+		assert(shopState.lastWrittenSeq < rowShopSeq)
+		assert(rowShopSeq <= shopState.lastUsedSeq)
+		shopState.lastWrittenSeq = rowShopSeq
+	}
+	assert(r.lastWrittenServerSeq <= r.lastUsedServerSeq)
+	r.queuedPatchSetInserts = nil
+	log("relay.flushPatchSets.events insertedEntries=%d conflictedEntries=%d", len(insertedEventRows), len(conflictedEventRows))
+
+	ctx := context.Background()
+	if len(relayEvents) > 0 {
+		const updateRelayNonce = `UPDATE relayKeyCards set lastWrittenEventNonce=$2, lastUsedAt=now() where id = $1`
+		// TODO: there must be nicer way to do this but i'm on a train right now
+		// preferably building tuples and sending a single query but here we are...
+		for kcID, lastNonce := range relayEvents {
+			assert(kcID != 0)
+			res, err := r.syncTx.Exec(ctx, updateRelayNonce, kcID, lastNonce)
 			check(err)
-			m.createdByShopID = ObjectIDArray(shopID)
-			m.objectID = &objectID
-			var e ShopEvent
-			err = proto.Unmarshal(encoded, &e)
-			check(err)
-			events = append(events, EventInsert{
-				CachedMetadata: m,
-				evt:            &e,
-				evtType:        eventType,
-			})
-		}
-		check(rows.Err())
-		return events
-	}
-
-// EventInsert is a struct that represents an event to be inserted into the database
-
-	type EventInsert struct {
-		CachedMetadata
-		evtType eventType
-		evt     *ShopEvent
-		pbany   *SignedEvent
-	}
-
-	func newEventInsert(evt *ShopEvent, meta CachedMetadata, abstract *SignedEvent) *EventInsert {
-		return &EventInsert{
-			CachedMetadata: meta,
-			evt:            evt,
-			pbany:          abstract,
+			aff := res.RowsAffected()
+			assertWithMessage(aff == 1, fmt.Sprintf("keyCards affected not 1 but %d", aff))
 		}
 	}
 
-	func (r *Relay) writeEvent(evt *ShopEvent, cm CachedMetadata, abstract *SignedEvent) {
-		assert(r.writesEnabled)
+	log("relay.flushPatchSets.finish took=%d", took(start))
+}
 
-		nextServerSeq := r.lastUsedServerSeq + 1
-		cm.serverSeq = nextServerSeq
-		r.lastUsedServerSeq = nextServerSeq
-
-		shopSeqPair := r.shopIDsToShopState.MustGet(cm.createdByShopID)
-		cm.shopSeq = shopSeqPair.lastUsedSeq + 1
-		shopSeqPair.lastUsedSeq = cm.shopSeq
-
-		insert := newEventInsert(evt, cm, abstract)
-		r.queuedEventInserts = append(r.queuedEventInserts, insert)
-		r.applyEvent(insert)
-	}
-
-	func (r *Relay) createRelayEvent(shopID ObjectIDArray, event isShopEvent_Union) {
-		shopState := r.shopIDsToShopState.MustGet(shopID)
-		evt := &ShopEvent{
-			Nonce:     shopState.nextRelayEventNonce(),
-			ShopId:    &shopState.shopTokenID,
-			Timestamp: timestamppb.Now(),
-			Union:     event,
-		}
-
-		var sigEvt SignedEvent
-		var err error
-		sigEvt.Event, err = anypb.New(evt)
-		check(err)
-
-		sigEvt.Signature, err = r.ethereum.signEvent(sigEvt.Event.Value)
-		check(err)
-
-		meta := newMetadata(shopState.relayKeyCardID, shopID, currentRelayVersion)
-		meta.writtenByRelay = true
-		r.writeEvent(evt, meta, &sigEvt)
-	}
-
-	func (r *Relay) beginSyncTransaction() {
-		assert(r.queuedEventInserts == nil)
-		assert(r.syncTx == nil)
-		r.queuedEventInserts = make([]*EventInsert, 0)
-		ctx := context.Background()
-		tx, err := r.connPool.Begin(ctx)
-		check(err)
-		r.syncTx = tx
-	}
-
-	func (r *Relay) commitSyncTransaction() {
-		assert(r.queuedEventInserts != nil)
-		assert(r.syncTx != nil)
-		ctx := context.Background()
-		r.flushEvents()
-		check(r.syncTx.Commit(ctx))
-		r.queuedEventInserts = nil
-		r.syncTx = nil
-	}
-
-	func (r *Relay) rollbackSyncTransaction() {
-		assert(r.queuedEventInserts != nil)
-		assert(r.syncTx != nil)
-		ctx := context.Background()
-		check(r.syncTx.Rollback(ctx))
-		r.queuedEventInserts = nil
-		r.syncTx = nil
-	}
-
-var dbEventInsertColumns = []string{"eventType", "eventNonce", "createdByKeyCardId", "createdByShopId", "shopSeq", "createdAt", "createdByNetworkSchemaVersion", "serverSeq", "encoded", "signature", "objectID"}
-
-	func formInsert(ins *EventInsert) []interface{} {
-		var (
-			evtType = eventTypeInvalid
-			objID   *[]byte // used to stich together related events
-		)
-		switch tv := ins.evt.Union.(type) {
-		case *ShopEvent_Manifest:
-			evtType = eventTypeManifest
-		case *ShopEvent_UpdateManifest:
-			evtType = eventTypeUpdateManifest
-		case *ShopEvent_Listing:
-			evtType = eventTypeListing
-			arr := tv.Listing.Id.Raw
-			objID = &arr
-		case *ShopEvent_UpdateListing:
-			evtType = eventTypeUpdateListing
-			arr := tv.UpdateListing.Id.Raw
-			objID = &arr
-		case *ShopEvent_Tag:
-			evtType = eventTypeTag
-			arr := tv.Tag.Id.Raw
-			objID = &arr
-		case *ShopEvent_UpdateTag:
-			evtType = eventTypeUpdateTag
-			arr := tv.UpdateTag.Id.Raw
-			objID = &arr
-		case *ShopEvent_ChangeInventory:
-			evtType = eventTypeChangeInventory
-		case *ShopEvent_CreateOrder:
-			evtType = eventTypeCreateOrder
-			arr := tv.CreateOrder.Id.Raw
-			objID = &arr
-		case *ShopEvent_UpdateOrder:
-			evtType = eventTypeUpdateOrder
-			arr := tv.UpdateOrder.Id.Raw
-			objID = &arr
-		case *ShopEvent_Account:
-			evtType = eventTypeAccount
-		default:
-			panic(fmt.Errorf("formInsert.unrecognizeType eventType=%T", ins.evt.Union))
-		}
-		assert(evtType != eventTypeInvalid)
-		return []interface{}{
-			evtType,                     // eventType
-			ins.evt.Nonce,               // eventNonce
-			ins.createdByKeyCardID,      // createdByKeyCardId
-			ins.createdByShopID[:],      // createdByShopId
-			ins.shopSeq,                 // shopSeq
-			now(),                       // createdAt
-			ins.createdByNetworkVersion, // createdByNetworkSchemaVersion
-			ins.serverSeq,               // serverSeq
-			ins.pbany.Event.Value,       // encoded
-			ins.pbany.Signature.Raw,     // signature
-			objID,                       // objectID
-		}
-	}
-
-	func (r *Relay) flushEvents() {
-		if len(r.queuedEventInserts) == 0 {
-			return
-		}
-		assert(r.writesEnabled)
-		log("relay.flushEvents.start entries=%d", len(r.queuedEventInserts))
-		start := now()
-
-		eventTuples := make([][]any, len(r.queuedEventInserts))
-		relayEvents := make(map[keyCardID]uint64)
-		for i, ei := range r.queuedEventInserts {
-			eventTuples[i] = formInsert(ei)
-			if ei.writtenByRelay {
-				last := relayEvents[ei.createdByKeyCardID]
-				if last < ei.evt.Nonce {
-					relayEvents[ei.createdByKeyCardID] = ei.evt.Nonce
-				}
-			}
-		}
-		assert(r.lastWrittenServerSeq < r.lastUsedServerSeq)
-
-		insertedEventRows, conflictedEventRows := r.bulkInsert("events", dbEventInsertColumns, eventTuples)
-		for _, row := range insertedEventRows {
-			rowServerSeq := row[7].(uint64)
-			assert(r.lastWrittenServerSeq < rowServerSeq)
-			assert(rowServerSeq <= r.lastUsedServerSeq)
-			r.lastWrittenServerSeq = rowServerSeq
-			rowShopID := row[3].([]byte)
-			assert(len(rowShopID) == 8)
-			rowShopSeq := row[4].(uint64)
-			shopState := r.shopIDsToShopState.MustGet(ObjectIDArray(rowShopID))
-			assert(shopState.lastWrittenSeq < rowShopSeq)
-			assert(rowShopSeq <= shopState.lastUsedSeq)
-			shopState.lastWrittenSeq = rowShopSeq
-		}
-		assert(r.lastWrittenServerSeq <= r.lastUsedServerSeq)
-		r.queuedEventInserts = nil
-		log("relay.flushEvents.events insertedEntries=%d conflictedEntries=%d", len(insertedEventRows), len(conflictedEventRows))
-
-		ctx := context.Background()
-		if len(relayEvents) > 0 {
-			const updateRelayNonce = `UPDATE relayKeyCards set lastWrittenEventNonce=$2, lastUsedAt=now() where id = $1`
-			// TODO: there must be nicer way to do this but i'm on a train right now
-			// preferably building tuples and sending a single query but here we are...
-			for kcID, lastNonce := range relayEvents {
-				assert(kcID != 0)
-				res, err := r.syncTx.Exec(ctx, updateRelayNonce, kcID, lastNonce)
-				check(err)
-				aff := res.RowsAffected()
-				assertWithMessage(aff == 1, fmt.Sprintf("keyCards affected not 1 but %d", aff))
-			}
-		}
-
-		log("relay.flushEvents.finish took=%d", took(start))
-	}
-
-// Loader is an interface for all loaders.
-// Loaders represent the read-through cache layer.
-
-	type Loader interface {
-		applyEvent(*EventInsert)
-	}
-
-type fieldFn func(*ShopEvent, CachedMetadata) (ShopObjectIDArray, bool)
-
-// ReductionLoader is a struct that represents a loader for a specific event type
-
-	type ReductionLoader[T CachedEvent] struct {
-		db            *Relay
-		fieldFn       fieldFn
-		loaded        *ShopEventMap[T]
-		whereFragment string
-	}
-
-	func newReductionLoader[T CachedEvent](r *Relay, fn fieldFn, pgTypes []eventType, pgField string) *ReductionLoader[T] {
-		sl := &ReductionLoader[T]{}
-		sl.db = r
-		sl.fieldFn = fn
-		sl.loaded = NewShopEventMap[T]()
-		var quotedTypes = make([]string, len(pgTypes))
-		for i, pgType := range pgTypes {
-			quotedTypes[i] = fmt.Sprintf("'%s'", string(pgType))
-		}
-		sl.whereFragment = fmt.Sprintf(`eventType IN (%s) and %s = $2`, strings.Join(quotedTypes, ","), pgField)
-		r.allLoaders = append(r.allLoaders, sl)
-		return sl
-	}
-
-	func (sl *ReductionLoader[T]) applyEvent(e *EventInsert) {
-		fieldID, has := sl.fieldFn(e.evt, e.CachedMetadata)
-		if !has {
-			return
-		}
-		v, has := sl.loaded.GetHas(fieldID)
-		if has {
-			v.update(e.evt, e.CachedMetadata)
-		}
-	}
-
-	func (sl *ReductionLoader[T]) get(shopID ObjectIDArray, objectID ObjectIDArray) (T, bool) {
-		var indexedID ShopObjectIDArray
-		copy(indexedID[:8], shopID[:])
-		copy(indexedID[8:], objectID[:])
-		var zero T
-		_, known := sl.loaded.GetHas(indexedID)
-		if !known {
-			entries := sl.db.readEvents(sl.whereFragment, shopID, objectID)
-			n := len(entries)
-			if n == 0 {
-				return zero, false
-			}
-			var empty T
-			typeOf := reflect.TypeOf(empty)
-			var zeroValT = reflect.New(typeOf.Elem())
-			var zeroVal = zeroValT.Interface().(T)
-			sl.loaded.Set(indexedID, zeroVal)
-			for _, e := range entries {
-				sl.applyEvent(&e)
-			}
-			for _, qei := range sl.db.queuedEventInserts {
-				sl.applyEvent(qei)
-			}
-		}
-		all, has := sl.loaded.GetHas(indexedID)
-		return all, has
-	}
-
-	func (r *Relay) applyEvent(e *EventInsert) {
-		for _, loader := range r.allLoaders {
-			loader.applyEvent(e)
-		}
-	}
-
-// Database processing
-
-	func (r *Relay) debounceSessions() {
-		// Process each session.
-		// Only log if there is substantial activity because this is polling constantly and usually a no-op.
-		start := now()
-
-		r.sessionIDsToSessionStates.All(func(sessionID sessionID, sessionState *SessionState) bool {
-			// Kick the session if we haven't received any recent messages from it, including ping responses.
-			if time.Since(sessionState.lastSeenAt) > sessionKickTimeout {
-				r.metric.counterAdd("sessions_kick", 1)
-				logS(sessionID, "relay.debounceSessions.kick")
-				op := &StopOp{sessionID: sessionID}
-				r.sendSessionOp(sessionState, op)
-				return false
-			}
-
-			for subID, subscription := range sessionState.subscriptions {
-				r.pushOutShopLog(sessionID, sessionState, subID, subscription)
-			}
-
-			return false
-		})
-
-		// Since we're polling this loop constantly, only log if takes a non-trivial amount of time.
-		debounceTook := took(start)
-		if debounceTook > 0 {
-			r.metric.counterAdd("relay_debounceSessions_took", float64(debounceTook))
-			log("relay.debounceSessions.finish sessions=%d elapsed=%d", r.sessionIDsToSessionStates.Size(), debounceTook)
-		}
-	}
-
-	func (r *Relay) pushOutShopLog(sessionID sessionID, session *SessionState, subID uint16, sub *SubscriptionState) {
-		ctx := context.Background()
-
-		// If the session is authenticated, we can get user info.
-		shopState := r.shopIDsToShopState.MustGet(sub.shopID)
-		r.assertCursors(sessionID, shopState, sub)
-
-		// Calculate the new keyCard seq up to which the device has acked all pushes.
-		// Slice the buffer to drop such entries as they have completed their lifecycle.
-		// Do this all first to trim down the buffer before reading more, if possible.
-		var (
-			advancedFrom uint64
-			advancedTo   uint64
-			i            = 0
-		)
-		for ; i < len(sub.buffer); i++ {
-			entryState := sub.buffer[i]
-			if !entryState.acked {
-				break
-			}
-			assert(entryState.seq > sub.lastAckedSeq)
-			if i == 0 {
-				advancedFrom = sub.lastAckedSeq
-			}
-			sub.lastAckedSeq = entryState.seq
-			advancedTo = entryState.seq
-		}
-		if i != 0 {
-			sub.buffer = sub.buffer[i:]
-			sub.nextPushIndex -= i
-			logS(sessionID, "relay.debounceSessions.advanceSeq reason=entries from=%d to=%d", advancedFrom, advancedTo)
-			r.assertCursors(sessionID, shopState, sub)
-		}
-
-		// Check if a sync status is needed, and if so query and send it.
-		// Use the boolean to ensure we always send an initial sync status for the session,
-		// including if the user has no writes yet.
-		// If everything for the device has been pushed, advance the buffered and pushed cursors too.
-		if !sub.initialStatus || sub.lastStatusedSeq < shopState.lastWrittenSeq {
-			syncStatusStart := now()
-			op := &SyncStatusOp{
-				sessionID:      sessionID,
-				subscriptionID: subID,
-			}
-			// Index: events(createdByShopId, shopSeq)
-			query := `select count(*) from events
-				where createdByShopId = $1 and shopSeq > $2
-				  and (` + sub.whereFragment + `)`
-			err := r.connPool.QueryRow(ctx, query, sub.shopID[:], sub.lastPushedSeq).
-				Scan(&op.unpushedEvents)
-			if err != pgx.ErrNoRows {
-				check(err)
-			}
-			r.sendSessionOp(session, op)
-			sub.initialStatus = true
-			sub.lastStatusedSeq = shopState.lastWrittenSeq
-			if op.unpushedEvents == 0 {
-				sub.lastBufferedSeq = sub.lastStatusedSeq
-				sub.lastPushedSeq = sub.lastStatusedSeq
-			}
-			logS(sessionID, "relay.debounceSessions.syncStatus initialStatus=%t unpushedEvents=%d elapsed=%d", sub.initialStatus, op.unpushedEvents, took(syncStatusStart))
-			r.assertCursors(sessionID, shopState, sub)
-		}
-
-		// Check if more buffering is needed, and if so fill buffer.
-		writesNotBuffered := sub.lastBufferedSeq < shopState.lastWrittenSeq
-		var readsAllowed int
-		if len(sub.buffer) >= sessionBufferSizeRefill {
-			readsAllowed = 0
-		} else {
-			readsAllowed = sessionBufferSizeMax - len(sub.buffer)
-		}
-		if writesNotBuffered && readsAllowed > 0 {
-			readStart := now()
-			reads := 0
-			// Index: events(shopId, shopSeq)
-			query := `select e.shopSeq, e.encoded, e.signature
-				from events e
-				where e.createdByShopId = $1
-				    and e.shopSeq > $2
-					and (` + sub.whereFragment + `) order by e.shopSeq asc limit $3`
-			rows, err := r.connPool.Query(ctx, query, sub.shopID[:], sub.lastPushedSeq, readsAllowed)
-			check(err)
-			defer rows.Close()
-			for rows.Next() {
-				var (
-					eventState         = &EventState{}
-					encoded, signature []byte
-				)
-				err := rows.Scan(&eventState.seq, &encoded, &signature)
-				check(err)
-				reads++
-				// log("relay.debounceSessions.debug event=%x", eventState.eventID)
-
-				eventState.acked = false
-				sub.buffer = append(sub.buffer, eventState)
-				assert(eventState.seq > sub.lastBufferedSeq)
-				sub.lastBufferedSeq = eventState.seq
-
-				// re-create pb object from encoded database data
-				eventState.encodedEvent.Event = &anypb.Any{
-					// TODO: would prever to not craft this manually
-					TypeUrl: shopEventTypeURL,
-					Value:   encoded,
-				}
-				eventState.encodedEvent.Signature = &Signature{Raw: signature}
-			}
-			check(rows.Err())
-
-			// If the read rows didn't use the full limit, that means we must be at the end
-			// of this user's writes.
-			if reads < readsAllowed {
-				sub.lastBufferedSeq = shopState.lastWrittenSeq
-			}
-
-			logS(sessionID, "relay.debounceSessions.read shopId=%x reads=%d readsAllowed=%d bufferLen=%d lastWrittenSeq=%d, lastBufferedSeq=%d elapsed=%d", sub.shopID, reads, readsAllowed, len(sub.buffer), shopState.lastWrittenSeq, sub.lastBufferedSeq, took(readStart))
-			r.metric.counterAdd("relay_events_read", float64(reads))
-		}
-		r.assertCursors(sessionID, shopState, sub)
-
-		// Push any events as needed.
-		const maxPushes = limitMaxOutRequests * limitMaxOutBatchSize
-		pushes := 0
-		var eventPushOp *SubscriptionPushOp
-		pushOps := make([]SessionOp, 0)
-		for ; sub.nextPushIndex < len(sub.buffer) && sub.nextPushIndex < maxPushes; sub.nextPushIndex++ {
-			entryState := sub.buffer[sub.nextPushIndex]
-			if eventPushOp != nil && len(eventPushOp.eventStates) == limitMaxOutBatchSize {
-				eventPushOp = nil
-			}
-			if eventPushOp == nil {
-				eventPushOp = &SubscriptionPushOp{
-					sessionID:      sessionID,
-					subscriptionID: subID,
-					eventStates:    make([]*EventState, 0),
-				}
-				pushOps = append(pushOps, eventPushOp)
-			}
-			eventPushOp.eventStates = append(eventPushOp.eventStates, entryState)
-			sub.lastPushedSeq = entryState.seq
-			pushes++
-		}
-		for _, pushOp := range pushOps {
-			r.sendSessionOp(session, pushOp)
-		}
-		if pushes > 0 {
-			logS(sessionID, "relay.debounce.push pushes=%d ops=%d", pushes, len(pushOps))
-		}
-		r.assertCursors(sessionID, shopState, sub)
-
-		// If there are no buffered events at this point, it's safe to advance the acked pointer.
-		if len(sub.buffer) == 0 && sub.lastAckedSeq < sub.lastPushedSeq {
-			logS(sessionID, "relay.debounceSessions.advanceSeq reason=emptyBuffer from=%d to=%d", sub.lastAckedSeq, sub.lastPushedSeq)
-			sub.lastAckedSeq = sub.lastPushedSeq
-		}
-		r.assertCursors(sessionID, shopState, sub)
-
-		// logS(sessionID, "relay.debounce.cursors lastWrittenSeq=%d lastStatusedshopSeq=%d lastBufferedshopSeq=%d lastPushedshopSeq=%d lastAckedSeq=%d", userState.lastWrittenSeq, sessionState.lastStatusedshopSeq, sessionState.lastBufferedshopSeq, sessionState.lastPushedshopSeq, sessionState.lastAckedSeq)
-	}
-*/
 func (r *Relay) memoryStats() {
 	start := now()
 	debug("relay.memoryStats.start")

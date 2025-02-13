@@ -163,8 +163,12 @@ func newEthRPCService(chains map[uint64][]string) *ethRPCService {
 	return &r
 }
 
-func (rpc *ethRPCService) signEvent(data []byte) (*cbor.Signature, error) {
-	sig, err := eventSign(data, rpc.keyPair.secret)
+func (rpc *ethRPCService) signPatchsetHeader(header cbor.PatchSetHeader) (*cbor.Signature, error) {
+	data, err := cbor.Marshal(header)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal patchset header: %w", err)
+	}
+	sig, err := signEIP191(data, rpc.keyPair.secret)
 	return sig, err
 }
 
