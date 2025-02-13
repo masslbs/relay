@@ -2175,7 +2175,7 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 
 	const insertKeyCard = `insert into keyCards (shopId, cardPublicKey, userWalletAddr, isGuest, lastVersion,  lastAckedSeq, linkedAt, lastSeenAt)
 		VALUES ($1, $2, $3, $4, 0, 0, now(), now() )`
-	_, err := r.syncTx.Exec(dbCtx, insertKeyCard, shopDBID, op.keyCardPublicKey, op.userWallet[:], op.keyCardIsGuest)
+	_, err := r.syncTx.Exec(dbCtx, insertKeyCard, shopDBID, op.keyCardPublicKey[:], op.userWallet[:], op.keyCardIsGuest)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {

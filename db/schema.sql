@@ -69,7 +69,7 @@ create table patches (
     accountId bytea, -- optional, for account patches
     tagName text, -- optional, for tag patches
     encoded bytea NOT NULL, -- the encoded patch
-    mmr_proof bytea[] NOT NULL -- array of hashes proving this patch was part of the patchset
+    mmrProof bytea[] NOT NULL -- array of hashes proving this patch was part of the patchset
 );
 
 -- Indices for patches

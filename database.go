@@ -621,20 +621,20 @@ func (r *Relay) rollbackSyncTransaction() {
 	r.syncTx = nil
 }
 
-var dbPatchSetHeaderInsertColumns = []string{"serverSeq", "keycardNonce", "createdByKeyCardId", "createdByShopId", "shopSeq", "createdAt", "receivedAt", "rootHash", "signature"}
+var dbPatchSetHeaderInsertColumns = []string{"serverSeq", "keycardNonce", "createdByKeyCardId", "createdByNetworkSchemaVersion", "createdByShopId", "shopSeq", "createdAt", "receivedAt", "rootHash", "signature"}
 
 func formPatchSetHeaderInsert(ins *PatchSetInsert) []interface{} {
 	return []interface{}{
-		ins.serverSeq,                // server_seq
-		ins.pset.Header.KeyCardNonce, // keycard_nonce
-		ins.createdByKeyCardID,       // created_by_keycard_id
-		ins.createdByNetworkVersion,  // created_by_network_schema_version
-		ins.createdByShopID,          // created_by_shop_id
-		ins.shopSeq,                  // shop_seq
-		ins.pset.Header.Timestamp,    // created_at
-		now(),                        // received_at
-		ins.pset.Header.RootHash,     // root_hash
-		ins.pset.Signature,           // signature
+		ins.serverSeq,                // serverSeq
+		ins.pset.Header.KeyCardNonce, // keycardNonce
+		ins.createdByKeyCardID,       // createdByKeyCardID
+		ins.createdByNetworkVersion,  // createdByNetworkSchemaVersion
+		ins.createdByShopID[:],       // createdByShopID
+		ins.shopSeq,                  // shopSeq
+		ins.pset.Header.Timestamp,    // createdAt
+		now(),                        // receivedAt
+		ins.pset.Header.RootHash[:],  // rootHash
+		ins.pset.Signature[:],        // signature
 	}
 }
 
@@ -647,15 +647,25 @@ func formPatchSetPatchesInserts(ins *PatchSetInsert) [][]interface{} {
 }
 
 func formPatchInsert(patch cbor.Patch, serverSeq uint64) []interface{} {
+	var accID *[]byte
+	if id := patch.Path.AccountID; id != nil {
+		sliced := id[:]
+		accID = &sliced
+	}
+	var objId *uint64
+	if id := patch.Path.ObjectID; id != nil {
+		val := uint64(*id)
+		objId = &val
+	}
 	return []interface{}{
-		serverSeq,             // patch_set_server_seq
-		patch.Op,              // op
-		patch.Path.Type,       // object_type
-		patch.Path.ObjectID,   // object_id
-		patch.Path.AccountID,  // account_id
-		patch.Path.TagName,    // tag_name
-		patch.Value,           // encoded
-		[]byte("dummy_proof"), // mmr_proof
+		serverSeq,                       // patch_set_server_seq
+		patch.Op,                        // op
+		patch.Path.Type,                 // object_type
+		objId,                           // object_id
+		accID,                           // account_id
+		patch.Path.TagName,              // tag_name
+		patch.Value,                     // encoded
+		[][]byte{[]byte("dummy_proof")}, // mmr_proof
 	}
 }
 
@@ -680,23 +690,22 @@ func (r *Relay) flushPatchSets() {
 	}
 	assert(r.lastWrittenServerSeq < r.lastUsedServerSeq)
 
-	insertedEventRows, conflictedEventRows := r.bulkInsert("events", dbPatchSetHeaderInsertColumns, patchSetTuples)
-	for _, row := range insertedEventRows {
-		rowServerSeq := row[7].(uint64)
+	insertedPatchSets, conflictedPatchSets := r.bulkInsert("patchSets", dbPatchSetHeaderInsertColumns, patchSetTuples)
+	for _, row := range insertedPatchSets {
+		rowServerSeq := row[0].(uint64)
 		assert(r.lastWrittenServerSeq < rowServerSeq)
 		assert(rowServerSeq <= r.lastUsedServerSeq)
 		r.lastWrittenServerSeq = rowServerSeq
-		rowShopID := row[3].([]byte)
+		rowShopID := row[4].([]byte)
 		assert(len(rowShopID) == 8)
-		rowShopSeq := row[4].(uint64)
+		rowShopSeq := row[5].(uint64)
 		shopState := r.shopIDsToShopState.MustGet(ObjectIDArray(rowShopID))
 		assert(shopState.lastWrittenSeq < rowShopSeq)
 		assert(rowShopSeq <= shopState.lastUsedSeq)
 		shopState.lastWrittenSeq = rowShopSeq
 	}
 	assert(r.lastWrittenServerSeq <= r.lastUsedServerSeq)
-	r.queuedPatchSetInserts = nil
-	log("relay.flushPatchSets.events insertedEntries=%d conflictedEntries=%d", len(insertedEventRows), len(conflictedEventRows))
+	log("relay.flushPatchSets.patchSets insertedSets=%d conflictedSets=%d", len(insertedPatchSets), len(conflictedPatchSets))
 
 	ctx := context.Background()
 	if len(relayEvents) > 0 {
@@ -712,6 +721,17 @@ func (r *Relay) flushPatchSets() {
 		}
 	}
 
+	// Insert the patches that belong to each patchSet
+	var patchTuples [][]any
+	for _, ins := range r.queuedPatchSetInserts {
+		for _, patch := range ins.pset.Patches {
+			patchTuples = append(patchTuples, formPatchInsert(patch, ins.serverSeq))
+		}
+	}
+	insertedPatchRows, conflictedPatchRows := r.bulkInsert("patches", []string{"patchsetServerSeq", "op", "objectType", "objectId", "accountId", "tagName", "encoded", "mmrProof"}, patchTuples)
+	log("relay.flushPatchSets.patches insertedPatches=%d conflictedPatches=%d", len(insertedPatchRows), len(conflictedPatchRows))
+
+	r.queuedPatchSetInserts = nil
 	log("relay.flushPatchSets.finish took=%d", took(start))
 }
 
@@ -819,8 +839,8 @@ func (r *Relay) run() {
 
 		case <-debounceSessionsTimer.C:
 			tickType, tickSelected = timeTick(ttDebounceSessions)
-			// TODO: re-enable sessions debounce
-			// 	r.debounceSessions()
+			// TODO: re-enable sessions debounce")
+			// r.debounceSessions()
 			debounceSessionsTimer.Rewind()
 
 		case <-memoryStatsTimer.C:
