@@ -10,7 +10,6 @@ import (
 	crand "crypto/rand"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"math/big"
 	"time"
 
@@ -168,38 +167,6 @@ type PaymentFoundInternalOp struct {
 }
 */
 
-type requestMessage interface {
-	validate(uint) *pb.Error
-}
-
-func isRequest(e *pb.Envelope) (requestMessage, bool) {
-	switch tv := e.Message.(type) {
-
-	case *pb.Envelope_Response:
-		return nil, false
-
-	case *pb.Envelope_AuthRequest:
-		return tv.AuthRequest, true
-	case *pb.Envelope_ChallengeSolutionRequest:
-		return tv.ChallengeSolutionRequest, true
-		/*
-			case *pb.Envelope_SubscriptionRequest:
-				return tv.SubscriptionRequest, true
-			case *pb.Envelope_SubscriptionCancelRequest:
-				return tv.SubscriptionCancelRequest, true
-			case *pb.Envelope_EventWriteRequest:
-				return tv.EventWriteRequest, true
-			case *Envelope_GetBlobUploadUrlRequest:
-				return tv.GetBlobUploadUrlRequest, true
-		*/
-	default:
-		panic(fmt.Sprintf("Envelope.isRequest: unhandeled type: %T", tv))
-	}
-}
-
-// App/Client Sessions
-type responseHandler func(*Session, *pb.RequestId, *pb.Envelope_GenericResponse)
-
 func (op *StopOp) handle(sess *Session) {
 	logS(sess.id, "session.stopOp")
 	sess.stopping = true
@@ -212,14 +179,6 @@ func handlePingResponse(sess *Session, _ *pb.RequestId, resp *pb.Envelope_Generi
 	}
 	sess.sendDatabaseOp(op)
 }
-
-// TODO: implement validate
-// func (im *AuthenticateRequest) validate(version uint) *pb.Error {
-// 	if version < 3 {
-// 		return minimumVersionError
-// 	}
-// 	return im.PublicKey.validate()
-// }
 
 func handleAuthRequest(sess *Session, reqID *pb.RequestId, im *pb.AuthenticateRequest) {
 	op := &AuthenticateOp{
@@ -237,14 +196,6 @@ func (op *AuthenticateOp) handle(sess *Session) {
 	}
 	sess.writeResponse(op.requestID, resp)
 }
-
-// TODO: implement validate
-// func (im *ChallengeSolvedRequest) validate(version uint) *pb.Error {
-// 	if version < 3 {
-// 		return minimumVersionError
-// 	}
-// 	return im.Signature.validate()
-// }
 
 func handleChallengeSolutionRequest(sess *Session, reqID *pb.RequestId, im *pb.ChallengeSolvedRequest) {
 	op := &ChallengeSolvedOp{

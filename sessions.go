@@ -208,6 +208,60 @@ func (sess *Session) writeRequest(reqID *pb.RequestId, msg pb.IsEnvelope_Message
 	sess.metric.counterAdd("sessions_messages_request_type_"+typeName, 1)
 }
 
+type requestMessage interface {
+	validate(uint) *pb.Error
+}
+
+type AuthenticateRequestHandler struct {
+	*pb.AuthenticateRequest
+}
+
+func (im *AuthenticateRequestHandler) validate(version uint) *pb.Error {
+	if version < 3 {
+		return minimumVersionError
+	}
+	return validatePublicKey(im.PublicKey)
+}
+
+type ChallengeSolvedRequestHandler struct {
+	*pb.ChallengeSolvedRequest
+}
+
+func (im *ChallengeSolvedRequestHandler) validate(version uint) *pb.Error {
+	if version < 3 {
+		return minimumVersionError
+	}
+	return validateSignature(im.Signature)
+}
+
+func isRequest(e *pb.Envelope) (requestMessage, bool) {
+	switch tv := e.Message.(type) {
+
+	case *pb.Envelope_Response:
+		return nil, false
+
+	case *pb.Envelope_AuthRequest:
+		return &AuthenticateRequestHandler{tv.AuthRequest}, true
+	case *pb.Envelope_ChallengeSolutionRequest:
+		return &ChallengeSolvedRequestHandler{tv.ChallengeSolutionRequest}, true
+		/*
+			case *pb.Envelope_SubscriptionRequest:
+				return tv.SubscriptionRequest, true
+			case *pb.Envelope_SubscriptionCancelRequest:
+				return tv.SubscriptionCancelRequest, true
+			case *pb.Envelope_EventWriteRequest:
+				return tv.EventWriteRequest, true
+			case *Envelope_GetBlobUploadUrlRequest:
+				return tv.GetBlobUploadUrlRequest, true
+		*/
+	default:
+		panic(fmt.Sprintf("Envelope.isRequest: unhandeled type: %T", tv))
+	}
+}
+
+// App/Client Sessions
+type responseHandler func(*Session, *pb.RequestId, *pb.Envelope_GenericResponse)
+
 func (sess *Session) handleMessage(im *pb.Envelope) {
 	// This accounting and verification happen here, instead of readMessage (which would be symmetric
 	// with comparable code in writeMessage) because we need everything to happen in the same

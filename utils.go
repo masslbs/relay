@@ -130,22 +130,22 @@ func validateChainID(val uint64, field string) *pb.Error {
 	return nil
 }
 
+func validatePublicKey(pk *pb.PublicKey) *pb.Error {
+	return validateBytes(pk.Raw, "public_key", publicKeyBytes)
+}
+
+func validateSignature(sig *pb.Signature) *pb.Error {
+	return validateBytes(sig.Raw, "signature", signatureBytes)
+}
+
 /*
-	func (payee *Payee) validate(field string) *Error {
-		return coalesce(
-			validateString(payee.Name, field+".name", 128),
-			payee.Address.validate(field+".address"),
-			validateChainID(payee.ChainId, field+".chain_id"),
-		)
-	}
-
-	func (pk *PublicKey) validate() *Error {
-		return validateBytes(pk.Raw, "public_key", publicKeyBytes)
-	}
-
-	func (sig *Signature) validate() *Error {
-		return validateBytes(sig.Raw, "signature", signatureBytes)
-	}
+			func (payee *Payee) validate(field string) *Error {
+				return coalesce(
+					validateString(payee.Name, field+".name", 128),
+					payee.Address.validate(field+".address"),
+					validateChainID(payee.ChainId, field+".chain_id"),
+				)
+			}
 
 	func (curr *ShopCurrency) validate(field string) *Error {
 		return coalesce(
