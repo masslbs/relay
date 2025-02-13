@@ -429,7 +429,7 @@ func (r *Relay) hydrateShops(shopIDs *SetInts[ObjectIDArray]) {
 		}
 		for _, novelShopIDsSubslice := range subslice(arraysToSlices, 256) {
 			// Index: events(createdByShopId, shopSeq)
-			const queryLatestShopSeq = `select createdByShopId, max(shopSeq) from events where createdByShopId = any($1) group by createdByShopId`
+			const queryLatestShopSeq = `select createdByShopId, max(shopSeq) from patchSets where createdByShopId = any($1) group by createdByShopId`
 			rows, err := r.connPool.Query(ctx, queryLatestShopSeq, novelShopIDsSubslice)
 			check(err)
 			for rows.Next() {
@@ -477,7 +477,7 @@ func (r *Relay) loadServerSeq() {
 	log("relay.loadServerSeq.start")
 	start := now()
 	// Index: none
-	err := r.connPool.QueryRow(context.Background(), `select serverSeq from events order by serverSeq desc limit 1`).Scan(&r.lastWrittenServerSeq)
+	err := r.connPool.QueryRow(context.Background(), `select serverSeq from patchSets order by serverSeq desc limit 1`).Scan(&r.lastWrittenServerSeq)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			r.lastWrittenServerSeq = 0
@@ -621,34 +621,34 @@ func (r *Relay) rollbackSyncTransaction() {
 	r.syncTx = nil
 }
 
-// var dbEventInsertColumns = []string{"eventType", "eventNonce", "createdByKeyCardId", "createdByShopId", "shopSeq", "createdAt", "createdByNetworkSchemaVersion", "serverSeq", "encoded", "signature", "objectID"}
+var dbPatchSetHeaderInsertColumns = []string{"serverSeq", "keycardNonce", "createdByKeyCardId", "createdByShopId", "shopSeq", "createdAt", "receivedAt", "rootHash", "signature"}
 
 func formPatchSetHeaderInsert(ins *PatchSetInsert) []interface{} {
 	return []interface{}{
+		ins.serverSeq,                // server_seq
 		ins.pset.Header.KeyCardNonce, // keycard_nonce
-		nil,                          // created_by_keycard_id
-		ins.pset.Header.ShopID,       // created_by_shop_id
+		ins.createdByKeyCardID,       // created_by_keycard_id
+		ins.createdByNetworkVersion,  // created_by_network_schema_version
+		ins.createdByShopID,          // created_by_shop_id
 		ins.shopSeq,                  // shop_seq
 		ins.pset.Header.Timestamp,    // created_at
-		ins.createdByNetworkVersion,  // created_by_network_schema_version
 		now(),                        // received_at
-		ins.serverSeq,                // server_seq
 		ins.pset.Header.RootHash,     // root_hash
 		ins.pset.Signature,           // signature
 	}
 }
 
-func formPatchSetPatchesInserts(ins *PatchSetInsert, pachSetDBID uint64) [][]interface{} {
+func formPatchSetPatchesInserts(ins *PatchSetInsert) [][]interface{} {
 	patches := make([][]interface{}, len(ins.pset.Patches))
 	for i, patch := range ins.pset.Patches {
-		patches[i] = formPatchInsert(patch)
+		patches[i] = formPatchInsert(patch, ins.serverSeq)
 	}
 	return patches
 }
 
-func formPatchInsert(patch cbor.Patch, pachSetDBID uint64) []interface{} {
+func formPatchInsert(patch cbor.Patch, serverSeq uint64) []interface{} {
 	return []interface{}{
-		pachSetDBID,           // patch_set_id
+		serverSeq,             // patch_set_server_seq
 		patch.Op,              // op
 		patch.Path.Type,       // object_type
 		patch.Path.ObjectID,   // object_id
@@ -667,10 +667,10 @@ func (r *Relay) flushPatchSets() {
 	log("relay.flushPatchSets.start entries=%d", len(r.queuedPatchSetInserts))
 	start := now()
 
-	eventTuples := make([][]any, len(r.queuedPatchSetInserts))
+	patchSetTuples := make([][]any, len(r.queuedPatchSetInserts))
 	relayEvents := make(map[keyCardID]uint64)
 	for i, ins := range r.queuedPatchSetInserts {
-		eventTuples[i] = formInsert(ins)
+		patchSetTuples[i] = formPatchSetHeaderInsert(ins)
 		if ins.writtenByRelay {
 			last := relayEvents[ins.createdByKeyCardID]
 			if last < ins.pset.Header.KeyCardNonce {
@@ -680,7 +680,7 @@ func (r *Relay) flushPatchSets() {
 	}
 	assert(r.lastWrittenServerSeq < r.lastUsedServerSeq)
 
-	insertedEventRows, conflictedEventRows := r.bulkInsert("events", dbEventInsertColumns, eventTuples)
+	insertedEventRows, conflictedEventRows := r.bulkInsert("events", dbPatchSetHeaderInsertColumns, patchSetTuples)
 	for _, row := range insertedEventRows {
 		rowServerSeq := row[7].(uint64)
 		assert(r.lastWrittenServerSeq < rowServerSeq)
@@ -818,10 +818,10 @@ func (r *Relay) run() {
 			op.process(r)
 
 		case <-debounceSessionsTimer.C:
-			log("TODO: re-enable sessions debounce")
-			// 	tickType, tickSelected = timeTick(ttDebounceSessions)
+			tickType, tickSelected = timeTick(ttDebounceSessions)
+			// TODO: re-enable sessions debounce
 			// 	r.debounceSessions()
-			// 	debounceSessionsTimer.Rewind()
+			debounceSessionsTimer.Rewind()
 
 		case <-memoryStatsTimer.C:
 			tickType, tickSelected = timeTick(ttMemoryStats)

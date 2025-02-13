@@ -19,6 +19,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gobwas/ws"
+	cbor "github.com/masslbs/network-schema/go/cbor"
 	"github.com/spruceid/siwe-go"
 )
 
@@ -205,8 +206,8 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 		op := &KeyCardEnrolledInternalOp{
 			shopNFT:          shopTokenID,
 			keyCardIsGuest:   isGuest,
-			keyCardPublicKey: keyCardPublicKey,
-			userWallet:       userWallet,
+			keyCardPublicKey: cbor.PublicKey(keyCardPublicKey),
+			userWallet:       cbor.EthereumAddress(userWallet),
 			done:             make(chan error),
 		}
 		r.opsInternal <- op

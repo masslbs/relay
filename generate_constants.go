@@ -121,7 +121,7 @@ func processSchemaSQL(filePath string) FromSQL {
 		if line == "" {
 			continue
 		}
-		prefix := "create type eventTypeEnum as enum ("
+		prefix := "create type objectTypeEnum as enum ("
 		if strings.HasPrefix(line, prefix) {
 			trimmed := strings.Trim(line, prefix)
 			types := strings.Split(trimmed, ", ")
