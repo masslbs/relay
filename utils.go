@@ -106,8 +106,8 @@ func validateString(s string, field string, maxLength int) *pb.Error {
 }
 
 const (
-	publicKeyBytes = 64
-	signatureBytes = 65
+	publicKeyBytes = cbor.PublicKeySize
+	signatureBytes = cbor.SignatureSize
 )
 
 func validateBytes(val []byte, field string, want uint) *pb.Error {

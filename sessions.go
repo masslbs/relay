@@ -118,7 +118,7 @@ func (sess *Session) readerReadMessage() (*pb.Envelope, error) {
 
 	sess.metric.counterAdd("sessions_messages_read", 1)
 	sess.metric.counterAdd("sessions_messages_read_bytes", float64(len(bytes)))
-	typeName := strings.TrimPrefix(fmt.Sprintf("%T", envl.Message), "*main.Envelope_")
+	typeName := strings.TrimPrefix(fmt.Sprintf("%T", envl.Message), "*pb.Envelope_")
 	sess.metric.counterAdd("sessions_messages_read_type_"+typeName, 1)
 
 	return &envl, nil
@@ -162,7 +162,7 @@ func (sess *Session) writeResponse(reqID *pb.RequestId, resp *pb.Envelope_Generi
 	}
 	sess.metric.counterAdd("sessions_messages_write", 1)
 	sess.metric.counterAdd("sessions_messages_write_bytes", float64(len(bytes)))
-	typeName := strings.TrimPrefix(fmt.Sprintf("%T", envl.Message), "*main.Envelope_")
+	typeName := strings.TrimPrefix(fmt.Sprintf("%T", envl.Message), "*pb.Envelope_")
 	sess.metric.counterAdd("sessions_messages_response_type_"+typeName, 1)
 }
 

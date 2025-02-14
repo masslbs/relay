@@ -83,11 +83,7 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			return http.StatusBadRequest, fmt.Errorf("invalid signature: %w", err)
 		}
 
-		recoveredECDSAPubKey, err := crypto.UnmarshalPubkey(recoveredPubKey)
-		if err != nil {
-			return http.StatusBadRequest, fmt.Errorf("unmarshalPubkey failed: %w", err)
-		}
-		userWallet := crypto.PubkeyToAddress(*recoveredECDSAPubKey)
+		userWallet := crypto.PubkeyToAddress(*recoveredPubKey)
 
 		msg, err := siwe.ParseMessage(data.Message)
 		if err != nil {
@@ -181,8 +177,8 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			return http.StatusBadRequest, fmt.Errorf("invalid hex encoding of keycard: %w", err)
 		}
 
-		if n := len(keyCardPublicKey); n != 64 {
-			return http.StatusBadRequest, fmt.Errorf("keyCardPublicKey length is not 64 but %d", n)
+		if n := len(keyCardPublicKey); n != cbor.PublicKeySize {
+			return http.StatusBadRequest, fmt.Errorf("keyCardPublicKey length is not %d but %d", cbor.PublicKeySize, n)
 		}
 
 		//  check if shop exists

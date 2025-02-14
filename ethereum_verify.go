@@ -6,7 +6,6 @@ package main
 
 import (
 	"crypto/ecdsa"
-	"crypto/subtle"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -15,29 +14,37 @@ import (
 	cbor "github.com/masslbs/network-schema/go/cbor"
 )
 
-func ecrecoverEIP191(message, signature []byte) ([]byte, error) {
-	if len(signature) != 65 {
-		return nil, fmt.Errorf("signature length is not 65")
+func ecrecoverEIP191(message, signature []byte) (*ecdsa.PublicKey, error) {
+	if len(signature) != cbor.SignatureSize {
+		return nil, fmt.Errorf("signature length is not %d", cbor.SignatureSize)
 	}
 
 	sighash := accounts.TextHash(message)
 
 	// update the recovery id
 	// https://github.com/ethereum/go-ethereum/blob/55599ee95d4151a2502465e0afc7c47bd1acba77/internal/ethapi/api.go#L442
-	signature[64] -= 27
+	signature[cbor.SignatureSize-1] -= 27
 
 	// get the pubkey used to sign this signature
 	recovered, err := crypto.Ecrecover(sighash, signature)
 	if err != nil {
 		return nil, fmt.Errorf("ecrecover: %w", err)
 	}
-
-	return recovered, nil
+	pk, err := crypto.UnmarshalPubkey(recovered)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshalPubkey: %w", err)
+	}
+	return pk, nil
 }
 
 func ecrecoverEIP191AndCompare(message, signature, publicKey []byte) error {
-	if len(publicKey) != 64 {
-		return fmt.Errorf("publicKey length is not 64")
+	if len(publicKey) != cbor.PublicKeySize {
+		return fmt.Errorf("publicKey length is not %d", cbor.PublicKeySize)
+	}
+
+	pk, err := crypto.DecompressPubkey(publicKey)
+	if err != nil {
+		return fmt.Errorf("decompressPubkey failed: %w", err)
 	}
 
 	recovered, err := ecrecoverEIP191(message, signature)
@@ -45,14 +52,10 @@ func ecrecoverEIP191AndCompare(message, signature, publicKey []byte) error {
 		return err
 	}
 
-	if len(recovered) == 65 && recovered[0] == 0x04 {
-		// split of encoding bit
-		recovered = recovered[1:]
-	}
-
-	if subtle.ConstantTimeCompare(recovered, publicKey) != 1 {
+	if !pk.Equal(recovered) {
 		return fmt.Errorf("keys are not equal")
 	}
+
 	return nil
 }
 
