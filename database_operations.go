@@ -8,11 +8,15 @@ import (
 	"bytes"
 	"context"
 	crand "crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math/big"
+	"net/url"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -65,7 +69,6 @@ type ChallengeSolvedOp struct {
 	err       *pb.Error
 }
 
-/*
 // SyncStatusOp sends a SyncStatusRequest to the client
 type SyncStatusOp struct {
 	sessionID      sessionID
@@ -75,12 +78,12 @@ type SyncStatusOp struct {
 
 // EventWriteOp processes a write of an event to the database
 type EventWriteOp struct {
-	sessionID      sessionID
-	requestID      *pb.RequestId
-	im             *pb.EventWriteRequest
-	decodedShopEvt *ShopEvent
-	newShopHash    []byte
-	err            *pb.Error
+	sessionID   sessionID
+	requestID   *pb.RequestId
+	im          *pb.EventWriteRequest
+	decoded     *cbor.SignedPatchSet
+	newShopHash []byte
+	err         *pb.Error
 }
 
 // SubscriptionRequestOp represents an operation to request a subscription.
@@ -119,7 +122,7 @@ type GetBlobUploadURLOp struct {
 	uploadURL *url.URL
 	err       *pb.Error
 }
-*/
+
 // Internal Ops
 
 // EventLoopPingInternalOp is used by the health check
@@ -147,7 +150,6 @@ type KeyCardEnrolledInternalOp struct {
 	done             chan error
 }
 
-/*
 // OnchainActionInternalOp are the result of on-chain access control changes of a shop
 type OnchainActionInternalOp struct {
 	shopID ObjectIDArray
@@ -165,7 +167,6 @@ type PaymentFoundInternalOp struct {
 
 	done chan struct{}
 }
-*/
 
 func (op *StopOp) handle(sess *Session) {
 	logS(sess.id, "session.stopOp")
@@ -180,15 +181,6 @@ func handlePingResponse(sess *Session, _ *pb.RequestId, resp *pb.Envelope_Generi
 	sess.sendDatabaseOp(op)
 }
 
-func handleAuthRequest(sess *Session, reqID *pb.RequestId, im *pb.AuthenticateRequest) {
-	op := &AuthenticateOp{
-		requestID: reqID,
-		sessionID: sess.id,
-		im:        im,
-	}
-	sess.sendDatabaseOp(op)
-}
-
 func (op *AuthenticateOp) handle(sess *Session) {
 	resp := newGenericResponse(op.err)
 	if op.err == nil {
@@ -197,360 +189,38 @@ func (op *AuthenticateOp) handle(sess *Session) {
 	sess.writeResponse(op.requestID, resp)
 }
 
-func handleChallengeSolutionRequest(sess *Session, reqID *pb.RequestId, im *pb.ChallengeSolvedRequest) {
-	op := &ChallengeSolvedOp{
-		sessionID: sess.id,
-		requestID: reqID,
-		im:        im,
-	}
-	sess.sendDatabaseOp(op)
-}
-
 func (op *ChallengeSolvedOp) handle(sess *Session) {
 	resp := newGenericResponse(op.err)
 	sess.writeResponse(op.requestID, resp)
 }
 
-/*
 func (op *SyncStatusOp) handle(sess *Session) {
 	reqID := sess.nextRequestID()
-	msg := &Envelope_SyncStatusRequest{
-		&SyncStatusRequest{
+	msg := &pb.Envelope_SyncStatusRequest{
+		SyncStatusRequest: &pb.SyncStatusRequest{
 			UnpushedEvents: op.unpushedEvents,
 		},
 	}
 	sess.writeRequest(reqID, msg)
 }
 
-func handleSyncStatusResponse(sess *Session, _ *RequestId, resp *Envelope_GenericResponse) {
+func handleSyncStatusResponse(sess *Session, _ *pb.RequestId, resp *pb.Envelope_GenericResponse) {
 	assertNilError(resp.GetError())
 	op := &HeartbeatOp{sessionID: sess.id}
-	sess.sendDatabaseOp(op)
-}
-
-func (im *GetBlobUploadURLRequest) validate(version uint) *Error {
-	if version < 3 {
-		return minimumVersionError
-	}
-	return nil // req id is checked seperatly
-}
-
-func (im *GetBlobUploadURLRequest) handle(sess *Session, reqID *RequestId) {
-	op := &GetBlobUploadURLOp{
-		requestID: reqID,
-		sessionID: sess.id,
-		im:        im,
-	}
 	sess.sendDatabaseOp(op)
 }
 
 func (op *GetBlobUploadURLOp) handle(sess *Session) {
 	resp := newGenericResponse(op.err)
 	if op.err == nil {
-		resp.Response = &Envelope_GenericResponse_Payload{[]byte(op.uploadURL.String())}
+		resp.Response = &pb.Envelope_GenericResponse_Payload{
+			Payload: []byte(op.uploadURL.String()),
+		}
 	}
 	sess.writeResponse(op.requestID, resp)
 }
 
-func (op *SubscriptionPushOp) handle(sess *Session) {
-	assertLTE(len(op.eventStates), limitMaxOutBatchSize)
-	events := make([]*SubscriptionPushRequest_SequencedEvent, len(op.eventStates))
-	for i, eventState := range op.eventStates {
-		assert(eventState.seq != 0)
-		events[i] = &SubscriptionPushRequest_SequencedEvent{
-			Event: &eventState.encodedEvent,
-			SeqNo: eventState.seq,
-		}
-		assert(eventState.encodedEvent.Event != nil)
-	}
-	spr := &Envelope_SubscriptionPushRequest{
-		&SubscriptionPushRequest{Events: events},
-	}
-	reqID := sess.nextRequestID()
-	sess.activePushes.Set(reqID.Raw, op)
-	sess.writeRequest(reqID, spr)
-}
-
-func handleSubscriptionPushResponse(sess *Session, reqID *RequestId, resp *Envelope_GenericResponse) {
-	assertNilError(resp.GetError())
-	op := sess.activePushes.Get(reqID.Raw).(*SubscriptionPushOp)
-	sess.activePushes.Delete(reqID.Raw)
-	sess.sendDatabaseOp(op)
-}
-
-// event write validation
-
-func validateShopManifest(_ uint, event *Manifest) *Error {
-	errs := []*Error{
-		validateBytes(event.TokenId.Raw, "token_id", 32),
-	}
-	for i, curr := range event.AcceptedCurrencies {
-		field := fmt.Sprintf("accepted_currency[%d].addr", i)
-		errs = append(errs, curr.Address.validate(field))
-	}
-	if base := event.PricingCurrency; base != nil {
-		errs = append(errs, base.Address.validate("pricing_currencty.addr"))
-	} else {
-		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "pricing_currency is required"})
-	}
-	for i, payee := range event.Payees {
-		field := fmt.Sprintf("payee[%d].addr", i)
-		errs = append(errs, payee.validate(field))
-	}
-	for i, region := range event.ShippingRegions {
-		field := fmt.Sprintf("shipping_region[%d]", i)
-		errs = append(errs, region.validate(field))
-	}
-	return coalesce(errs...)
-}
-
-func validateUpdateManifest(_ uint, event *UpdateManifest) *Error {
-	errs := []*Error{}
-	hasOpt := false
-	if adds := event.AddAcceptedCurrencies; len(adds) > 0 {
-		// TODO: chain id allow list..?
-		for i, add := range adds {
-			field := fmt.Sprintf("add_accepted_currency[%d].addr", i)
-			errs = append(errs, add.Address.validate(field))
-		}
-		hasOpt = true
-	}
-	if removes := event.RemoveAcceptedCurrencies; len(removes) > 0 {
-		for i, remove := range removes {
-			field := fmt.Sprintf("remove_accepted_currency[%d].addr", i)
-			errs = append(errs, remove.Address.validate(field))
-		}
-		hasOpt = true
-	}
-	if base := event.SetPricingCurrency; base != nil {
-		errs = append(errs, base.Address.validate("set_pricing_currencty.addr"))
-		hasOpt = true
-	}
-	if base := event.AddPayee; base != nil {
-		errs = append(errs, base.validate("add_payee"))
-		hasOpt = true
-	}
-	if base := event.RemovePayee; base != nil {
-		errs = append(errs, base.validate("remove_payee"))
-		hasOpt = true
-	}
-	if adds := event.AddShippingRegions; len(adds) > 0 {
-		for i, add := range adds {
-			field := fmt.Sprintf("add_shipping_region[%d]", i)
-			errs = append(errs, add.validate(field))
-		}
-		hasOpt = true
-	}
-	if removes := event.RemoveShippingRegions; len(removes) > 0 {
-		for i, remove := range removes {
-			field := fmt.Sprintf("remove_shipping_region[%d]", i)
-			errs = append(errs, validateString(remove, field, 128))
-		}
-		hasOpt = true
-	}
-
-	if !hasOpt {
-		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "updateManifest has no options set"})
-	}
-	return coalesce(errs...)
-}
-
-func validateListing(_ uint, event *Listing) *Error {
-	errs := []*Error{
-		validateObjectID(event.Id, "id"),
-		event.Price.validate("base_price"),
-		validateString(event.Metadata.Title, "base_info.title", 512),
-		validateString(event.Metadata.Description, "base_info.description", 16*1024),
-	}
-	for i, u := range event.Metadata.Images {
-		errs = append(errs, validateURL(u, fmt.Sprintf("base_info.images[%d]: invalid url", i)))
-	}
-	return coalesce(errs...)
-}
-
-func validateUpdateListing(_ uint, event *UpdateListing) *Error {
-	errs := []*Error{
-		validateObjectID(event.Id, "id"),
-	}
-	hasOpt := false
-	if pr := event.Price; pr != nil {
-		errs = append(errs, validateBytes(event.Price.Raw, "base_price", 32))
-		hasOpt = true
-	}
-	if meta := event.Metadata; meta != nil {
-		if meta.Title != "" {
-			errs = append(errs, validateString(event.Metadata.Title, "base_info.title", 512))
-		}
-		if meta.Description != "" {
-			errs = append(errs, validateString(event.Metadata.Description, "base_info.description", 16*1024))
-		}
-		for i, u := range meta.Images {
-			errs = append(errs, validateURL(u, fmt.Sprintf("base_info.images[%d]: invalid url", i)))
-		}
-		hasOpt = true
-	}
-	if vs := event.ViewState; vs != nil {
-		if *vs > ListingViewState_LISTING_VIEW_STATE_DELETED {
-			errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "invalid view_state"})
-		}
-		hasOpt = true
-	}
-	for i, ao := range event.AddOptions {
-		field := fmt.Sprintf("add_options[%d]", i)
-		errs = append(errs, ao.validate(field))
-		hasOpt = true
-	}
-	for i, av := range event.AddVariations {
-		field := fmt.Sprintf("add_variations[%d]", i)
-		errs = append(errs,
-			validateObjectID(av.OptionId, field+".option_id"),
-			av.Variation.validate(field+".variation"),
-		)
-		hasOpt = true
-	}
-	for i, ro := range event.RemoveOptionIds {
-		field := fmt.Sprintf("remove_options[%d]", i)
-		errs = append(errs, validateObjectID(ro, field))
-		hasOpt = true
-	}
-	for i, rv := range event.RemoveVariationIds {
-		field := fmt.Sprintf("remove_variations[%d]", i)
-		errs = append(errs, validateObjectID(rv, field))
-		hasOpt = true
-	}
-	if !hasOpt {
-		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "has no options set"})
-	}
-	return coalesce(errs...)
-}
-
-func validateChangeInventory(_ uint, event *ChangeInventory) *Error {
-	errs := []*Error{
-		validateObjectID(event.Id, "id"),
-	}
-	if event.Diff == 0 {
-		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "diff can't be zero"})
-	}
-	return coalesce(errs...)
-}
-
-func validateCreateTag(_ uint, event *Tag) *Error {
-	return coalesce(
-		validateObjectID(event.Id, "id"),
-		validateString(event.Name, "name", 64),
-	)
-}
-
-func validateUpdateTag(_ uint, event *UpdateTag) *Error {
-	errs := []*Error{
-		validateObjectID(event.Id, "id"),
-	}
-	hasOpt := false
-	if add := event.AddListingIds; len(add) > 0 {
-		hasOpt = true
-	}
-	if rm := event.RemoveListingIds; len(rm) > 0 {
-		hasOpt = true
-	}
-	if rename := event.Rename; rename != nil {
-		errs = append(errs, validateString(*rename, "rename", 64))
-		hasOpt = true
-	}
-	if event.Delete != nil {
-		hasOpt = true
-	}
-	if !hasOpt {
-		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "has no options set"})
-	}
-	return coalesce(errs...)
-}
-
-func validateCreateOrder(_ uint, event *CreateOrder) *Error {
-	return validateObjectID(event.Id, "id")
-}
-
-func validateUpdateShippingDetails(_ uint, event *AddressDetails) *Error {
-	errs := []*Error{
-		validateString(event.Name, "name", 1024),
-		validateString(event.Address1, "address1", 128),
-		validateString(event.City, "city", 128),
-		validateString(event.PostalCode, "postal_code", 25),
-		validateString(event.Country, "country", 50),
-		// TODO: validate email format
-		validateString(event.EmailAddress, "email_address", 320),
-	}
-	if event.PhoneNumber != nil {
-		errs = append(errs, validateString(*event.PhoneNumber, "phone_number", 20))
-	}
-	return coalesce(errs...)
-}
-
-func validateUpdateOrder(v uint, event *UpdateOrder) *Error {
-	errs := []*Error{
-		validateObjectID(event.Id, "id"),
-	}
-	switch tv := event.Action.(type) {
-	case *UpdateOrder_ChangeItems_:
-		ci := tv.ChangeItems
-		for i, change := range ci.Adds {
-			errs = append(errs, validateObjectID(change.ListingId, fmt.Sprintf("change_items.adds[%d]", i)))
-			for j, v := range change.VariationIds {
-				errs = append(errs, validateObjectID(v, fmt.Sprintf("change_items.adds[%d].variation[%d]", i, j)))
-			}
-		}
-		for i, change := range ci.Removes {
-			errs = append(errs, validateObjectID(change.ListingId, fmt.Sprintf("change_items.removes[%d]", i)))
-			for j, v := range change.VariationIds {
-				errs = append(errs, validateObjectID(v, fmt.Sprintf("change_items.removes[%d].variation[%d]", i, j)))
-			}
-		}
-	case *UpdateOrder_Cancel_:
-		errs = append(errs, validateOrderCancel(v, tv.Cancel))
-	case *UpdateOrder_SetInvoiceAddress:
-		errs = append(errs, validateUpdateShippingDetails(v, tv.SetInvoiceAddress))
-	case *UpdateOrder_SetShippingAddress:
-		errs = append(errs, validateUpdateShippingDetails(v, tv.SetShippingAddress))
-	case *UpdateOrder_CommitItems_:
-		// noop
-	case *UpdateOrder_ChoosePayment:
-		errs = append(errs, validateUpdateOrderPaymentMenthod(v, tv.ChoosePayment))
-	case *UpdateOrder_SetPaymentDetails:
-		errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: "PaymentDetails can only be created by relays"})
-	}
-	return coalesce(errs...)
-}
-
-func validateOrderCancel(_ uint, _ *UpdateOrder_Cancel) *Error {
-	return nil
-}
-
-func validateUpdateOrderPaymentMenthod(version uint, im *UpdateOrder_ChoosePaymentMethod) *Error {
-	if version < 3 {
-		return minimumVersionError
-	}
-	errs := []*Error{}
-	if im.Currency == nil {
-		errs = append(errs, &Error{
-			Code:    ErrorCodes_INVALID,
-			Message: "commit items needs to know the selected currency",
-		})
-	} else {
-		errs = append(errs, im.Currency.validate("currency"))
-	}
-	if im.Payee == nil {
-		errs = append(errs, &Error{
-			Code:    ErrorCodes_INVALID,
-			Message: "commit items needs to know the selected payee",
-		})
-
-	} else {
-		errs = append(errs, im.Payee.validate("payee"))
-	}
-	return coalesce(errs...)
-}
-
-const shopEventTypeURL = "type.googleapis.com/market.mass.ShopEvent"
-
+/*
 func (im *EventWriteRequest) validate(version uint) *Error {
 	if version < 3 {
 		return minimumVersionError
@@ -634,6 +304,32 @@ func (op *EventWriteOp) handle(sess *Session) {
 		om.Response = &Envelope_GenericResponse_Payload{op.newShopHash}
 	}
 	sess.writeResponse(op.requestID, om)
+}
+
+func (op *SubscriptionPushOp) handle(sess *Session) {
+	assertLTE(len(op.eventStates), limitMaxOutBatchSize)
+	events := make([]*pb.SubscriptionPushRequest_SequencedEvent, len(op.eventStates))
+	for i, eventState := range op.eventStates {
+		assert(eventState.seq != 0)
+		events[i] = &pb.SubscriptionPushRequest_SequencedEvent{
+			Event: &eventState.encodedEvent,
+			SeqNo: eventState.seq,
+		}
+		assert(eventState.encodedEvent.Event != nil)
+	}
+	spr := &Envelope_SubscriptionPushRequest{
+		&SubscriptionPushRequest{Events: events},
+	}
+	reqID := sess.nextRequestID()
+	sess.activePushes.Set(reqID.Raw, op)
+	sess.writeRequest(reqID, spr)
+}
+
+func handleSubscriptionPushResponse(sess *Session, reqID *RequestId, resp *Envelope_GenericResponse) {
+	assertNilError(resp.GetError())
+	op := sess.activePushes.Get(reqID.Raw).(*SubscriptionPushOp)
+	sess.activePushes.Delete(reqID.Raw)
+	sess.sendDatabaseOp(op)
 }
 
 func (im *SubscriptionRequest) validate(_ uint) *Error {
@@ -2117,6 +1813,7 @@ func (op *SubscriptionCancelOp) process(r *Relay) {
 	r.sendSessionOp(session, op)
 	logS(op.sessionID, "relay.subscriptionCancelOp.finish took=%d", took(start))
 }
+*/
 
 func (op *GetBlobUploadURLOp) process(r *Relay) {
 	sessionID := op.sessionID
@@ -2158,7 +1855,6 @@ func (op *GetBlobUploadURLOp) process(r *Relay) {
 	r.sendSessionOp(sessionState, op)
 	logSR("relay.getBlobUploadURLOp.finish token=%s took=%d", sessionID, requestID, token, took(start))
 }
-*/
 
 // Internal ops
 

@@ -735,6 +735,198 @@ func (r *Relay) flushPatchSets() {
 	log("relay.flushPatchSets.finish took=%d", took(start))
 }
 
+// Database processing
+
+func (r *Relay) debounceSessions() {
+	// Process each session.
+	// Only log if there is substantial activity because this is polling constantly and usually a no-op.
+	start := now()
+
+	r.sessionIDsToSessionStates.All(func(sessionID sessionID, sessionState *SessionState) bool {
+		// Kick the session if we haven't received any recent messages from it, including ping responses.
+		if time.Since(sessionState.lastSeenAt) > sessionKickTimeout {
+			r.metric.counterAdd("sessions_kick", 1)
+			logS(sessionID, "relay.debounceSessions.kick")
+			op := &StopOp{sessionID: sessionID}
+			r.sendSessionOp(sessionState, op)
+			return false
+		}
+
+		for subID, subscription := range sessionState.subscriptions {
+			r.pushOutShopLog(sessionID, sessionState, subID, subscription)
+		}
+
+		return false
+	})
+
+	// Since we're polling this loop constantly, only log if takes a non-trivial amount of time.
+	debounceTook := took(start)
+	if debounceTook > 0 {
+		r.metric.counterAdd("relay_debounceSessions_took", float64(debounceTook))
+		log("relay.debounceSessions.finish sessions=%d elapsed=%d", r.sessionIDsToSessionStates.Size(), debounceTook)
+	}
+}
+
+func (r *Relay) pushOutShopLog(sessionID sessionID, session *SessionState, subID uint16, sub *SubscriptionState) {
+	ctx := context.Background()
+
+	// If the session is authenticated, we can get user info.
+	shopState := r.shopIDsToShopState.MustGet(sub.shopID)
+	r.assertCursors(sessionID, shopState, sub)
+
+	// Calculate the new keyCard seq up to which the device has acked all pushes.
+	// Slice the buffer to drop such entries as they have completed their lifecycle.
+	// Do this all first to trim down the buffer before reading more, if possible.
+	var (
+		advancedFrom uint64
+		advancedTo   uint64
+		i            = 0
+	)
+	for ; i < len(sub.buffer); i++ {
+		entryState := sub.buffer[i]
+		if !entryState.acked {
+			break
+		}
+		assert(entryState.seq > sub.lastAckedSeq)
+		if i == 0 {
+			advancedFrom = sub.lastAckedSeq
+		}
+		sub.lastAckedSeq = entryState.seq
+		advancedTo = entryState.seq
+	}
+	if i != 0 {
+		sub.buffer = sub.buffer[i:]
+		sub.nextPushIndex -= i
+		logS(sessionID, "relay.debounceSessions.advanceSeq reason=entries from=%d to=%d", advancedFrom, advancedTo)
+		r.assertCursors(sessionID, shopState, sub)
+	}
+
+	// Check if a sync status is needed, and if so query and send it.
+	// Use the boolean to ensure we always send an initial sync status for the session,
+	// including if the user has no writes yet.
+	// If everything for the device has been pushed, advance the buffered and pushed cursors too.
+	if !sub.initialStatus || sub.lastStatusedSeq < shopState.lastWrittenSeq {
+		syncStatusStart := now()
+		op := &SyncStatusOp{
+			sessionID:      sessionID,
+			subscriptionID: subID,
+		}
+		// Index: events(createdByShopId, shopSeq)
+		query := `select count(*) from events
+			where createdByShopId = $1 and shopSeq > $2
+			  and (` + sub.whereFragment + `)`
+		err := r.connPool.QueryRow(ctx, query, sub.shopID[:], sub.lastPushedSeq).
+			Scan(&op.unpushedEvents)
+		if err != pgx.ErrNoRows {
+			check(err)
+		}
+		r.sendSessionOp(session, op)
+		sub.initialStatus = true
+		sub.lastStatusedSeq = shopState.lastWrittenSeq
+		if op.unpushedEvents == 0 {
+			sub.lastBufferedSeq = sub.lastStatusedSeq
+			sub.lastPushedSeq = sub.lastStatusedSeq
+		}
+		logS(sessionID, "relay.debounceSessions.syncStatus initialStatus=%t unpushedEvents=%d elapsed=%d", sub.initialStatus, op.unpushedEvents, took(syncStatusStart))
+		r.assertCursors(sessionID, shopState, sub)
+	}
+	/*
+		// Check if more buffering is needed, and if so fill buffer.
+		writesNotBuffered := sub.lastBufferedSeq < shopState.lastWrittenSeq
+		var readsAllowed int
+		if len(sub.buffer) >= sessionBufferSizeRefill {
+			readsAllowed = 0
+		} else {
+			readsAllowed = sessionBufferSizeMax - len(sub.buffer)
+		}
+		if writesNotBuffered && readsAllowed > 0 {
+			readStart := now()
+			reads := 0
+			// Index: events(shopId, shopSeq)
+			query := `select e.shopSeq, e.encoded, e.signature
+				from events e
+				where e.createdByShopId = $1
+				    and e.shopSeq > $2
+					and (` + sub.whereFragment + `) order by e.shopSeq asc limit $3`
+			rows, err := r.connPool.Query(ctx, query, sub.shopID[:], sub.lastPushedSeq, readsAllowed)
+			check(err)
+			defer rows.Close()
+			for rows.Next() {
+				var (
+					eventState         = &EventState{}
+					encoded, signature []byte
+				)
+				err := rows.Scan(&eventState.seq, &encoded, &signature)
+				check(err)
+				reads++
+				// log("relay.debounceSessions.debug event=%x", eventState.eventID)
+
+				eventState.acked = false
+				sub.buffer = append(sub.buffer, eventState)
+				assert(eventState.seq > sub.lastBufferedSeq)
+				sub.lastBufferedSeq = eventState.seq
+
+				// re-create pb object from encoded database data
+				eventState.encodedEvent.Event = &anypb.Any{
+					// TODO: would prever to not craft this manually
+					TypeUrl: shopEventTypeURL,
+					Value:   encoded,
+				}
+				eventState.encodedEvent.Signature = &Signature{Raw: signature}
+			}
+			check(rows.Err())
+
+			// If the read rows didn't use the full limit, that means we must be at the end
+			// of this user's writes.
+			if reads < readsAllowed {
+				sub.lastBufferedSeq = shopState.lastWrittenSeq
+			}
+
+			logS(sessionID, "relay.debounceSessions.read shopId=%x reads=%d readsAllowed=%d bufferLen=%d lastWrittenSeq=%d, lastBufferedSeq=%d elapsed=%d", sub.shopID, reads, readsAllowed, len(sub.buffer), shopState.lastWrittenSeq, sub.lastBufferedSeq, took(readStart))
+			r.metric.counterAdd("relay_events_read", float64(reads))
+		}
+		r.assertCursors(sessionID, shopState, sub)
+
+		// Push any events as needed.
+		const maxPushes = limitMaxOutRequests * limitMaxOutBatchSize
+		pushes := 0
+		var eventPushOp *SubscriptionPushOp
+		pushOps := make([]SessionOp, 0)
+		for ; sub.nextPushIndex < len(sub.buffer) && sub.nextPushIndex < maxPushes; sub.nextPushIndex++ {
+			entryState := sub.buffer[sub.nextPushIndex]
+			if eventPushOp != nil && len(eventPushOp.eventStates) == limitMaxOutBatchSize {
+				eventPushOp = nil
+			}
+			if eventPushOp == nil {
+				eventPushOp = &SubscriptionPushOp{
+					sessionID:      sessionID,
+					subscriptionID: subID,
+					eventStates:    make([]*EventState, 0),
+				}
+				pushOps = append(pushOps, eventPushOp)
+			}
+			eventPushOp.eventStates = append(eventPushOp.eventStates, entryState)
+			sub.lastPushedSeq = entryState.seq
+			pushes++
+		}
+		for _, pushOp := range pushOps {
+			r.sendSessionOp(session, pushOp)
+		}
+		if pushes > 0 {
+			logS(sessionID, "relay.debounce.push pushes=%d ops=%d", pushes, len(pushOps))
+		}
+		r.assertCursors(sessionID, shopState, sub)
+
+		// If there are no buffered events at this point, it's safe to advance the acked pointer.
+		if len(sub.buffer) == 0 && sub.lastAckedSeq < sub.lastPushedSeq {
+			logS(sessionID, "relay.debounceSessions.advanceSeq reason=emptyBuffer from=%d to=%d", sub.lastAckedSeq, sub.lastPushedSeq)
+			sub.lastAckedSeq = sub.lastPushedSeq
+		}
+		r.assertCursors(sessionID, shopState, sub)
+	*/
+	// logS(sessionID, "relay.debounce.cursors lastWrittenSeq=%d lastStatusedshopSeq=%d lastBufferedshopSeq=%d lastPushedshopSeq=%d lastAckedSeq=%d", userState.lastWrittenSeq, sessionState.lastStatusedshopSeq, sessionState.lastBufferedshopSeq, sessionState.lastPushedshopSeq, sessionState.lastAckedSeq)
+}
+
 func (r *Relay) memoryStats() {
 	start := now()
 	debug("relay.memoryStats.start")
@@ -839,8 +1031,7 @@ func (r *Relay) run() {
 
 		case <-debounceSessionsTimer.C:
 			tickType, tickSelected = timeTick(ttDebounceSessions)
-			// TODO: re-enable sessions debounce")
-			// r.debounceSessions()
+			r.debounceSessions()
 			debounceSessionsTimer.Rewind()
 
 		case <-memoryStatsTimer.C:

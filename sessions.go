@@ -204,13 +204,22 @@ func (sess *Session) writeRequest(reqID *pb.RequestId, msg pb.IsEnvelope_Message
 	}
 	sess.metric.counterAdd("sessions_messages_write", 1)
 	sess.metric.counterAdd("sessions_messages_write_bytes", float64(len(bytes)))
-	typeName := strings.TrimPrefix(fmt.Sprintf("%T", envl.Message), "*main.Envelope_")
+	typeName := strings.TrimPrefix(fmt.Sprintf("%T", envl.Message), "*pb.Envelope_")
 	sess.metric.counterAdd("sessions_messages_request_type_"+typeName, 1)
 }
 
-type requestMessage interface {
+type networkMessage interface {
+	handle(sess *Session, reqID *pb.RequestId)
+}
+
+type networkRequest interface {
+	networkMessage
 	validate(uint) *pb.Error
 }
+
+// Sadly we can't attach methods to the generated pb.Envelope_Message types.
+// So we need to define our own types that wrap the generated types and add
+// our methods.
 
 type AuthenticateRequestHandler struct {
 	*pb.AuthenticateRequest
@@ -221,6 +230,15 @@ func (im *AuthenticateRequestHandler) validate(version uint) *pb.Error {
 		return minimumVersionError
 	}
 	return validatePublicKey(im.PublicKey)
+}
+
+func (im *AuthenticateRequestHandler) handle(sess *Session, reqID *pb.RequestId) {
+	op := &AuthenticateOp{
+		requestID: reqID,
+		sessionID: sess.id,
+		im:        im.AuthenticateRequest,
+	}
+	sess.sendDatabaseOp(op)
 }
 
 type ChallengeSolvedRequestHandler struct {
@@ -234,7 +252,36 @@ func (im *ChallengeSolvedRequestHandler) validate(version uint) *pb.Error {
 	return validateSignature(im.Signature)
 }
 
-func isRequest(e *pb.Envelope) (requestMessage, bool) {
+func (im *ChallengeSolvedRequestHandler) handle(sess *Session, reqID *pb.RequestId) {
+	op := &ChallengeSolvedOp{
+		requestID: reqID,
+		sessionID: sess.id,
+		im:        im.ChallengeSolvedRequest,
+	}
+	sess.sendDatabaseOp(op)
+}
+
+type GetBlobUploadUrlRequestHandler struct {
+	*pb.GetBlobUploadURLRequest
+}
+
+func (im *GetBlobUploadUrlRequestHandler) validate(version uint) *pb.Error {
+	if version < 3 {
+		return minimumVersionError
+	}
+	return nil // req id is checked seperatly
+}
+
+func (im *GetBlobUploadUrlRequestHandler) handle(sess *Session, reqID *pb.RequestId) {
+	op := &GetBlobUploadURLOp{
+		requestID: reqID,
+		sessionID: sess.id,
+		im:        im.GetBlobUploadURLRequest,
+	}
+	sess.sendDatabaseOp(op)
+}
+
+func isRequest(e *pb.Envelope) (networkRequest, bool) {
 	switch tv := e.Message.(type) {
 
 	case *pb.Envelope_Response:
@@ -244,6 +291,8 @@ func isRequest(e *pb.Envelope) (requestMessage, bool) {
 		return &AuthenticateRequestHandler{tv.AuthRequest}, true
 	case *pb.Envelope_ChallengeSolutionRequest:
 		return &ChallengeSolvedRequestHandler{tv.ChallengeSolutionRequest}, true
+	case *pb.Envelope_GetBlobUploadUrlRequest:
+		return &GetBlobUploadUrlRequestHandler{tv.GetBlobUploadUrlRequest}, true
 		/*
 			case *pb.Envelope_SubscriptionRequest:
 				return tv.SubscriptionRequest, true
@@ -251,8 +300,7 @@ func isRequest(e *pb.Envelope) (requestMessage, bool) {
 				return tv.SubscriptionCancelRequest, true
 			case *pb.Envelope_EventWriteRequest:
 				return tv.EventWriteRequest, true
-			case *Envelope_GetBlobUploadUrlRequest:
-				return tv.GetBlobUploadUrlRequest, true
+
 		*/
 	default:
 		panic(fmt.Sprintf("Envelope.isRequest: unhandeled type: %T", tv))
@@ -276,7 +324,6 @@ func (sess *Session) handleMessage(im *pb.Envelope) {
 		return
 	}
 
-	var handlerFn responseHandler
 	if irm, isReq := isRequest(im); isReq {
 		// Requests must not duplicate client-originating request IDs.
 		// If the client makes this error we can't coherently respond to them.
@@ -324,47 +371,32 @@ func (sess *Session) handleMessage(im *pb.Envelope) {
 			return
 		}
 
-	} else {
-		// Responses must correspond to server-originating request IDs.
-		// If the client makes this error we can't coherently respond to them.
-		var has bool
-		handlerFn, has = sess.activeOutRequests.GetHas(requestID.Raw)
-		if !has {
-			logS(sess.id, "session.handleMessage.unknownRequestIdError requestId=%s requestType=%T", requestID, im)
-			op := &StopOp{sessionID: sess.id}
-			sess.sendDatabaseOp(op)
-			return
-		}
-
-		// Note that this outbound requestId has been responded to.
-		sess.activeOutRequests.Delete(requestID.Raw)
+		irm.handle(sess, im.RequestId)
+		return
 	}
 
-	// Handle message-specific logic.
-	switch tv := im.Message.(type) {
-	case *pb.Envelope_Response:
-		assert(handlerFn != nil)
-		handlerFn(sess, im.RequestId, tv.Response)
-
-	case *pb.Envelope_AuthRequest:
-		handleAuthRequest(sess, im.RequestId, tv.AuthRequest)
-	case *pb.Envelope_ChallengeSolutionRequest:
-		handleChallengeSolutionRequest(sess, im.RequestId, tv.ChallengeSolutionRequest)
-
-	// case *pb.Envelope_GetBlobUploadUrlRequest:
-	// 	tv.GetBlobUploadUrlRequest.handle(sess, im.RequestId)
-
-	// case *pb.Envelope_EventWriteRequest:
-	// 	tv.EventWriteRequest.handle(sess, im.RequestId)
-
-	// case *pb.Envelope_SubscriptionRequest:
-	// 	tv.SubscriptionRequest.handle(sess, im.RequestId)
-	// case *pb.Envelope_SubscriptionCancelRequest:
-	// 	tv.SubscriptionCancelRequest.handle(sess, im.RequestId)
-
-	default:
-		panic(fmt.Sprintf("envelope.handle: unhandled message type! %T", tv))
+	// Responses must correspond to server-originating request IDs.
+	// If the client makes this error we can't coherently respond to them.
+	handlerFn, has := sess.activeOutRequests.GetHas(requestID.Raw)
+	if !has {
+		logS(sess.id, "session.handleMessage.unknownRequestIdError requestId=%s requestType=%T", requestID, im)
+		op := &StopOp{sessionID: sess.id}
+		sess.sendDatabaseOp(op)
+		return
 	}
+
+	resp, ok := im.Message.(*pb.Envelope_Response)
+	if !ok {
+		logS(sess.id, "session.handleMessage.unexpectedResponse requestId=%s requestType=%T", requestID, im)
+		op := &StopOp{sessionID: sess.id}
+		sess.sendDatabaseOp(op)
+		return
+	}
+
+	handlerFn(sess, requestID, resp.Response)
+
+	// Note that this outbound requestId has been responded to.
+	sess.activeOutRequests.Delete(requestID.Raw)
 }
 
 func newGenericResponse(err *pb.Error) *pb.Envelope_GenericResponse {
