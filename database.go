@@ -113,6 +113,8 @@ type ShopState struct {
 	relayKeyCardID             keyCardID
 	lastWrittenRelayEventNonce uint64
 	shopTokenID                big.Int
+
+	data *cbor.Shop
 }
 
 func (ss *ShopState) nextRelayEventNonce() uint64 {
@@ -152,6 +154,8 @@ type Relay struct {
 	lastUsedServerSeq     uint64
 	lastWrittenServerSeq  uint64
 
+	patcher *cbor.Patcher
+
 	// caching layer
 	// shopManifestsByShopID *ReductionLoader[*CachedShopManifest]
 	// listingsByListingID   *ReductionLoader[*CachedListing]
@@ -185,6 +189,7 @@ func newRelay(metric *Metric) *Relay {
 	r.ops = make(chan RelayOp, databaseOpsChanSize)
 	r.shopIDsToShopState = NewMapInts[ObjectIDArray, *ShopState]()
 
+	r.patcher = cbor.NewPatcher(cbor.DefaultValidator())
 	/*
 		shopFieldFn := func(_ *ShopEvent, meta CachedMetadata) (ShopObjectIDArray, bool) {
 			return newShopObjectID(meta.createdByShopID, meta.createdByShopID), true
@@ -399,8 +404,10 @@ func (r *Relay) getOrCreateInternalShopID(shopTokenID big.Int) (ObjectIDArray, u
 
 	// the hydrate call in enrollKeyCard will not be able to read/select the above insert
 	assert(!r.shopIDsToShopState.Has(shopID))
+	newShop := cbor.NewShop()
 	r.shopIDsToShopState.Set(shopID, &ShopState{
 		relayKeyCardID: relayKCID,
+		data:           &newShop,
 	})
 
 	return shopID, dbID
@@ -419,6 +426,8 @@ func (r *Relay) hydrateShops(shopIDs *SetInts[ObjectIDArray]) {
 	if sz := novelShopIDs.Size(); sz > 0 {
 		novelShopIDs.All(func(shopID ObjectIDArray) bool {
 			shopState := &ShopState{}
+			data := cbor.NewShop()
+			shopState.data = &data
 			r.shopIDsToShopState.Set(shopID, shopState)
 			return false
 		})
@@ -464,6 +473,8 @@ func (r *Relay) hydrateShops(shopIDs *SetInts[ObjectIDArray]) {
 			}
 			check(rows.Err())
 			rows.Close()
+
+			// TODO: load all patches for the shop and apply them
 		}
 	}
 	elapsed := took(start)
@@ -540,16 +551,19 @@ type PatchSetInsert struct {
 	CachedMetadata
 	evtType eventType
 	pset    *cbor.SignedPatchSet
+	proofs  [][]byte
 }
 
-func newPatchSetInsert(pset *cbor.SignedPatchSet, meta CachedMetadata) *PatchSetInsert {
+func newPatchSetInsert(pset *cbor.SignedPatchSet, meta CachedMetadata, proofs [][]byte) *PatchSetInsert {
+	assert(len(proofs) == len(pset.Patches))
 	return &PatchSetInsert{
 		CachedMetadata: meta,
 		pset:           pset,
+		proofs:         proofs,
 	}
 }
 
-func (r *Relay) queuePatchSet(pset *cbor.SignedPatchSet, cm CachedMetadata) {
+func (r *Relay) queuePatchSet(pset *cbor.SignedPatchSet, cm CachedMetadata, proofs [][]byte) {
 	assert(r.writesEnabled)
 
 	nextServerSeq := r.lastUsedServerSeq + 1
@@ -560,7 +574,7 @@ func (r *Relay) queuePatchSet(pset *cbor.SignedPatchSet, cm CachedMetadata) {
 	cm.shopSeq = shopSeqPair.lastUsedSeq + 1
 	shopSeqPair.lastUsedSeq = cm.shopSeq
 
-	insert := newPatchSetInsert(pset, cm)
+	insert := newPatchSetInsert(pset, cm, proofs)
 	r.queuedPatchSetInserts = append(r.queuedPatchSetInserts, insert)
 	// r.applyEvent(insert)
 }
@@ -576,8 +590,9 @@ func (r *Relay) createRelayPatch(shopID ObjectIDArray, patch cbor.Patch) {
 	var patches []cbor.Patch
 	patches = append(patches, patch)
 	var err error
-	header.RootHash, _, err = cbor.RootHash(patches)
+	rootHash, tree, err := cbor.RootHash(patches)
 	check(err)
+	header.RootHash = rootHash
 
 	var pset cbor.SignedPatchSet
 	pset.Header = *header
@@ -587,9 +602,17 @@ func (r *Relay) createRelayPatch(shopID ObjectIDArray, patch cbor.Patch) {
 	check(err)
 	pset.Signature = *sig
 
+	proofs := make([][]byte, len(patches))
+	for i := uint64(0); i < uint64(len(patches)); i++ {
+		p, err := tree.MakeProof(i)
+		check(err)
+		proofs[i], err = cbor.Marshal(p)
+		check(err)
+	}
+
 	meta := newMetadata(shopState.relayKeyCardID, shopID, currentRelayVersion)
 	meta.writtenByRelay = true
-	r.queuePatchSet(&pset, meta)
+	r.queuePatchSet(&pset, meta, proofs)
 }
 
 func (r *Relay) beginSyncTransaction() {
@@ -641,12 +664,12 @@ func formPatchSetHeaderInsert(ins *PatchSetInsert) []interface{} {
 func formPatchSetPatchesInserts(ins *PatchSetInsert) [][]interface{} {
 	patches := make([][]interface{}, len(ins.pset.Patches))
 	for i, patch := range ins.pset.Patches {
-		patches[i] = formPatchInsert(patch, ins.serverSeq)
+		patches[i] = formPatchInsert(patch, ins.serverSeq, ins.proofs[i])
 	}
 	return patches
 }
 
-func formPatchInsert(patch cbor.Patch, serverSeq uint64) []interface{} {
+func formPatchInsert(patch cbor.Patch, serverSeq uint64, proof []byte) []interface{} {
 	var accID *[]byte
 	if id := patch.Path.AccountID; id != nil {
 		sliced := id[:]
@@ -658,14 +681,14 @@ func formPatchInsert(patch cbor.Patch, serverSeq uint64) []interface{} {
 		objId = &val
 	}
 	return []interface{}{
-		serverSeq,                       // patch_set_server_seq
-		patch.Op,                        // op
-		patch.Path.Type,                 // object_type
-		objId,                           // object_id
-		accID,                           // account_id
-		patch.Path.TagName,              // tag_name
-		patch.Value,                     // encoded
-		[][]byte{[]byte("dummy_proof")}, // mmr_proof
+		serverSeq,          // patch_set_server_seq
+		patch.Op,           // op
+		patch.Path.Type,    // object_type
+		objId,              // object_id
+		accID,              // account_id
+		patch.Path.TagName, // tag_name
+		patch.Value,        // encoded
+		proof,              // mmr_proof
 	}
 }
 
@@ -724,8 +747,8 @@ func (r *Relay) flushPatchSets() {
 	// Insert the patches that belong to each patchSet
 	var patchTuples [][]any
 	for _, ins := range r.queuedPatchSetInserts {
-		for _, patch := range ins.pset.Patches {
-			patchTuples = append(patchTuples, formPatchInsert(patch, ins.serverSeq))
+		for i, patch := range ins.pset.Patches {
+			patchTuples = append(patchTuples, formPatchInsert(patch, ins.serverSeq, ins.proofs[i]))
 		}
 	}
 	insertedPatchRows, conflictedPatchRows := r.bulkInsert("patches", []string{"patchsetServerSeq", "op", "objectType", "objectId", "accountId", "tagName", "encoded", "mmrProof"}, patchTuples)

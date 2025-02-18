@@ -5,7 +5,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	crand "crypto/rand"
 	"encoding/base64"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	gclone "github.com/huandu/go-clone/generic"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -82,8 +82,9 @@ type EventWriteOp struct {
 	requestID   *pb.RequestId
 	im          *pb.EventWriteRequest
 	decoded     *cbor.SignedPatchSet
-	newShopHash []byte
+	newShopHash cbor.Hash
 	err         *pb.Error
+	proofs      [][]byte
 }
 
 // SubscriptionRequestOp represents an operation to request a subscription.
@@ -224,7 +225,7 @@ func (op *EventWriteOp) handle(sess *Session) {
 	om := newGenericResponse(op.err)
 	if op.err == nil {
 		om.Response = &pb.Envelope_GenericResponse_Payload{
-			Payload: op.newShopHash,
+			Payload: op.newShopHash[:],
 		}
 	}
 	sess.writeResponse(op.requestID, om)
@@ -494,61 +495,6 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 	logS(op.sessionID, "relay.challengeSolvedOp.finish elapsed=%d", took(challengeSolvedOpStart))
 }
 
-// compute current shop hash
-//
-// until we need to verify proofs this is a pretty simple merkle tree with three intermediary nodes
-// 1. the manifest
-// 2. all published items
-// 3. the stock counts
-func (r *Relay) shopRootHash(_ ObjectIDArray) []byte {
-	//start := now()
-	//log("relay.shopRootHash shopId=%s", shopID)
-	/* TODO: merklization definition
-	shopManifest, has := r.shopManifestsByShopID.get(shopID)
-	assertWithMessage(has, "no manifest for shopId")
-
-	// 1. the manifest
-	manifestHash := sha3.NewLegacyKeccak256()
-	manifestHash.Write(shopManifest.shopTokenID)
-	_, _ = fmt.Fprint(manifestHash, shopManifest.domain)
-	manifestHash.Write(shopManifest.publishedTagID)
-	//log("relay.shopRootHash manifest=%x", manifestHash.Sum(nil))
-
-	// 2. all items in tags
-
-	// 3. the stock
-	stockHash := sha3.NewLegacyKeccak256()
-	stock, has := r.stockByShopID.get(shopID)
-	//assertWithMessage(has, "stock unavailable")
-	if has {
-		//log("relay.shopRootHash.hasStock shopId=%s", shopID)
-		// see above
-		stockIds := stock.inventory.Keys()
-		sort.Sort(stockIds)
-
-		for _, id := range stockIds {
-			count := stock.inventory.MustGet(id)
-			stockHash.Write(id)
-			_, _ = fmt.Fprintf(stockHash, "%d", count)
-		}
-	}
-	//log("relay.shopRootHash stock=%x", stockHash.Sum(nil))
-
-	// final root hash of the three nodes
-	rootHash := sha3.NewLegacyKeccak256()
-	rootHash.Write(manifestHash.Sum(nil))
-	rootHash.Write(publishedItemsHash.Sum(nil))
-	rootHash.Write(stockHash.Sum(nil))
-
-	digest := rootHash.Sum(nil)
-	took := took(start)
-	log("relay.shopRootHash.hash shop=%s digest=%x took=%d", shopID, digest, took)
-	r.metric.counterAdd("shopRootHash_took", float64(took))
-	return digest
-	*/
-	return bytes.Repeat([]byte("todo"), 8)
-}
-
 func (op *EventWriteOp) process(r *Relay) {
 	ctx := context.Background()
 	sessionID := op.sessionID
@@ -589,19 +535,32 @@ func (op *EventWriteOp) process(r *Relay) {
 	}
 	r.hydrateShops(NewSetInts(sessionState.shopID))
 
-	// check related event data exists, etc.
-	meta := newMetadata(sessionState.keyCardID, sessionState.shopID, uint16(sessionState.version))
-	if err := r.checkShopWriteConsistency(op.decoded, meta, sessionState); err != nil {
-		logSR("relay.eventWriteOp.checkEventFailed code=%s msg=%s", sessionID, requestID, err.Code, err.Message)
-		op.err = err
-		r.sendSessionOp(sessionState, op)
-		return
+	// start patching shop state
+	shopState := r.shopIDsToShopState.MustGet(sessionState.shopID)
+
+	// clone shop state to avoid mutating the original
+	// TODO: this is a hack/placeholder until we have copy-on-write functionality
+	proposal := gclone.Clone(shopState.data)
+
+	assert(r.patcher != nil)
+	assert(proposal != nil)
+	for i, patch := range op.decoded.Patches {
+		err := r.patcher.Shop(proposal, patch)
+		if err != nil {
+			logSR("relay.eventWriteOp.applyPatchFailed patch=%d err=%s", sessionID, requestID, i, err.Error())
+			op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid patch"}
+			r.sendSessionOp(sessionState, op)
+			return
+		}
 	}
+
+	// all patches applied successfully, update shop state
+	shopState.data = proposal
 
 	// update shop
 	r.beginSyncTransaction()
-	r.queuePatchSet(op.decoded, meta)
-
+	meta := newMetadata(sessionState.keyCardID, sessionState.shopID, uint16(sessionState.version))
+	r.queuePatchSet(op.decoded, meta, op.proofs)
 	/*
 		// processing for side-effects
 		// - variation removal needs to cancel orders with them
@@ -635,17 +594,16 @@ func (op *EventWriteOp) process(r *Relay) {
 	// compute resulting hash
 	shopSeq := r.shopIDsToShopState.MustGet(sessionState.shopID)
 	if shopSeq.lastUsedSeq >= 3 {
-		hash := r.shopRootHash(sessionState.shopID)
-		op.newShopHash = hash
+		op.newShopHash, err = shopState.data.Hash()
+		if err != nil {
+			logSR("relay.eventWriteOp.hashFailed err=%s", sessionID, requestID, err.Error())
+			op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to hash shop state"}
+			r.sendSessionOp(sessionState, op)
+			return
+		}
 	}
 	r.sendSessionOp(sessionState, op)
 	logSR("relay.eventWriteOp.finish new_events=%d took=%d", sessionID, requestID, setCount, took(start))
-}
-
-func (r *Relay) checkShopWriteConsistency(union *cbor.SignedPatchSet, m CachedMetadata, sess *SessionState) *pb.Error {
-	// manifest, shopExists := r.shopManifestsByShopID.get(m.createdByShopID, m.createdByShopID)
-	// shopManifestExists := shopExists && len(manifest.shopTokenID) > 0
-	return nil
 }
 
 /*

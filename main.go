@@ -6,6 +6,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/pprof"
@@ -16,7 +17,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/getsentry/sentry-go"
+	cbor "github.com/masslbs/network-schema/go/cbor"
 	pb "github.com/masslbs/network-schema/go/pb"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -424,6 +427,31 @@ func main() {
 			}
 		}()
 		server()
+	} else if cmd == "cbor-decode" {
+		if len(cmdArgs) != 2 {
+			fmt.Fprintf(os.Stderr, "Usage: relay cbor-decode <type> <cbor-data>\n")
+			os.Exit(1)
+		}
+		cborData, err := hex.DecodeString(cmdArgs[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to decode hex: %s\n", err)
+			os.Exit(1)
+		}
+		switch cmdArgs[0] {
+		case "Patch":
+			var patch cbor.Patch
+			err := cbor.Unmarshal([]byte(cborData), &patch)
+			check(err)
+			spew.Dump(patch)
+		case "manifest":
+			var manifest cbor.Manifest
+			err := cbor.Unmarshal([]byte(cborData), &manifest)
+			check(err)
+			spew.Dump(manifest)
+		default:
+			fmt.Fprintf(os.Stderr, "Unhandled type: %s\n", cmdArgs[0])
+			os.Exit(1)
+		}
 	} else {
 		usage()
 	}

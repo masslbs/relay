@@ -17,7 +17,6 @@ import (
 	"github.com/gobwas/ws/wsutil"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/masslbs/go-pgmmr"
 	cbor "github.com/masslbs/network-schema/go/cbor"
 	pb "github.com/masslbs/network-schema/go/pb"
 )
@@ -294,6 +293,7 @@ type WriteRequestHandler struct {
 	validator *validator.Validate
 
 	decodedPatchSet *cbor.SignedPatchSet
+	proofs          [][]byte
 }
 
 var bigZero = big.NewInt(0)
@@ -324,19 +324,24 @@ func (im *WriteRequestHandler) validate(version uint) *pb.Error {
 		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to compute root hash"}
 	}
 	if !bytes.Equal(computedRoot[:], decodedPatchSet.Header.RootHash[:]) {
-		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid root hash"}
+		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unexpected root hash"}
 	}
 
 	// compute proofs for all patches
-	proofs := make([]*pgmmr.Proof, len(decodedPatchSet.Patches))
+	proofs := make([][]byte, len(decodedPatchSet.Patches))
 	for i := 0; i < len(decodedPatchSet.Patches); i++ {
-		proofs[i], err = tree.MakeProof(uint64(i))
+		p, err := tree.MakeProof(uint64(i))
 		if err != nil {
 			return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to make proof"}
+		}
+		proofs[i], err = cbor.Marshal(p)
+		if err != nil {
+			return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to marshal proof"}
 		}
 	}
 
 	im.decodedPatchSet = &decodedPatchSet
+	im.proofs = proofs
 	return nil
 }
 
@@ -346,6 +351,7 @@ func (im *WriteRequestHandler) handle(sess *Session, reqID *pb.RequestId) {
 		sessionID: sess.id,
 		im:        im.EventWriteRequest,
 		decoded:   im.decodedPatchSet,
+		proofs:    im.proofs,
 	}
 	sess.sendDatabaseOp(op)
 }
