@@ -5,7 +5,6 @@
 .phony: all lint reuse
 
 relay: *.go
-	./update_version.bash
 	./generate_code.bash
 	go build -o relay
 

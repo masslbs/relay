@@ -5,15 +5,20 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"math/big"
 	"math/rand"
 	"net"
 	"strings"
 	"time"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/gobwas/ws/wsutil"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/masslbs/go-pgmmr"
+	cbor "github.com/masslbs/network-schema/go/cbor"
 	pb "github.com/masslbs/network-schema/go/pb"
 )
 
@@ -29,6 +34,7 @@ type Session struct {
 	activePushes      *MapInts[int64, SessionOp]
 	ops               chan SessionOp
 	databaseOps       chan RelayOp
+	validator         *validator.Validate
 	metric            *Metric
 	stopping          bool
 }
@@ -46,6 +52,7 @@ func newSession(version uint, conn net.Conn, databaseOps chan RelayOp, metric *M
 		messages:    make(chan *pb.Envelope, limitMaxInRequests*2),
 		ops:         make(chan SessionOp, (limitMaxInRequests+limitMaxOutRequests)*2),
 		databaseOps: databaseOps,
+		validator:   cbor.DefaultValidator(),
 		metric:      metric,
 		stopping:    false,
 	}
@@ -179,8 +186,8 @@ func (sess *Session) writeRequest(reqID *pb.RequestId, msg pb.IsEnvelope_Message
 	switch tv := msg.(type) {
 	case *pb.Envelope_PingRequest:
 		handler = handlePingResponse
-	// case *pb.Envelope_SyncStatusRequest:
-	// 	handler = handleSyncStatusResponse
+	case *pb.Envelope_SyncStatusRequest:
+		handler = handleSyncStatusResponse
 	// case *pb.Envelope_SubscriptionPushRequest:
 	// 	handler = handleSubscriptionPushResponse
 	default:
@@ -226,7 +233,7 @@ type AuthenticateRequestHandler struct {
 }
 
 func (im *AuthenticateRequestHandler) validate(version uint) *pb.Error {
-	if version < 3 {
+	if version < 4 {
 		return minimumVersionError
 	}
 	return validatePublicKey(im.PublicKey)
@@ -246,7 +253,7 @@ type ChallengeSolvedRequestHandler struct {
 }
 
 func (im *ChallengeSolvedRequestHandler) validate(version uint) *pb.Error {
-	if version < 3 {
+	if version < 4 {
 		return minimumVersionError
 	}
 	return validateSignature(im.Signature)
@@ -266,7 +273,7 @@ type GetBlobUploadUrlRequestHandler struct {
 }
 
 func (im *GetBlobUploadUrlRequestHandler) validate(version uint) *pb.Error {
-	if version < 3 {
+	if version < 4 {
 		return minimumVersionError
 	}
 	return nil // req id is checked seperatly
@@ -281,7 +288,69 @@ func (im *GetBlobUploadUrlRequestHandler) handle(sess *Session, reqID *pb.Reques
 	sess.sendDatabaseOp(op)
 }
 
-func isRequest(e *pb.Envelope) (networkRequest, bool) {
+type WriteRequestHandler struct {
+	*pb.EventWriteRequest
+
+	validator *validator.Validate
+
+	decodedPatchSet *cbor.SignedPatchSet
+}
+
+var bigZero = big.NewInt(0)
+
+func (im *WriteRequestHandler) validate(version uint) *pb.Error {
+	if version < 4 {
+		return minimumVersionError
+	}
+	var decodedPatchSet cbor.SignedPatchSet
+	if cborErr := cbor.Unmarshal(im.PatchSet, &decodedPatchSet); cborErr != nil {
+		log("eventWriteRequest.validate: cbor unmarshal failed: %s", cborErr.Error())
+		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid CBOR encoding"}
+	}
+	if valErr := im.validator.Struct(decodedPatchSet); valErr != nil {
+		log("eventWriteRequest.validate: validator.Struct failed: %s", valErr.Error())
+		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to validate patch set"}
+	}
+	if decodedPatchSet.Header.Timestamp.IsZero() {
+		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "timestamp can't be unset"}
+	}
+	if decodedPatchSet.Header.ShopID.Cmp(bigZero) == 0 {
+		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "missing shopID on shopEvent"}
+	}
+
+	// verify RootHash
+	computedRoot, tree, err := cbor.RootHash(decodedPatchSet.Patches)
+	if err != nil {
+		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to compute root hash"}
+	}
+	if !bytes.Equal(computedRoot[:], decodedPatchSet.Header.RootHash[:]) {
+		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid root hash"}
+	}
+
+	// compute proofs for all patches
+	proofs := make([]*pgmmr.Proof, len(decodedPatchSet.Patches))
+	for i := 0; i < len(decodedPatchSet.Patches); i++ {
+		proofs[i], err = tree.MakeProof(uint64(i))
+		if err != nil {
+			return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to make proof"}
+		}
+	}
+
+	im.decodedPatchSet = &decodedPatchSet
+	return nil
+}
+
+func (im *WriteRequestHandler) handle(sess *Session, reqID *pb.RequestId) {
+	op := &EventWriteOp{
+		requestID: reqID,
+		sessionID: sess.id,
+		im:        im.EventWriteRequest,
+		decoded:   im.decodedPatchSet,
+	}
+	sess.sendDatabaseOp(op)
+}
+
+func isRequest(e *pb.Envelope, v *validator.Validate) (networkRequest, bool) {
 	switch tv := e.Message.(type) {
 
 	case *pb.Envelope_Response:
@@ -293,15 +362,17 @@ func isRequest(e *pb.Envelope) (networkRequest, bool) {
 		return &ChallengeSolvedRequestHandler{tv.ChallengeSolutionRequest}, true
 	case *pb.Envelope_GetBlobUploadUrlRequest:
 		return &GetBlobUploadUrlRequestHandler{tv.GetBlobUploadUrlRequest}, true
-		/*
-			case *pb.Envelope_SubscriptionRequest:
-				return tv.SubscriptionRequest, true
-			case *pb.Envelope_SubscriptionCancelRequest:
-				return tv.SubscriptionCancelRequest, true
-			case *pb.Envelope_EventWriteRequest:
-				return tv.EventWriteRequest, true
-
-		*/
+	case *pb.Envelope_EventWriteRequest:
+		return &WriteRequestHandler{
+			EventWriteRequest: tv.EventWriteRequest,
+			validator:         v,
+		}, true
+	/*
+		case *pb.Envelope_SubscriptionRequest:
+			return tv.SubscriptionRequest, true
+		case *pb.Envelope_SubscriptionCancelRequest:
+			return tv.SubscriptionCancelRequest, true
+	*/
 	default:
 		panic(fmt.Sprintf("Envelope.isRequest: unhandeled type: %T", tv))
 	}
@@ -324,7 +395,7 @@ func (sess *Session) handleMessage(im *pb.Envelope) {
 		return
 	}
 
-	if irm, isReq := isRequest(im); isReq {
+	if irm, isReq := isRequest(im, sess.validator); isReq {
 		// Requests must not duplicate client-originating request IDs.
 		// If the client makes this error we can't coherently respond to them.
 		if sess.activeInRequests.Has(requestID.Raw) {

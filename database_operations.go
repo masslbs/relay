@@ -220,92 +220,17 @@ func (op *GetBlobUploadURLOp) handle(sess *Session) {
 	sess.writeResponse(op.requestID, resp)
 }
 
-/*
-func (im *EventWriteRequest) validate(version uint) *Error {
-	if version < 3 {
-		return minimumVersionError
-	}
-	if len(im.Events) != 1 {
-		return &Error{Code: ErrorCodes_INVALID, Message: "TODO: multiple writes"}
-	}
-	event := im.Events[0]
-	// TODO: somehow fix double decode
-	var decodedEvt ShopEvent
-	if u := event.Event.TypeUrl; u != shopEventTypeURL {
-		log("eventWriteRequest.validate: unexpected anypb typeURL: %s", u)
-		return &Error{Code: ErrorCodes_INVALID, Message: "unsupported typeURL for event"}
-	}
-	if pberr := event.Event.UnmarshalTo(&decodedEvt); pberr != nil {
-		log("eventWriteRequest.validate: anypb unmarshal failed: %s", pberr.Error())
-		return &Error{Code: ErrorCodes_INVALID, Message: "invalid protobuf encoding"}
-	}
-	if err := event.Signature.validate(); err != nil {
-		return err
-	}
-	if decodedEvt.Nonce == 0 {
-		return &Error{Code: ErrorCodes_INVALID, Message: "missing nonce on shopEvent"}
-	}
-	if decodedEvt.Timestamp == nil {
-		return &Error{Code: ErrorCodes_INVALID, Message: "timestamp can't be unset"}
-	}
-	if decodedEvt.Timestamp.Seconds == 0 {
-		return &Error{Code: ErrorCodes_INVALID, Message: "timestamp can't be 0"}
-	}
-	var err *Error
-	switch union := decodedEvt.Union.(type) {
-	case *ShopEvent_Manifest:
-		err = validateShopManifest(version, union.Manifest)
-	case *ShopEvent_UpdateManifest:
-		err = validateUpdateManifest(version, union.UpdateManifest)
-	case *ShopEvent_Listing:
-		err = validateListing(version, union.Listing)
-	case *ShopEvent_UpdateListing:
-		err = validateUpdateListing(version, union.UpdateListing)
-	case *ShopEvent_ChangeInventory:
-		err = validateChangeInventory(version, union.ChangeInventory)
-	case *ShopEvent_Tag:
-		err = validateCreateTag(version, union.Tag)
-	case *ShopEvent_UpdateTag:
-		err = validateUpdateTag(version, union.UpdateTag)
-	case *ShopEvent_CreateOrder:
-		err = validateCreateOrder(version, union.CreateOrder)
-	case *ShopEvent_UpdateOrder:
-		err = validateUpdateOrder(version, union.UpdateOrder)
-	case *ShopEvent_Account:
-		err = &Error{Code: ErrorCodes_INVALID, Message: "Account is not allowed in EventWriteRequest"}
-	default:
-		log("eventWriteRequest.validate: unrecognized event type: %T", decodedEvt.Union)
-		return &Error{Code: ErrorCodes_INVALID, Message: "Unrecognized event type"}
-	}
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (im *EventWriteRequest) handle(sess *Session, reqID *RequestId) {
-	var decodedEvt ShopEvent
-	if pberr := im.Events[0].Event.UnmarshalTo(&decodedEvt); pberr != nil {
-		// TODO: somehow fix double decode
-		// cant attach decodedEvt to EWR, since it's generate protobuf schema code
-		check(pberr)
-	}
-	op := &EventWriteOp{
-		requestID:      reqID,
-		sessionID:      sess.id,
-		im:             im,
-		decodedShopEvt: &decodedEvt}
-	sess.sendDatabaseOp(op)
-}
-
 func (op *EventWriteOp) handle(sess *Session) {
 	om := newGenericResponse(op.err)
 	if op.err == nil {
-		om.Response = &Envelope_GenericResponse_Payload{op.newShopHash}
+		om.Response = &pb.Envelope_GenericResponse_Payload{
+			Payload: op.newShopHash,
+		}
 	}
 	sess.writeResponse(op.requestID, om)
 }
 
+/*
 func (op *SubscriptionPushOp) handle(sess *Session) {
 	assertLTE(len(op.eventStates), limitMaxOutBatchSize)
 	events := make([]*pb.SubscriptionPushRequest_SequencedEvent, len(op.eventStates))
@@ -381,6 +306,7 @@ func (op *SubscriptionCancelOp) handle(sess *Session) {
 	sess.writeResponse(op.requestID, om)
 }
 */
+
 // database processing
 
 func (op *StartOp) process(r *Relay) {
@@ -623,7 +549,6 @@ func (r *Relay) shopRootHash(_ ObjectIDArray) []byte {
 	return bytes.Repeat([]byte("todo"), 8)
 }
 
-/*
 func (op *EventWriteOp) process(r *Relay) {
 	ctx := context.Background()
 	sessionID := op.sessionID
@@ -644,29 +569,30 @@ func (op *EventWriteOp) process(r *Relay) {
 
 	// check nonce reuse
 	var writtenNonce *uint64
-	const maxNonceQry = `select max(eventNonce) from events where createdByShopID = $1 and  createdByKeyCardId = $2`
+	var usedNonce = op.decoded.Header.KeyCardNonce
+	const maxNonceQry = `select max(keycardNonce) from patchSets where createdByShopID = $1 and  createdByKeyCardId = $2`
 	err := r.connPool.QueryRow(ctx, maxNonceQry, sessionState.shopID[:], sessionState.keyCardID).Scan(&writtenNonce)
 	check(err)
-	if writtenNonce != nil && *writtenNonce >= op.decodedShopEvt.Nonce {
-		logSR("relay.eventWriteOp.nonceReuse keyCard=%d written=%d new=%d", sessionID, requestID, sessionState.keyCardID, *writtenNonce, op.decodedShopEvt.Nonce)
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "event nonce re-use"}
+	if writtenNonce != nil && *writtenNonce >= usedNonce {
+		logSR("relay.eventWriteOp.nonceReuse keyCard=%d written=%d new=%d", sessionID, requestID, sessionState.keyCardID, *writtenNonce, usedNonce)
+		op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "event nonce re-use"}
+		r.sendSessionOp(sessionState, op)
+		return
+	}
+
+	// check signature
+	if err := VerifyPatchSetSignature(op.decoded, sessionState.keyCardPublicKey); err != nil {
+		logSR("relay.eventWriteOp.verifySignatureFailed err=%s", sessionID, requestID, err.Error())
+		op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid signature"}
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 	r.hydrateShops(NewSetInts(sessionState.shopID))
 
-	// check signature
-	if err := op.im.Events[0].Verify(sessionState.keyCardPublicKey); err != nil {
-		logSR("relay.eventWriteOp.verifyEventFailed err=%s", sessionID, requestID, err.Error())
-		op.err = &Error{Code: ErrorCodes_INVALID, Message: "invalid signature"}
-		r.sendSessionOp(sessionState, op)
-		return
-	}
-
 	// check related event data exists, etc.
 	meta := newMetadata(sessionState.keyCardID, sessionState.shopID, uint16(sessionState.version))
-	if err := r.checkShopEventWriteConsistency(op.decodedShopEvt, meta, sessionState); err != nil {
-		logSR("relay.eventWriteOp.checkEventFailed type=%T code=%s msg=%s", sessionID, requestID, op.decodedShopEvt.Union, err.Code, err.Message)
+	if err := r.checkShopWriteConsistency(op.decoded, meta, sessionState); err != nil {
+		logSR("relay.eventWriteOp.checkEventFailed code=%s msg=%s", sessionID, requestID, err.Code, err.Message)
 		op.err = err
 		r.sendSessionOp(sessionState, op)
 		return
@@ -674,34 +600,36 @@ func (op *EventWriteOp) process(r *Relay) {
 
 	// update shop
 	r.beginSyncTransaction()
-	r.writeEvent(op.decodedShopEvt, meta, op.im.Events[0])
+	r.queuePatchSet(op.decoded, meta)
 
-	// processing for side-effects
-	// - variation removal needs to cancel orders with them
-	// - commit starts the payment timer
-	// - payment choice starts the watcher
-	{
-		var err *Error
-		if ul := op.decodedShopEvt.GetUpdateListing(); ul != nil &&
-			(len(ul.RemoveVariationIds) > 0 || len(ul.RemoveOptionIds) > 0) {
-			err = r.processRemoveVariation(sessionID, ul)
-		}
-		if uo := op.decodedShopEvt.GetUpdateOrder(); uo != nil {
-			if ci := uo.GetCommitItems(); ci != nil {
-				err = r.processOrderItemsCommitment(sessionID, uo.Id.Array())
+	/*
+		// processing for side-effects
+		// - variation removal needs to cancel orders with them
+		// - commit starts the payment timer
+		// - payment choice starts the watcher
+		{
+			var err *Error
+			if ul := op.decodedShopEvt.GetUpdateListing(); ul != nil &&
+				(len(ul.RemoveVariationIds) > 0 || len(ul.RemoveOptionIds) > 0) {
+				err = r.processRemoveVariation(sessionID, ul)
 			}
-			if p := uo.GetChoosePayment(); p != nil {
-				err = r.processOrderPaymentChoice(sessionID, uo.Id.Array(), p)
+			if uo := op.decodedShopEvt.GetUpdateOrder(); uo != nil {
+				if ci := uo.GetCommitItems(); ci != nil {
+					err = r.processOrderItemsCommitment(sessionID, uo.Id.Array())
+				}
+				if p := uo.GetChoosePayment(); p != nil {
+					err = r.processOrderPaymentChoice(sessionID, uo.Id.Array(), p)
+				}
+			}
+			if err != nil {
+				op.err = err
+				r.sendSessionOp(sessionState, op)
+				r.rollbackSyncTransaction()
+				return
 			}
 		}
-		if err != nil {
-			op.err = err
-			r.sendSessionOp(sessionState, op)
-			r.rollbackSyncTransaction()
-			return
-		}
-	}
-	eventCount := len(r.queuedEventInserts)
+	*/
+	setCount := len(r.queuedPatchSetInserts)
 	r.commitSyncTransaction()
 
 	// compute resulting hash
@@ -711,10 +639,16 @@ func (op *EventWriteOp) process(r *Relay) {
 		op.newShopHash = hash
 	}
 	r.sendSessionOp(sessionState, op)
-
-	logSR("relay.eventWriteOp.finish new_events=%d took=%d", sessionID, requestID, eventCount, took(start))
+	logSR("relay.eventWriteOp.finish new_events=%d took=%d", sessionID, requestID, setCount, took(start))
 }
 
+func (r *Relay) checkShopWriteConsistency(union *cbor.SignedPatchSet, m CachedMetadata, sess *SessionState) *pb.Error {
+	// manifest, shopExists := r.shopManifestsByShopID.get(m.createdByShopID, m.createdByShopID)
+	// shopManifestExists := shopExists && len(manifest.shopTokenID) > 0
+	return nil
+}
+
+/*
 func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadata, sess *SessionState) *Error {
 	manifest, shopExists := r.shopManifestsByShopID.get(m.createdByShopID, m.createdByShopID)
 	shopManifestExists := shopExists && len(manifest.shopTokenID) > 0
