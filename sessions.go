@@ -13,12 +13,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/go-playground/validator/v10"
 	"github.com/gobwas/ws/wsutil"
 	"google.golang.org/protobuf/proto"
 
-	cbor "github.com/masslbs/network-schema/go/cbor"
-	pb "github.com/masslbs/network-schema/go/pb"
+	masscbor "github.com/masslbs/network-schema/go/cbor"
+	masspb "github.com/masslbs/network-schema/go/pb"
 )
 
 // Session represents a connection to a client
@@ -26,7 +27,7 @@ type Session struct {
 	id                sessionID
 	version           uint
 	conn              net.Conn
-	messages          chan *pb.Envelope
+	messages          chan *masspb.Envelope
 	lastRequestID     int64
 	activeInRequests  *MapInts[int64, time.Time]
 	activeOutRequests *MapInts[int64, responseHandler]
@@ -48,18 +49,18 @@ func newSession(version uint, conn net.Conn, databaseOps chan RelayOp, metric *M
 		activeOutRequests: NewMapInts[int64, responseHandler](),
 		activePushes:      NewMapInts[int64, SessionOp](),
 		// TODO: Think more carefully about channel sizes.
-		messages:    make(chan *pb.Envelope, limitMaxInRequests*2),
+		messages:    make(chan *masspb.Envelope, limitMaxInRequests*2),
 		ops:         make(chan SessionOp, (limitMaxInRequests+limitMaxOutRequests)*2),
 		databaseOps: databaseOps,
-		validator:   cbor.DefaultValidator(),
+		validator:   masscbor.DefaultValidator(),
 		metric:      metric,
 		stopping:    false,
 	}
 }
 
-func (sess *Session) nextRequestID() *pb.RequestId {
+func (sess *Session) nextRequestID() *masspb.RequestId {
 	next := sess.lastRequestID + 1
-	reqID := &pb.RequestId{Raw: next}
+	reqID := &masspb.RequestId{Raw: next}
 	sess.lastRequestID = next
 	return reqID
 }
@@ -91,7 +92,7 @@ func (sess *Session) readerRun() {
 
 const limitMaxMessageSize = 128 * 1024
 
-func (sess *Session) readerReadMessage() (*pb.Envelope, error) {
+func (sess *Session) readerReadMessage() (*masspb.Envelope, error) {
 	bytes, err := wsutil.ReadClientBinary(sess.conn)
 	if err != nil {
 		logS(sess.id, "session.reader.readMessage.readError %+v", err)
@@ -104,7 +105,7 @@ func (sess *Session) readerReadMessage() (*pb.Envelope, error) {
 
 	}
 
-	var envl pb.Envelope
+	var envl masspb.Envelope
 	err = proto.Unmarshal(bytes, &envl)
 	if err != nil {
 		logS(sess.id, "session.reader.readMessage.envelopeUnmarshalError %+v", err)
@@ -130,10 +131,10 @@ func (sess *Session) readerReadMessage() (*pb.Envelope, error) {
 	return &envl, nil
 }
 
-func (sess *Session) writeResponse(reqID *pb.RequestId, resp *pb.Envelope_GenericResponse) {
-	envl := &pb.Envelope{
+func (sess *Session) writeResponse(reqID *masspb.RequestId, resp *masspb.Envelope_GenericResponse) {
+	envl := &masspb.Envelope{
 		RequestId: reqID,
-		Message:   &pb.Envelope_Response{Response: resp},
+		Message:   &masspb.Envelope_Response{Response: resp},
 	}
 	requestID := reqID.Raw
 
@@ -172,8 +173,8 @@ func (sess *Session) writeResponse(reqID *pb.RequestId, resp *pb.Envelope_Generi
 	sess.metric.counterAdd("sessions_messages_response_type_"+typeName, 1)
 }
 
-func (sess *Session) writeRequest(reqID *pb.RequestId, msg pb.IsEnvelope_Message) {
-	envl := &pb.Envelope{
+func (sess *Session) writeRequest(reqID *masspb.RequestId, msg masspb.IsEnvelope_Message) {
+	envl := &masspb.Envelope{
 		RequestId: reqID,
 		Message:   msg,
 	}
@@ -183,12 +184,12 @@ func (sess *Session) writeRequest(reqID *pb.RequestId, msg pb.IsEnvelope_Message
 	assert(!sess.activeOutRequests.Has(requestID))
 	var handler responseHandler
 	switch tv := msg.(type) {
-	case *pb.Envelope_PingRequest:
+	case *masspb.Envelope_PingRequest:
 		handler = handlePingResponse
-	case *pb.Envelope_SyncStatusRequest:
+	case *masspb.Envelope_SyncStatusRequest:
 		handler = handleSyncStatusResponse
-	// case *pb.Envelope_SubscriptionPushRequest:
-	// 	handler = handleSubscriptionPushResponse
+	case *masspb.Envelope_SubscriptionPushRequest:
+		handler = handleSubscriptionPushResponse
 	default:
 		panic(fmt.Sprintf("unhandled request type: %T", tv))
 	}
@@ -215,12 +216,12 @@ func (sess *Session) writeRequest(reqID *pb.RequestId, msg pb.IsEnvelope_Message
 }
 
 type networkMessage interface {
-	handle(sess *Session, reqID *pb.RequestId)
+	handle(sess *Session, reqID *masspb.RequestId)
 }
 
 type networkRequest interface {
 	networkMessage
-	validate(uint) *pb.Error
+	validate(uint) *masspb.Error
 }
 
 // Sadly we can't attach methods to the generated pb.Envelope_Message types.
@@ -228,17 +229,17 @@ type networkRequest interface {
 // our methods.
 
 type AuthenticateRequestHandler struct {
-	*pb.AuthenticateRequest
+	*masspb.AuthenticateRequest
 }
 
-func (im *AuthenticateRequestHandler) validate(version uint) *pb.Error {
+func (im *AuthenticateRequestHandler) validate(version uint) *masspb.Error {
 	if version < 4 {
 		return minimumVersionError
 	}
 	return validatePublicKey(im.PublicKey)
 }
 
-func (im *AuthenticateRequestHandler) handle(sess *Session, reqID *pb.RequestId) {
+func (im *AuthenticateRequestHandler) handle(sess *Session, reqID *masspb.RequestId) {
 	op := &AuthenticateOp{
 		requestID: reqID,
 		sessionID: sess.id,
@@ -248,17 +249,17 @@ func (im *AuthenticateRequestHandler) handle(sess *Session, reqID *pb.RequestId)
 }
 
 type ChallengeSolvedRequestHandler struct {
-	*pb.ChallengeSolvedRequest
+	*masspb.ChallengeSolvedRequest
 }
 
-func (im *ChallengeSolvedRequestHandler) validate(version uint) *pb.Error {
+func (im *ChallengeSolvedRequestHandler) validate(version uint) *masspb.Error {
 	if version < 4 {
 		return minimumVersionError
 	}
 	return validateSignature(im.Signature)
 }
 
-func (im *ChallengeSolvedRequestHandler) handle(sess *Session, reqID *pb.RequestId) {
+func (im *ChallengeSolvedRequestHandler) handle(sess *Session, reqID *masspb.RequestId) {
 	op := &ChallengeSolvedOp{
 		requestID: reqID,
 		sessionID: sess.id,
@@ -268,17 +269,17 @@ func (im *ChallengeSolvedRequestHandler) handle(sess *Session, reqID *pb.Request
 }
 
 type GetBlobUploadUrlRequestHandler struct {
-	*pb.GetBlobUploadURLRequest
+	*masspb.GetBlobUploadURLRequest
 }
 
-func (im *GetBlobUploadUrlRequestHandler) validate(version uint) *pb.Error {
+func (im *GetBlobUploadUrlRequestHandler) validate(version uint) *masspb.Error {
 	if version < 4 {
 		return minimumVersionError
 	}
 	return nil // req id is checked seperatly
 }
 
-func (im *GetBlobUploadUrlRequestHandler) handle(sess *Session, reqID *pb.RequestId) {
+func (im *GetBlobUploadUrlRequestHandler) handle(sess *Session, reqID *masspb.RequestId) {
 	op := &GetBlobUploadURLOp{
 		requestID: reqID,
 		sessionID: sess.id,
@@ -288,106 +289,172 @@ func (im *GetBlobUploadUrlRequestHandler) handle(sess *Session, reqID *pb.Reques
 }
 
 type WriteRequestHandler struct {
-	*pb.EventWriteRequest
+	*masspb.PatchSetWriteRequest
 
 	validator *validator.Validate
 
-	decodedPatchSet *cbor.SignedPatchSet
+	decodedPatchSet *masscbor.SignedPatchSet
 	proofs          [][]byte
+	headerData      []byte
 }
 
 var bigZero = big.NewInt(0)
 
-func (im *WriteRequestHandler) validate(version uint) *pb.Error {
+func (im *WriteRequestHandler) validate(version uint) *masspb.Error {
 	if version < 4 {
 		return minimumVersionError
 	}
-	var decodedPatchSet cbor.SignedPatchSet
-	if cborErr := cbor.Unmarshal(im.PatchSet, &decodedPatchSet); cborErr != nil {
-		log("eventWriteRequest.validate: cbor unmarshal failed: %s", cborErr.Error())
-		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid CBOR encoding"}
+	var decodingHelper struct {
+		Header    cbor.RawMessage // keep a copy of the header to re-use it for storage and signature verification
+		Signature masscbor.Signature
+		Patches   []masscbor.Patch
 	}
+	if err := masscbor.Unmarshal(im.PatchSet, &decodingHelper); err != nil {
+		log("eventWriteRequest.validate: cbor unmarshal of patchset failed: %s", err.Error())
+		return &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "invalid CBOR encoding"}
+	}
+
+	var decodedPatchSet masscbor.SignedPatchSet
+	if err := masscbor.Unmarshal(decodingHelper.Header, &decodedPatchSet.Header); err != nil {
+		log("eventWriteRequest.validate: cbor unmarshal of header failed: %s", err.Error())
+		return &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "unable to unmarshal header"}
+	}
+	decodedPatchSet.Signature = decodingHelper.Signature
+	decodedPatchSet.Patches = decodingHelper.Patches
+
 	if valErr := im.validator.Struct(decodedPatchSet); valErr != nil {
 		log("eventWriteRequest.validate: validator.Struct failed: %s", valErr.Error())
-		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to validate patch set"}
+		return &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "unable to validate patch set"}
 	}
 	if decodedPatchSet.Header.Timestamp.IsZero() {
-		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "timestamp can't be unset"}
+		return &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "timestamp can't be unset"}
 	}
 	if decodedPatchSet.Header.ShopID.Cmp(bigZero) == 0 {
-		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "missing shopID on shopEvent"}
+		return &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "missing shopID on shopEvent"}
 	}
 
 	// verify RootHash
-	computedRoot, tree, err := cbor.RootHash(decodedPatchSet.Patches)
+	computedRoot, tree, err := masscbor.RootHash(decodedPatchSet.Patches)
 	if err != nil {
-		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to compute root hash"}
+		return &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "unable to compute root hash"}
 	}
 	if !bytes.Equal(computedRoot[:], decodedPatchSet.Header.RootHash[:]) {
-		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unexpected root hash"}
+		return &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "unexpected root hash"}
 	}
+
+	// TODO: we could verify signature if we added the sessionState.keyCardPublicKey to the request/session struct
 
 	// compute proofs for all patches
 	proofs := make([][]byte, len(decodedPatchSet.Patches))
 	for i := 0; i < len(decodedPatchSet.Patches); i++ {
 		p, err := tree.MakeProof(uint64(i))
 		if err != nil {
-			return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to make proof"}
+			return &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "unable to make proof"}
 		}
-		proofs[i], err = cbor.Marshal(p)
+		proofs[i], err = masscbor.Marshal(p)
 		if err != nil {
-			return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to marshal proof"}
+			return &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "unable to marshal proof"}
 		}
 	}
 
+	im.headerData = decodingHelper.Header
 	im.decodedPatchSet = &decodedPatchSet
 	im.proofs = proofs
 	return nil
 }
 
-func (im *WriteRequestHandler) handle(sess *Session, reqID *pb.RequestId) {
+func (im *WriteRequestHandler) handle(sess *Session, reqID *masspb.RequestId) {
 	op := &EventWriteOp{
-		requestID: reqID,
-		sessionID: sess.id,
-		im:        im.EventWriteRequest,
-		decoded:   im.decodedPatchSet,
-		proofs:    im.proofs,
+		requestID:  reqID,
+		sessionID:  sess.id,
+		im:         im.PatchSetWriteRequest,
+		decoded:    im.decodedPatchSet,
+		headerData: im.headerData,
+		proofs:     im.proofs,
 	}
 	sess.sendDatabaseOp(op)
 }
 
-func isRequest(e *pb.Envelope, v *validator.Validate) (networkRequest, bool) {
+type SubscriptionRequestHandler struct {
+	*masspb.SubscriptionRequest
+}
+
+func (im *SubscriptionRequestHandler) validate(version uint) *masspb.Error {
+	if version < 4 {
+		return minimumVersionError
+	}
+	errs := []*masspb.Error{
+		validateBytes(im.ShopId.Raw, "shop_id", 32),
+	}
+	for _, f := range im.Filters {
+		if f.ObjectType == masspb.ObjectType_OBJECT_TYPE_UNSPECIFIED {
+			errs = append(errs, &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "filter object type invalid"})
+		}
+	}
+	return coalesce(errs...)
+}
+
+func (im *SubscriptionRequestHandler) handle(sess *Session, reqID *masspb.RequestId) {
+	op := &SubscriptionRequestOp{
+		requestID: reqID,
+		sessionID: sess.id,
+		im:        im.SubscriptionRequest,
+	}
+	sess.sendDatabaseOp(op)
+}
+
+type SubscriptionCancelRequestHandler struct {
+	*masspb.SubscriptionCancelRequest
+}
+
+func (im *SubscriptionCancelRequestHandler) validate(version uint) *masspb.Error {
+	if version < 4 {
+		return minimumVersionError
+	}
+	return validateBytes(im.SubscriptionId, "subscription_id", 2)
+}
+
+func (im *SubscriptionCancelRequestHandler) handle(sess *Session, reqID *masspb.RequestId) {
+	op := &SubscriptionCancelOp{
+		requestID: reqID,
+		sessionID: sess.id,
+		im:        im.SubscriptionCancelRequest,
+	}
+	sess.sendDatabaseOp(op)
+}
+
+func isRequest(e *masspb.Envelope, v *validator.Validate) (networkRequest, bool) {
 	switch tv := e.Message.(type) {
 
-	case *pb.Envelope_Response:
+	case *masspb.Envelope_Response:
 		return nil, false
 
-	case *pb.Envelope_AuthRequest:
+	case *masspb.Envelope_AuthRequest:
 		return &AuthenticateRequestHandler{tv.AuthRequest}, true
-	case *pb.Envelope_ChallengeSolutionRequest:
+	case *masspb.Envelope_ChallengeSolutionRequest:
 		return &ChallengeSolvedRequestHandler{tv.ChallengeSolutionRequest}, true
-	case *pb.Envelope_GetBlobUploadUrlRequest:
+	case *masspb.Envelope_GetBlobUploadUrlRequest:
 		return &GetBlobUploadUrlRequestHandler{tv.GetBlobUploadUrlRequest}, true
-	case *pb.Envelope_EventWriteRequest:
+	case *masspb.Envelope_PatchSetWriteRequest:
 		return &WriteRequestHandler{
-			EventWriteRequest: tv.EventWriteRequest,
-			validator:         v,
+			PatchSetWriteRequest: tv.PatchSetWriteRequest,
+			validator:            v,
 		}, true
-	/*
-		case *pb.Envelope_SubscriptionRequest:
-			return tv.SubscriptionRequest, true
-		case *pb.Envelope_SubscriptionCancelRequest:
-			return tv.SubscriptionCancelRequest, true
-	*/
+
+	case *masspb.Envelope_SubscriptionRequest:
+		return &SubscriptionRequestHandler{tv.SubscriptionRequest}, true
+	case *masspb.Envelope_SubscriptionCancelRequest:
+		return &SubscriptionCancelRequestHandler{tv.SubscriptionCancelRequest}, true
+
 	default:
 		panic(fmt.Sprintf("Envelope.isRequest: unhandeled type: %T", tv))
 	}
 }
 
 // App/Client Sessions
-type responseHandler func(*Session, *pb.RequestId, *pb.Envelope_GenericResponse)
+type responseHandler func(*Session, *masspb.RequestId, *masspb.Envelope_GenericResponse)
 
-func (sess *Session) handleMessage(im *pb.Envelope) {
+func (sess *Session) handleMessage(im *masspb.Envelope) {
 	// This accounting and verification happen here, instead of readMessage (which would be symmetric
 	// with comparable code in writeMessage) because we need everything to happen in the same
 	// goroutine, and readMessage is on a separate goroutine.
@@ -462,7 +529,7 @@ func (sess *Session) handleMessage(im *pb.Envelope) {
 		return
 	}
 
-	resp, ok := im.Message.(*pb.Envelope_Response)
+	resp, ok := im.Message.(*masspb.Envelope_Response)
 	if !ok {
 		logS(sess.id, "session.handleMessage.unexpectedResponse requestId=%s requestType=%T", requestID, im)
 		op := &StopOp{sessionID: sess.id}
@@ -476,10 +543,10 @@ func (sess *Session) handleMessage(im *pb.Envelope) {
 	sess.activeOutRequests.Delete(requestID.Raw)
 }
 
-func newGenericResponse(err *pb.Error) *pb.Envelope_GenericResponse {
-	r := &pb.Envelope_GenericResponse{}
+func newGenericResponse(err *masspb.Error) *masspb.Envelope_GenericResponse {
+	r := &masspb.Envelope_GenericResponse{}
 	if err != nil {
-		r.Response = &pb.Envelope_GenericResponse_Error{Error: err}
+		r.Response = &masspb.Envelope_GenericResponse_Error{Error: err}
 	}
 	return r
 }
@@ -498,7 +565,7 @@ func (sess *Session) sendDatabaseOp(op RelayOp) {
 
 func (sess *Session) heartbeat() {
 	logS(sess.id, "session.heartbeat")
-	sess.writeRequest(sess.nextRequestID(), &pb.Envelope_PingRequest{PingRequest: &pb.PingRequest{}})
+	sess.writeRequest(sess.nextRequestID(), &masspb.Envelope_PingRequest{PingRequest: &masspb.PingRequest{}})
 }
 
 func (sess *Session) run() {

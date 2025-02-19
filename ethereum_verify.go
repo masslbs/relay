@@ -64,13 +64,9 @@ func verifyChallengeResponse(publicKey, challange, signature []byte) error {
 }
 
 // VerifyPatchSetSignature verifies the signature of the event
-func VerifyPatchSetSignature(pset *cbor.SignedPatchSet, publicKey []byte) error {
-	headerBytes, err := cbor.Marshal(pset.Header)
-	if err != nil {
-		return fmt.Errorf("cbor.Marshal failed: %w", err)
-	}
+func VerifyPatchSetSignature(op *EventWriteOp, publicKey []byte) error {
 	// log("DEBUG.verifyPatchSetSignature headerBytes=%x", headerBytes)
-	return ecrecoverEIP191AndCompare(headerBytes, pset.Signature[:], publicKey)
+	return ecrecoverEIP191AndCompare(op.headerData, op.decoded.Signature[:], publicKey)
 }
 
 func signEIP191(evtData []byte, secret *ecdsa.PrivateKey) (*cbor.Signature, error) {

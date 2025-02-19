@@ -25,12 +25,15 @@ import (
 	cbor "github.com/masslbs/network-schema/go/cbor"
 )
 
-// EventState represents the state of an event in the database.
-type EventState struct {
-	seq   uint64
+// PushStates represents the state of an event in the database.
+type PushStates struct {
 	acked bool
 
-	// encodedEvent SignedEvent
+	shopSeq   uint64
+	leafIndex uint32
+
+	patchData, patchInclProof []byte
+	psHeader, psSignature     []byte
 }
 
 // SessionState represents the state of a client in the database.
@@ -50,7 +53,7 @@ type SessionState struct {
 // SubscriptionState represents the state of a subscription for a client
 type SubscriptionState struct {
 	shopID              ObjectIDArray
-	buffer              []*EventState
+	buffer              []*PushStates
 	initialStatus       bool
 	lastStatusedSeq     uint64
 	lastBufferedSeq     uint64
@@ -549,21 +552,12 @@ func (r *Relay) loadServerSeq() {
 // PatchSetInsert is a struct that represents an event to be inserted into the database
 type PatchSetInsert struct {
 	CachedMetadata
-	evtType eventType
-	pset    *cbor.SignedPatchSet
-	proofs  [][]byte
+	psetHeaderData []byte
+	pset           *cbor.SignedPatchSet
+	proofs         [][]byte
 }
 
-func newPatchSetInsert(pset *cbor.SignedPatchSet, meta CachedMetadata, proofs [][]byte) *PatchSetInsert {
-	assert(len(proofs) == len(pset.Patches))
-	return &PatchSetInsert{
-		CachedMetadata: meta,
-		pset:           pset,
-		proofs:         proofs,
-	}
-}
-
-func (r *Relay) queuePatchSet(pset *cbor.SignedPatchSet, cm CachedMetadata, proofs [][]byte) {
+func (r *Relay) queuePatchSet(cm CachedMetadata, pset *cbor.SignedPatchSet, headerData []byte, proofs [][]byte) {
 	assert(r.writesEnabled)
 
 	nextServerSeq := r.lastUsedServerSeq + 1
@@ -574,7 +568,13 @@ func (r *Relay) queuePatchSet(pset *cbor.SignedPatchSet, cm CachedMetadata, proo
 	cm.shopSeq = shopSeqPair.lastUsedSeq + 1
 	shopSeqPair.lastUsedSeq = cm.shopSeq
 
-	insert := newPatchSetInsert(pset, cm, proofs)
+	assert(len(proofs) == len(pset.Patches))
+	insert := &PatchSetInsert{
+		CachedMetadata: cm,
+		psetHeaderData: headerData,
+		pset:           pset,
+		proofs:         proofs,
+	}
 	r.queuedPatchSetInserts = append(r.queuedPatchSetInserts, insert)
 	// r.applyEvent(insert)
 }
@@ -597,8 +597,9 @@ func (r *Relay) createRelayPatch(shopID ObjectIDArray, patch cbor.Patch) {
 	var pset cbor.SignedPatchSet
 	pset.Header = *header
 	pset.Patches = patches
-
-	sig, err := r.ethereum.signPatchsetHeader(pset.Header)
+	headerData, err := cbor.Marshal(header)
+	check(err)
+	sig, err := r.ethereum.sign(headerData)
 	check(err)
 	pset.Signature = *sig
 
@@ -612,7 +613,7 @@ func (r *Relay) createRelayPatch(shopID ObjectIDArray, patch cbor.Patch) {
 
 	meta := newMetadata(shopState.relayKeyCardID, shopID, currentRelayVersion)
 	meta.writtenByRelay = true
-	r.queuePatchSet(&pset, meta, proofs)
+	r.queuePatchSet(meta, &pset, headerData, proofs)
 }
 
 func (r *Relay) beginSyncTransaction() {
@@ -644,7 +645,7 @@ func (r *Relay) rollbackSyncTransaction() {
 	r.syncTx = nil
 }
 
-var dbPatchSetHeaderInsertColumns = []string{"serverSeq", "keycardNonce", "createdByKeyCardId", "createdByNetworkSchemaVersion", "createdByShopId", "shopSeq", "createdAt", "receivedAt", "rootHash", "signature"}
+var dbPatchSetInsertColumns = []string{"serverSeq", "keycardNonce", "createdByKeyCardId", "createdByNetworkSchemaVersion", "createdByShopId", "shopSeq", "createdAt", "receivedAt", "header", "signature"}
 
 func formPatchSetHeaderInsert(ins *PatchSetInsert) []interface{} {
 	return []interface{}{
@@ -656,7 +657,7 @@ func formPatchSetHeaderInsert(ins *PatchSetInsert) []interface{} {
 		ins.shopSeq,                  // shopSeq
 		ins.pset.Header.Timestamp,    // createdAt
 		now(),                        // receivedAt
-		ins.pset.Header.RootHash[:],  // rootHash
+		ins.psetHeaderData,           // header
 		ins.pset.Signature[:],        // signature
 	}
 }
@@ -669,25 +670,33 @@ func formPatchSetPatchesInserts(ins *PatchSetInsert) [][]interface{} {
 	return patches
 }
 
+var dbPatchInsertColumns = []string{"patchsetServerSeq", "op", "objectType", "objectId", "accountAddr", "tagName", "encoded", "mmrProof"}
+
 func formPatchInsert(patch cbor.Patch, serverSeq uint64, proof []byte) []interface{} {
-	var accID *[]byte
-	if id := patch.Path.AccountID; id != nil {
+	// pgx does not know how to handle cbor.* types.
+	// therefore, we need to "type down" the cbor.* types to basic types
+	// tagName is a *string and is handled correctly automatically
+	var addr *[]byte
+	var objID *uint64
+	if id := patch.Path.AccountAddr; id != nil {
 		sliced := id[:]
-		accID = &sliced
+		addr = &sliced
 	}
-	var objId *uint64
 	if id := patch.Path.ObjectID; id != nil {
 		val := uint64(*id)
-		objId = &val
+		objID = &val
 	}
+	// TODO: re-use this data from the initial decode stage during write validation
+	fullPatch, err := cbor.Marshal(patch)
+	check(err)
 	return []interface{}{
 		serverSeq,          // patch_set_server_seq
 		patch.Op,           // op
 		patch.Path.Type,    // object_type
-		objId,              // object_id
-		accID,              // account_id
+		objID,              // object_id
+		addr,               // account_addr
 		patch.Path.TagName, // tag_name
-		patch.Value,        // encoded
+		fullPatch,          // encoded
 		proof,              // mmr_proof
 	}
 }
@@ -713,7 +722,7 @@ func (r *Relay) flushPatchSets() {
 	}
 	assert(r.lastWrittenServerSeq < r.lastUsedServerSeq)
 
-	insertedPatchSets, conflictedPatchSets := r.bulkInsert("patchSets", dbPatchSetHeaderInsertColumns, patchSetTuples)
+	insertedPatchSets, conflictedPatchSets := r.bulkInsert("patchSets", dbPatchSetInsertColumns, patchSetTuples)
 	for _, row := range insertedPatchSets {
 		rowServerSeq := row[0].(uint64)
 		assert(r.lastWrittenServerSeq < rowServerSeq)
@@ -751,7 +760,7 @@ func (r *Relay) flushPatchSets() {
 			patchTuples = append(patchTuples, formPatchInsert(patch, ins.serverSeq, ins.proofs[i]))
 		}
 	}
-	insertedPatchRows, conflictedPatchRows := r.bulkInsert("patches", []string{"patchsetServerSeq", "op", "objectType", "objectId", "accountId", "tagName", "encoded", "mmrProof"}, patchTuples)
+	insertedPatchRows, conflictedPatchRows := r.bulkInsert("patches", dbPatchInsertColumns, patchTuples)
 	log("relay.flushPatchSets.patches insertedPatches=%d conflictedPatches=%d", len(insertedPatchRows), len(conflictedPatchRows))
 
 	r.queuedPatchSetInserts = nil
@@ -810,12 +819,12 @@ func (r *Relay) pushOutShopLog(sessionID sessionID, session *SessionState, subID
 		if !entryState.acked {
 			break
 		}
-		assert(entryState.seq > sub.lastAckedSeq)
+		assert(entryState.shopSeq > sub.lastAckedSeq)
 		if i == 0 {
 			advancedFrom = sub.lastAckedSeq
 		}
-		sub.lastAckedSeq = entryState.seq
-		advancedTo = entryState.seq
+		sub.lastAckedSeq = entryState.shopSeq
+		advancedTo = entryState.shopSeq
 	}
 	if i != 0 {
 		sub.buffer = sub.buffer[i:]
@@ -834,119 +843,121 @@ func (r *Relay) pushOutShopLog(sessionID sessionID, session *SessionState, subID
 			sessionID:      sessionID,
 			subscriptionID: subID,
 		}
-		// Index: events(createdByShopId, shopSeq)
-		query := `select count(*) from events
-			where createdByShopId = $1 and shopSeq > $2
+		// Index: patchSets(createdByShopId, shopSeq)
+		query := `select count(*)
+			from patchSets ps
+			right join patches p on p.patchsetServerSeq = ps.serverSeq
+			where ps.createdByShopId = $1 and ps.shopSeq > $2
 			  and (` + sub.whereFragment + `)`
 		err := r.connPool.QueryRow(ctx, query, sub.shopID[:], sub.lastPushedSeq).
-			Scan(&op.unpushedEvents)
+			Scan(&op.unpushedPatches)
 		if err != pgx.ErrNoRows {
 			check(err)
 		}
 		r.sendSessionOp(session, op)
 		sub.initialStatus = true
 		sub.lastStatusedSeq = shopState.lastWrittenSeq
-		if op.unpushedEvents == 0 {
+		if op.unpushedPatches == 0 {
 			sub.lastBufferedSeq = sub.lastStatusedSeq
 			sub.lastPushedSeq = sub.lastStatusedSeq
 		}
-		logS(sessionID, "relay.debounceSessions.syncStatus initialStatus=%t unpushedEvents=%d elapsed=%d", sub.initialStatus, op.unpushedEvents, took(syncStatusStart))
+		logS(sessionID, "relay.debounceSessions.syncStatus initialStatus=%t unpushedPatches=%d elapsed=%d", sub.initialStatus, op.unpushedPatches, took(syncStatusStart))
 		r.assertCursors(sessionID, shopState, sub)
 	}
-	/*
-		// Check if more buffering is needed, and if so fill buffer.
-		writesNotBuffered := sub.lastBufferedSeq < shopState.lastWrittenSeq
-		var readsAllowed int
-		if len(sub.buffer) >= sessionBufferSizeRefill {
-			readsAllowed = 0
-		} else {
-			readsAllowed = sessionBufferSizeMax - len(sub.buffer)
-		}
-		if writesNotBuffered && readsAllowed > 0 {
-			readStart := now()
-			reads := 0
-			// Index: events(shopId, shopSeq)
-			query := `select e.shopSeq, e.encoded, e.signature
-				from events e
-				where e.createdByShopId = $1
-				    and e.shopSeq > $2
-					and (` + sub.whereFragment + `) order by e.shopSeq asc limit $3`
-			rows, err := r.connPool.Query(ctx, query, sub.shopID[:], sub.lastPushedSeq, readsAllowed)
+
+	// Check if more buffering is needed, and if so fill buffer.
+	writesNotBuffered := sub.lastBufferedSeq < shopState.lastWrittenSeq
+	var readsAllowed int
+	if len(sub.buffer) >= sessionBufferSizeRefill {
+		readsAllowed = 0
+	} else {
+		readsAllowed = sessionBufferSizeMax - len(sub.buffer)
+	}
+	if writesNotBuffered && readsAllowed > 0 {
+		readStart := now()
+		reads := 0
+		// Index: events(shopId, shopSeq)
+		query := `select ps.shopSeq, ps.header, ps.signature, p.encoded, p.mmrProof
+				from patchSets ps
+				right join patches p on p.patchsetServerSeq = ps.serverSeq
+				where ps.createdByShopId = $1
+				    and ps.shopSeq > $2
+					and (` + sub.whereFragment + `) order by ps.shopSeq asc limit $3`
+		rows, err := r.connPool.Query(ctx, query, sub.shopID[:], sub.lastPushedSeq, readsAllowed)
+		check(err)
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				pushStates                        = &PushStates{}
+				patchSetHeader, patchSetSignature []byte
+				encodedPatch, patchMMRProof       []byte
+			)
+			err := rows.Scan(&pushStates.shopSeq, &patchSetHeader, &patchSetSignature, &encodedPatch, &patchMMRProof)
 			check(err)
-			defer rows.Close()
-			for rows.Next() {
-				var (
-					eventState         = &EventState{}
-					encoded, signature []byte
-				)
-				err := rows.Scan(&eventState.seq, &encoded, &signature)
-				check(err)
-				reads++
-				// log("relay.debounceSessions.debug event=%x", eventState.eventID)
+			reads++
+			// log("relay.debounceSessions.debug event=%x", PushStates.eventID)
 
-				eventState.acked = false
-				sub.buffer = append(sub.buffer, eventState)
-				assert(eventState.seq > sub.lastBufferedSeq)
-				sub.lastBufferedSeq = eventState.seq
+			pushStates.acked = false
+			sub.buffer = append(sub.buffer, pushStates)
+			assert(pushStates.shopSeq > sub.lastBufferedSeq)
+			sub.lastBufferedSeq = pushStates.shopSeq
 
-				// re-create pb object from encoded database data
-				eventState.encodedEvent.Event = &anypb.Any{
-					// TODO: would prever to not craft this manually
-					TypeUrl: shopEventTypeURL,
-					Value:   encoded,
-				}
-				eventState.encodedEvent.Signature = &Signature{Raw: signature}
+			// re-create pb object from encoded database data
+			pushStates.patchData = encodedPatch
+			pushStates.patchInclProof = patchMMRProof
+			pushStates.psHeader = patchSetHeader
+			pushStates.psSignature = patchSetSignature
+		}
+		check(rows.Err())
+
+		// If the read rows didn't use the full limit, that means we must be at the end
+		// of this user's writes.
+		if reads < readsAllowed {
+			sub.lastBufferedSeq = shopState.lastWrittenSeq
+		}
+
+		logS(sessionID, "relay.debounceSessions.read shopId=%x reads=%d readsAllowed=%d bufferLen=%d lastWrittenSeq=%d, lastBufferedSeq=%d elapsed=%d", sub.shopID, reads, readsAllowed, len(sub.buffer), shopState.lastWrittenSeq, sub.lastBufferedSeq, took(readStart))
+		r.metric.counterAdd("relay_events_read", float64(reads))
+	}
+	r.assertCursors(sessionID, shopState, sub)
+
+	// Push any events as needed.
+	const maxPushes = limitMaxOutRequests * limitMaxOutBatchSize
+	pushes := 0
+	var eventPushOp *SubscriptionPushOp
+	pushOps := make([]SessionOp, 0)
+	for ; sub.nextPushIndex < len(sub.buffer) && sub.nextPushIndex < maxPushes; sub.nextPushIndex++ {
+		entryState := sub.buffer[sub.nextPushIndex]
+		if eventPushOp != nil && len(eventPushOp.pushStates) == limitMaxOutBatchSize {
+			eventPushOp = nil
+		}
+		if eventPushOp == nil {
+			eventPushOp = &SubscriptionPushOp{
+				sessionID:      sessionID,
+				subscriptionID: subID,
+				pushStates:     make([]*PushStates, 0),
 			}
-			check(rows.Err())
+			pushOps = append(pushOps, eventPushOp)
+		}
+		eventPushOp.pushStates = append(eventPushOp.pushStates, entryState)
+		sub.lastPushedSeq = entryState.shopSeq
+		pushes++
+	}
+	for _, pushOp := range pushOps {
+		r.sendSessionOp(session, pushOp)
+	}
+	if pushes > 0 {
+		logS(sessionID, "relay.debounce.push pushes=%d ops=%d", pushes, len(pushOps))
+	}
+	r.assertCursors(sessionID, shopState, sub)
 
-			// If the read rows didn't use the full limit, that means we must be at the end
-			// of this user's writes.
-			if reads < readsAllowed {
-				sub.lastBufferedSeq = shopState.lastWrittenSeq
-			}
+	// If there are no buffered events at this point, it's safe to advance the acked pointer.
+	if len(sub.buffer) == 0 && sub.lastAckedSeq < sub.lastPushedSeq {
+		logS(sessionID, "relay.debounceSessions.advanceSeq reason=emptyBuffer from=%d to=%d", sub.lastAckedSeq, sub.lastPushedSeq)
+		sub.lastAckedSeq = sub.lastPushedSeq
+	}
+	r.assertCursors(sessionID, shopState, sub)
 
-			logS(sessionID, "relay.debounceSessions.read shopId=%x reads=%d readsAllowed=%d bufferLen=%d lastWrittenSeq=%d, lastBufferedSeq=%d elapsed=%d", sub.shopID, reads, readsAllowed, len(sub.buffer), shopState.lastWrittenSeq, sub.lastBufferedSeq, took(readStart))
-			r.metric.counterAdd("relay_events_read", float64(reads))
-		}
-		r.assertCursors(sessionID, shopState, sub)
-
-		// Push any events as needed.
-		const maxPushes = limitMaxOutRequests * limitMaxOutBatchSize
-		pushes := 0
-		var eventPushOp *SubscriptionPushOp
-		pushOps := make([]SessionOp, 0)
-		for ; sub.nextPushIndex < len(sub.buffer) && sub.nextPushIndex < maxPushes; sub.nextPushIndex++ {
-			entryState := sub.buffer[sub.nextPushIndex]
-			if eventPushOp != nil && len(eventPushOp.eventStates) == limitMaxOutBatchSize {
-				eventPushOp = nil
-			}
-			if eventPushOp == nil {
-				eventPushOp = &SubscriptionPushOp{
-					sessionID:      sessionID,
-					subscriptionID: subID,
-					eventStates:    make([]*EventState, 0),
-				}
-				pushOps = append(pushOps, eventPushOp)
-			}
-			eventPushOp.eventStates = append(eventPushOp.eventStates, entryState)
-			sub.lastPushedSeq = entryState.seq
-			pushes++
-		}
-		for _, pushOp := range pushOps {
-			r.sendSessionOp(session, pushOp)
-		}
-		if pushes > 0 {
-			logS(sessionID, "relay.debounce.push pushes=%d ops=%d", pushes, len(pushOps))
-		}
-		r.assertCursors(sessionID, shopState, sub)
-
-		// If there are no buffered events at this point, it's safe to advance the acked pointer.
-		if len(sub.buffer) == 0 && sub.lastAckedSeq < sub.lastPushedSeq {
-			logS(sessionID, "relay.debounceSessions.advanceSeq reason=emptyBuffer from=%d to=%d", sub.lastAckedSeq, sub.lastPushedSeq)
-			sub.lastAckedSeq = sub.lastPushedSeq
-		}
-		r.assertCursors(sessionID, shopState, sub)
-	*/
 	// logS(sessionID, "relay.debounce.cursors lastWrittenSeq=%d lastStatusedshopSeq=%d lastBufferedshopSeq=%d lastPushedshopSeq=%d lastAckedSeq=%d", userState.lastWrittenSeq, sessionState.lastStatusedshopSeq, sessionState.lastBufferedshopSeq, sessionState.lastPushedshopSeq, sessionState.lastAckedSeq)
 }
 
