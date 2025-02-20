@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
-	"time"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -37,14 +36,14 @@ type EventTypes struct {
 
 func main() {
 	if len(os.Args) != 3 {
-		fmt.Fprintf(os.Stderr, "usage: %s <schema-version>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s <schema-version> <commit-hash>\n", os.Args[0])
 		os.Exit(1)
 		return
 	}
 	version := os.Args[1]
-	date := time.Now().Format("2006-01-02")
+	commitHash := os.Args[2]
 
-	headerTmpl := `// Generated from network-schema. Files: constants.txt at version v{{.Version}} ({{.Date}})
+	headerTmpl := `// Generated from network-schema. Files: constants.txt at version v{{.Version}} ({{.CommitHash}})
 //lint:file-ignore U1000 Ignore all unused code, it's generated
 
 package main
@@ -70,7 +69,7 @@ const (
 
 	err = tmpl.Execute(os.Stdout, map[string]interface{}{
 		"Version":    version,
-		"Date":       date,
+		"CommitHash": commitHash,
 		"Constants":  constantsTxt,
 		"EventTypes": fromSQL.EventTypes,
 	})
