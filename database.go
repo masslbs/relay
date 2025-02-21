@@ -677,14 +677,15 @@ func formPatchInsert(patch cbor.Patch, serverSeq uint64, proof []byte) []interfa
 	// therefore, we need to "type down" the cbor.* types to basic types
 	// tagName is a *string and is handled correctly automatically
 	var addr *[]byte
-	var objID *uint64
+	var objID *[]byte
 	if id := patch.Path.AccountAddr; id != nil {
 		sliced := id[:]
 		addr = &sliced
 	}
 	if id := patch.Path.ObjectID; id != nil {
-		val := uint64(*id)
-		objID = &val
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, *id)
+		objID = &buf
 	}
 	// TODO: re-use this data from the initial decode stage during write validation
 	fullPatch, err := cbor.Marshal(patch)
