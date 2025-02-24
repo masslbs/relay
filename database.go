@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/time/rate"
@@ -157,7 +158,7 @@ type Relay struct {
 	lastUsedServerSeq     uint64
 	lastWrittenServerSeq  uint64
 
-	patcher *cbor.Patcher
+	validator *validator.Validate
 
 	// caching layer
 	// shopManifestsByShopID *ReductionLoader[*CachedShopManifest]
@@ -192,61 +193,7 @@ func newRelay(metric *Metric) *Relay {
 	r.ops = make(chan RelayOp, databaseOpsChanSize)
 	r.shopIDsToShopState = NewMapInts[ObjectIDArray, *ShopState]()
 
-	r.patcher = cbor.NewPatcher(cbor.DefaultValidator())
-	/*
-		shopFieldFn := func(_ *ShopEvent, meta CachedMetadata) (ShopObjectIDArray, bool) {
-			return newShopObjectID(meta.createdByShopID, meta.createdByShopID), true
-		}
-		r.shopManifestsByShopID = newReductionLoader[*CachedShopManifest](r, shopFieldFn, []eventType{
-			eventTypeManifest,
-			eventTypeUpdateManifest,
-			eventTypeAccount,
-		}, "createdByShopId")
-		r.stockByShopID = newReductionLoader[*CachedStock](r, shopFieldFn, []eventType{eventTypeChangeInventory}, "createdByShopId")
-
-		itemsFieldFn := func(evt *ShopEvent, meta CachedMetadata) (ShopObjectIDArray, bool) {
-			switch tv := evt.Union.(type) {
-			case *ShopEvent_Listing:
-				return newShopObjectID(meta.createdByShopID, tv.Listing.Id.Array()), true
-			case *ShopEvent_UpdateListing:
-				return newShopObjectID(meta.createdByShopID, tv.UpdateListing.Id.Array()), true
-			}
-			return ShopObjectIDArray{}, false
-		}
-		r.listingsByListingID = newReductionLoader[*CachedListing](r, itemsFieldFn, []eventType{
-			eventTypeListing,
-			eventTypeUpdateListing,
-		}, "objectID")
-
-		tagsFieldFn := func(evt *ShopEvent, meta CachedMetadata) (ShopObjectIDArray, bool) {
-			switch tv := evt.Union.(type) {
-			case *ShopEvent_Tag:
-				return newShopObjectID(meta.createdByShopID, tv.Tag.Id.Array()), true
-			case *ShopEvent_UpdateTag:
-				return newShopObjectID(meta.createdByShopID, tv.UpdateTag.Id.Array()), true
-			}
-			return ShopObjectIDArray{}, false
-		}
-		r.tagsByTagID = newReductionLoader[*CachedTag](r, tagsFieldFn, []eventType{
-			eventTypeTag,
-			eventTypeUpdateTag,
-		}, "objectID")
-
-		ordersFieldFn := func(evt *ShopEvent, meta CachedMetadata) (ShopObjectIDArray, bool) {
-			switch tv := evt.Union.(type) {
-			case *ShopEvent_CreateOrder:
-				return newShopObjectID(meta.createdByShopID, tv.CreateOrder.Id.Array()), true
-			case *ShopEvent_UpdateOrder:
-				return newShopObjectID(meta.createdByShopID, tv.UpdateOrder.Id.Array()), true
-			}
-
-			return ShopObjectIDArray{}, false
-		}
-		r.ordersByOrderID = newReductionLoader[*CachedOrder](r, ordersFieldFn, []eventType{
-			eventTypeCreateOrder,
-			eventTypeUpdateOrder,
-		}, "objectID")
-	*/
+	r.validator = cbor.DefaultValidator()
 	r.blobUploadTokens = make(map[string]struct{})
 	r.blobUploadTokensMu = &sync.Mutex{}
 
