@@ -530,8 +530,16 @@ func (op *EventWriteOp) process(r *Relay) {
 	assert(r.patcher != nil)
 	assert(proposal != nil)
 	for i, patch := range op.decoded.Patches {
-		err := r.patcher.Shop(proposal, patch)
+		err := r.checkReferentialIntegrity(proposal, patch)
 		if err != nil {
+			logSR("relay.eventWriteOp.checkReferentialIntegrityFailed patch=%d code=%s err=%s", sessionID, requestID, i, err.Code, err.Message)
+			op.err = err
+			r.sendSessionOp(sessionState, op)
+			return
+		}
+
+		// change shop state
+		if err := r.patcher.Shop(proposal, patch); err != nil {
 			logSR("relay.eventWriteOp.applyPatchFailed patch=%d err=%s", sessionID, requestID, i, err.Error())
 			op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid patch"}
 			r.sendSessionOp(sessionState, op)
@@ -574,27 +582,113 @@ func (op *EventWriteOp) process(r *Relay) {
 		}
 	*/
 	setCount := len(r.queuedPatchSetInserts)
-	r.commitSyncTransaction()
 
 	// compute resulting hash
-	shopSeq := r.shopIDsToShopState.MustGet(sessionState.shopID)
-	if shopSeq.lastUsedSeq >= 3 {
-		op.newShopHash, err = shopState.data.Hash()
-		if err != nil {
-			logSR("relay.eventWriteOp.hashFailed err=%s", sessionID, requestID, err.Error())
-			op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to hash shop state"}
-			r.sendSessionOp(sessionState, op)
-			return
-		}
+	op.newShopHash, err = shopState.data.Hash()
+	if err != nil {
+		logSR("relay.eventWriteOp.hashFailed err=%s", sessionID, requestID, err.Error())
+		op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to hash shop state"}
+		r.sendSessionOp(sessionState, op)
+		return
 	}
+	r.commitSyncTransaction()
+
 	r.sendSessionOp(sessionState, op)
 	logSR("relay.eventWriteOp.finish new_events=%d took=%d", sessionID, requestID, setCount, took(start))
 }
 
+func (r *Relay) checkReferentialIntegrity(current *cbor.Shop, patch cbor.Patch) *pb.Error {
+	switch patch.Path.Type {
+	case cbor.ObjectTypeManifest:
+		if len(patch.Path.Fields) < 1 {
+			// no fields means we are replacing the entire manifest
+			return nil
+		}
+		switch patch.Path.Fields[0] {
+		case "payees":
+			// payees are a map. We need a name, no matter what OP the test is
+			if len(patch.Path.Fields) < 2 {
+				return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid payees patch without name"}
+			}
+			payee := patch.Path.Fields[1]
+			_, hasPayee := current.Manifest.Payees[payee]
+			switch patch.Op {
+			case cbor.AddOp:
+				if hasPayee {
+					return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "payee already exists"}
+				}
+			case cbor.RemoveOp:
+				if !hasPayee {
+					return &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: "payee does not exist"}
+				}
+			case cbor.ReplaceOp:
+				if !hasPayee {
+					return &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: "payee does not exist"}
+				}
+			default:
+				return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid payees op"}
+			}
+		default:
+			return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unhandled manifest field"}
+		}
+
+	case cbor.ObjectTypeTag:
+		if patch.Path.TagName == nil {
+			return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid tag patch without name"}
+		}
+		tagName := *patch.Path.TagName
+		tagExists := current.Tags.Has(tagName)
+		switch {
+		case len(patch.Path.Fields) == 0:
+			// no fields means we are changing an entire tag
+			switch patch.Op {
+			case cbor.RemoveOp:
+				if !tagExists {
+					return &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: "tag does not exist"}
+				}
+			case cbor.AddOp:
+				fallthrough
+			case cbor.ReplaceOp:
+				if tagExists {
+					return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "tag already exists"}
+				}
+			default:
+				return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: fmt.Sprintf("invalid tag patch op: %v", patch.Op)}
+			}
+		case len(patch.Path.Fields) >= 1:
+			if !tagExists {
+				return &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: "tag does not exist"}
+			}
+			switch patch.Path.Fields[0] {
+			// case "name":
+			// 	if patch.Op != cbor.ReplaceOp {
+			// 		return fmt.Errorf("invalid name patch op: %v", patch.Op)
+			// 	}
+			case "listingIds":
+				var id uint64
+				err := cbor.Unmarshal(patch.Value, &id)
+				if err != nil {
+					return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: fmt.Sprintf("invalid listingIds patch: %v", err)}
+				}
+				if id == 0 {
+					return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid listingId: 0"}
+				}
+				_, has := current.Listings.Get(id)
+				if !has {
+					return &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: fmt.Sprintf("listingId does not exist: %d", id)}
+				}
+			default:
+				return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: fmt.Sprintf("unhandled tag field: %q", patch.Path.Fields[0])}
+			}
+		default:
+			return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unhandled tag field"}
+		}
+	}
+	return nil
+}
+
 /*
 	func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadata, sess *SessionState) *Error {
-		manifest, shopExists := r.shopManifestsByShopID.get(m.createdByShopID, m.createdByShopID)
-		shopManifestExists := shopExists && len(manifest.shopTokenID) > 0
 
 		switch tv := union.Union.(type) {
 

@@ -212,3 +212,5 @@ require (
 )
 
 replace github.com/ethereum/go-ethereum => github.com/ethereum-optimism/op-geth v1.101411.4
+
+replace github.com/masslbs/network-schema => ../network-schema
