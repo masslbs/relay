@@ -24,6 +24,8 @@ import (
 	"golang.org/x/time/rate"
 
 	cbor "github.com/masslbs/network-schema/go/cbor"
+	"github.com/masslbs/network-schema/go/objects"
+	"github.com/masslbs/network-schema/go/patch"
 )
 
 // PushStates represents the state of an event in the database.
@@ -95,7 +97,7 @@ type cachedShopCurrency struct {
 	ChainID uint64
 }
 
-func newCachedShopCurrency(sc *cbor.ChainAddress) cachedShopCurrency {
+func newCachedShopCurrency(sc *objects.ChainAddress) cachedShopCurrency {
 	assert(sc.ChainID != 0)
 	return cachedShopCurrency{
 		Addr:    common.Address(sc.Address),
@@ -118,7 +120,7 @@ type ShopState struct {
 	lastWrittenRelayEventNonce uint64
 	shopTokenID                big.Int
 
-	data *cbor.Shop
+	data *objects.Shop
 }
 
 func (ss *ShopState) nextRelayEventNonce() uint64 {
@@ -193,7 +195,7 @@ func newRelay(metric *Metric) *Relay {
 	r.ops = make(chan RelayOp, databaseOpsChanSize)
 	r.shopIDsToShopState = NewMapInts[ObjectIDArray, *ShopState]()
 
-	r.validator = cbor.DefaultValidator()
+	r.validator = objects.DefaultValidator()
 	r.blobUploadTokens = make(map[string]struct{})
 	r.blobUploadTokensMu = &sync.Mutex{}
 
@@ -354,7 +356,7 @@ func (r *Relay) getOrCreateInternalShopID(shopTokenID big.Int) (ObjectIDArray, u
 
 	// the hydrate call in enrollKeyCard will not be able to read/select the above insert
 	assert(!r.shopIDsToShopState.Has(shopID))
-	newShop := cbor.NewShop()
+	newShop := objects.NewShop()
 	r.shopIDsToShopState.Set(shopID, &ShopState{
 		relayKeyCardID: relayKCID,
 		data:           &newShop,
@@ -376,7 +378,7 @@ func (r *Relay) hydrateShops(shopIDs *SetInts[ObjectIDArray]) {
 	if sz := novelShopIDs.Size(); sz > 0 {
 		novelShopIDs.All(func(shopID ObjectIDArray) bool {
 			shopState := &ShopState{}
-			data := cbor.NewShop()
+			data := objects.NewShop()
 			shopState.data = &data
 			r.shopIDsToShopState.Set(shopID, shopState)
 			return false
@@ -500,11 +502,11 @@ func (r *Relay) loadServerSeq() {
 type PatchSetInsert struct {
 	CachedMetadata
 	psetHeaderData []byte
-	pset           *cbor.SignedPatchSet
+	pset           *patch.SignedPatchSet
 	proofs         [][]byte
 }
 
-func (r *Relay) queuePatchSet(cm CachedMetadata, pset *cbor.SignedPatchSet, headerData []byte, proofs [][]byte) {
+func (r *Relay) queuePatchSet(cm CachedMetadata, pset *patch.SignedPatchSet, headerData []byte, proofs [][]byte) {
 	assert(r.writesEnabled)
 
 	nextServerSeq := r.lastUsedServerSeq + 1
@@ -526,22 +528,22 @@ func (r *Relay) queuePatchSet(cm CachedMetadata, pset *cbor.SignedPatchSet, head
 	// r.applyEvent(insert)
 }
 
-func (r *Relay) createRelayPatch(shopID ObjectIDArray, patch cbor.Patch) {
+func (r *Relay) createRelayPatch(shopID ObjectIDArray, p patch.Patch) {
 	shopState := r.shopIDsToShopState.MustGet(shopID)
-	header := &cbor.PatchSetHeader{
+	header := &patch.PatchSetHeader{
 		KeyCardNonce: shopState.nextRelayEventNonce(),
 		ShopID:       shopState.shopTokenID,
 		Timestamp:    time.Now(),
 	}
 
-	var patches []cbor.Patch
-	patches = append(patches, patch)
+	var patches []patch.Patch
+	patches = append(patches, p)
 	var err error
-	rootHash, tree, err := cbor.RootHash(patches)
+	rootHash, tree, err := patch.RootHash(patches)
 	check(err)
 	header.RootHash = rootHash
 
-	var pset cbor.SignedPatchSet
+	var pset patch.SignedPatchSet
 	pset.Header = *header
 	pset.Patches = patches
 	headerData, err := cbor.Marshal(header)
@@ -619,33 +621,33 @@ func formPatchSetPatchesInserts(ins *PatchSetInsert) [][]interface{} {
 
 var dbPatchInsertColumns = []string{"patchsetServerSeq", "op", "objectType", "objectId", "accountAddr", "tagName", "encoded", "mmrProof"}
 
-func formPatchInsert(patch cbor.Patch, serverSeq uint64, proof []byte) []interface{} {
+func formPatchInsert(p patch.Patch, serverSeq uint64, proof []byte) []interface{} {
 	// pgx does not know how to handle cbor.* types.
 	// therefore, we need to "type down" the cbor.* types to basic types
 	// tagName is a *string and is handled correctly automatically
 	var addr *[]byte
 	var objID *[]byte
-	if id := patch.Path.AccountAddr; id != nil {
+	if id := p.Path.AccountAddr; id != nil {
 		sliced := id[:]
 		addr = &sliced
 	}
-	if id := patch.Path.ObjectID; id != nil {
+	if id := p.Path.ObjectID; id != nil {
 		buf := make([]byte, 8)
 		binary.BigEndian.PutUint64(buf, *id)
 		objID = &buf
 	}
 	// TODO: re-use this data from the initial decode stage during write validation
-	fullPatch, err := cbor.Marshal(patch)
+	fullPatch, err := cbor.Marshal(p)
 	check(err)
 	return []interface{}{
-		serverSeq,          // patch_set_server_seq
-		patch.Op,           // op
-		patch.Path.Type,    // object_type
-		objID,              // object_id
-		addr,               // account_addr
-		patch.Path.TagName, // tag_name
-		fullPatch,          // encoded
-		proof,              // mmr_proof
+		serverSeq,      // patch_set_server_seq
+		p.Op,           // op
+		p.Path.Type,    // object_type
+		objID,          // object_id
+		addr,           // account_addr
+		p.Path.TagName, // tag_name
+		fullPatch,      // encoded
+		proof,          // mmr_proof
 	}
 }
 

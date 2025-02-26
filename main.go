@@ -20,6 +20,8 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/getsentry/sentry-go"
 	cbor "github.com/masslbs/network-schema/go/cbor"
+	"github.com/masslbs/network-schema/go/objects"
+	"github.com/masslbs/network-schema/go/patch"
 	pb "github.com/masslbs/network-schema/go/pb"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -439,12 +441,12 @@ func main() {
 		}
 		switch cmdArgs[0] {
 		case "Patch":
-			var patch cbor.Patch
+			var patch patch.Patch
 			err := cbor.Unmarshal([]byte(cborData), &patch)
 			check(err)
 			spew.Dump(patch)
 		case "manifest":
-			var manifest cbor.Manifest
+			var manifest objects.Manifest
 			err := cbor.Unmarshal([]byte(cborData), &manifest)
 			check(err)
 			spew.Dump(manifest)

@@ -11,19 +11,19 @@ import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/crypto"
 
-	cbor "github.com/masslbs/network-schema/go/cbor"
+	"github.com/masslbs/network-schema/go/objects"
 )
 
 func ecrecoverEIP191(message, signature []byte) (*ecdsa.PublicKey, error) {
-	if len(signature) != cbor.SignatureSize {
-		return nil, fmt.Errorf("signature length is not %d", cbor.SignatureSize)
+	if len(signature) != objects.SignatureSize {
+		return nil, fmt.Errorf("signature length is not %d", objects.SignatureSize)
 	}
 
 	sighash := accounts.TextHash(message)
 
 	// update the recovery id
 	// https://github.com/ethereum/go-ethereum/blob/55599ee95d4151a2502465e0afc7c47bd1acba77/internal/ethapi/api.go#L442
-	signature[cbor.SignatureSize-1] -= 27
+	signature[objects.SignatureSize-1] -= 27
 
 	// get the pubkey used to sign this signature
 	recovered, err := crypto.Ecrecover(sighash, signature)
@@ -38,8 +38,8 @@ func ecrecoverEIP191(message, signature []byte) (*ecdsa.PublicKey, error) {
 }
 
 func ecrecoverEIP191AndCompare(message, signature, publicKey []byte) error {
-	if len(publicKey) != cbor.PublicKeySize {
-		return fmt.Errorf("publicKey length is not %d", cbor.PublicKeySize)
+	if len(publicKey) != objects.PublicKeySize {
+		return fmt.Errorf("publicKey length is not %d", objects.PublicKeySize)
 	}
 
 	pk, err := crypto.DecompressPubkey(publicKey)
@@ -69,7 +69,7 @@ func VerifyPatchSetSignature(op *EventWriteOp, publicKey []byte) error {
 	return ecrecoverEIP191AndCompare(op.headerData, op.decoded.Signature[:], publicKey)
 }
 
-func signEIP191(evtData []byte, secret *ecdsa.PrivateKey) (*cbor.Signature, error) {
+func signEIP191(evtData []byte, secret *ecdsa.PrivateKey) (*objects.Signature, error) {
 	sighash := accounts.TextHash(evtData)
 
 	signature, err := crypto.Sign(sighash, secret)
@@ -79,6 +79,6 @@ func signEIP191(evtData []byte, secret *ecdsa.PrivateKey) (*cbor.Signature, erro
 	if len(signature) != 65 {
 		return nil, fmt.Errorf("signEvent: signature length is not 65")
 	}
-	wrapped := cbor.Signature(signature)
+	wrapped := objects.Signature(signature)
 	return &wrapped, nil
 }

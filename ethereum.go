@@ -34,7 +34,7 @@ import (
 	ethlog "github.com/ethereum/go-ethereum/log"
 	"github.com/ssgreg/repeat"
 
-	cbor "github.com/masslbs/network-schema/go/cbor"
+	"github.com/masslbs/network-schema/go/objects"
 	pb "github.com/masslbs/network-schema/go/pb"
 	contractsabi "github.com/masslbs/relay/internal/contractabis"
 )
@@ -163,7 +163,7 @@ func newEthRPCService(chains map[uint64][]string) *ethRPCService {
 	return &r
 }
 
-func (rpc *ethRPCService) sign(data []byte) (*cbor.Signature, error) {
+func (rpc *ethRPCService) sign(data []byte) (*objects.Signature, error) {
 	sig, err := signEIP191(data, rpc.keyPair.secret)
 	return sig, err
 }

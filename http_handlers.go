@@ -19,7 +19,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gobwas/ws"
-	cbor "github.com/masslbs/network-schema/go/cbor"
+	"github.com/masslbs/network-schema/go/objects"
 	"github.com/spruceid/siwe-go"
 )
 
@@ -177,8 +177,8 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			return http.StatusBadRequest, fmt.Errorf("invalid hex encoding of keycard: %w", err)
 		}
 
-		if n := len(keyCardPublicKey); n != cbor.PublicKeySize {
-			return http.StatusBadRequest, fmt.Errorf("keyCardPublicKey length is not %d but %d", cbor.PublicKeySize, n)
+		if n := len(keyCardPublicKey); n != objects.PublicKeySize {
+			return http.StatusBadRequest, fmt.Errorf("keyCardPublicKey length is not %d but %d", objects.PublicKeySize, n)
 		}
 
 		//  check if shop exists
@@ -202,8 +202,8 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 		op := &KeyCardEnrolledInternalOp{
 			shopNFT:          shopTokenID,
 			keyCardIsGuest:   isGuest,
-			keyCardPublicKey: cbor.PublicKey(keyCardPublicKey),
-			userWallet:       cbor.EthereumAddress(userWallet),
+			keyCardPublicKey: objects.PublicKey(keyCardPublicKey),
+			userWallet:       objects.EthereumAddress(userWallet),
 			done:             make(chan error),
 		}
 		r.opsInternal <- op

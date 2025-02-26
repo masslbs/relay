@@ -19,6 +19,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	masscbor "github.com/masslbs/network-schema/go/cbor"
+	"github.com/masslbs/network-schema/go/objects"
+	"github.com/masslbs/network-schema/go/patch"
 	masspb "github.com/masslbs/network-schema/go/pb"
 )
 
@@ -52,7 +54,7 @@ func newSession(version uint, conn net.Conn, databaseOps chan RelayOp, metric *M
 		messages:    make(chan *masspb.Envelope, limitMaxInRequests*2),
 		ops:         make(chan SessionOp, (limitMaxInRequests+limitMaxOutRequests)*2),
 		databaseOps: databaseOps,
-		validator:   masscbor.DefaultValidator(),
+		validator:   objects.DefaultValidator(),
 		metric:      metric,
 		stopping:    false,
 	}
@@ -293,7 +295,7 @@ type WriteRequestHandler struct {
 
 	validator *validator.Validate
 
-	decodedPatchSet *masscbor.SignedPatchSet
+	decodedPatchSet *patch.SignedPatchSet
 	proofs          [][]byte
 	headerData      []byte
 }
@@ -306,16 +308,16 @@ func (im *WriteRequestHandler) validate(version uint) *masspb.Error {
 	}
 	var decodingHelper struct {
 		Header    cbor.RawMessage // keep a copy of the header to re-use it for storage and signature verification
-		Signature masscbor.Signature
-		Patches   []masscbor.Patch
+		Signature objects.Signature
+		Patches   []patch.Patch
 	}
 	if err := masscbor.Unmarshal(im.PatchSet, &decodingHelper); err != nil {
 		log("eventWriteRequest.validate: cbor unmarshal of patchset failed: %s", err.Error())
 		return &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "invalid CBOR encoding"}
 	}
 
-	var decodedPatchSet masscbor.SignedPatchSet
-	if err := masscbor.Unmarshal(decodingHelper.Header, &decodedPatchSet.Header); err != nil {
+	var decodedPatchSet patch.SignedPatchSet
+	if err := cbor.Unmarshal(decodingHelper.Header, &decodedPatchSet.Header); err != nil {
 		log("eventWriteRequest.validate: cbor unmarshal of header failed: %s", err.Error())
 		return &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "unable to unmarshal header"}
 	}
@@ -334,7 +336,7 @@ func (im *WriteRequestHandler) validate(version uint) *masspb.Error {
 	}
 
 	// verify RootHash
-	computedRoot, tree, err := masscbor.RootHash(decodedPatchSet.Patches)
+	computedRoot, tree, err := patch.RootHash(decodedPatchSet.Patches)
 	if err != nil {
 		return &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "unable to compute root hash"}
 	}

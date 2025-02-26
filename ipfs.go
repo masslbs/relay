@@ -22,6 +22,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	cbor "github.com/masslbs/network-schema/go/cbor"
+	"github.com/masslbs/network-schema/go/objects"
 )
 
 // IPFS integration
@@ -230,7 +231,7 @@ func newListingSnapshotter(m *Metric, shopID ObjectIDArray) (*listingSnapshotter
 // worker to save an listing to ipfs an pin it
 // TODO: we are saving the hole listing each call, irrespective of variations, etc.
 // we know the variations from the order, so it's okay but we should be able to de-duplicate it
-func (ls *listingSnapshotter) save(cid combinedID, item *cbor.Listing) {
+func (ls *listingSnapshotter) save(cid combinedID, item *objects.Listing) {
 	ctx := context.Background()
 	ls.Go(func() error {
 		data, err := cbor.Marshal(item)

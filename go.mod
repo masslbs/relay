@@ -9,15 +9,19 @@ go 1.23.4
 toolchain go1.23.5
 
 require (
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 	github.com/ethereum-optimism/optimism v1.10.0
 	github.com/ethereum/go-ethereum v1.15.0
+	github.com/fxamacker/cbor/v2 v2.7.0
 	github.com/getsentry/sentry-go v0.27.0
+	github.com/go-playground/validator/v10 v10.24.0
 	github.com/gobwas/ws v1.3.1
+	github.com/huandu/go-clone/generic v1.7.2
 	github.com/ipfs/boxo v0.22.1-0.20240821001902-3cd3857b046c
 	github.com/ipfs/kubo v0.30.0-rc1
 	github.com/jackc/pgerrcode v0.0.0-20240316143900-6e2875d9b438
 	github.com/jackc/pgx/v5 v5.7.2
-	github.com/masslbs/network-schema v0.0.0-20250213095931-461b56ed9e17
+	github.com/masslbs/network-schema v0.0.0-20250226142520-c78c90d4ee00
 	github.com/miolini/datacounter v1.0.3
 	github.com/multiformats/go-multiaddr v0.14.0
 	github.com/prometheus/client_golang v1.20.5
@@ -59,7 +63,6 @@ require (
 	github.com/crate-crypto/go-ipa v0.0.0-20240223125850-b1e8a79f509c // indirect
 	github.com/crate-crypto/go-kzg-4844 v1.0.0 // indirect
 	github.com/datatrails/go-datatrails-merklelog/mmr v0.1.1 // indirect
-	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dchest/uniuri v1.2.0 // indirect
 	github.com/deckarep/golang-set/v2 v2.6.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.3.0 // indirect
@@ -69,7 +72,6 @@ require (
 	github.com/ethereum/go-verkle v0.1.1-0.20240829091221-dffa7562dbe9 // indirect
 	github.com/facebookgo/atomicfile v0.0.0-20151019160806-2de1f203e7d5 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
-	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
 	github.com/gballet/go-libpcsclite v0.0.0-20191108122812-4678299bea08 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
@@ -77,7 +79,6 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
-	github.com/go-playground/validator/v10 v10.24.0 // indirect
 	github.com/gobwas/httphead v0.1.0 // indirect
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gofrs/flock v0.8.1 // indirect
@@ -96,7 +97,6 @@ require (
 	github.com/holiman/bloomfilter/v2 v2.0.3 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
 	github.com/huandu/go-clone v1.7.2 // indirect
-	github.com/huandu/go-clone/generic v1.7.2 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
 	github.com/ipfs/bbloom v0.0.4 // indirect
 	github.com/ipfs/go-bitfield v1.1.0 // indirect
@@ -137,7 +137,6 @@ require (
 	github.com/libp2p/go-libp2p-routing-helpers v0.7.4 // indirect
 	github.com/libp2p/go-msgio v0.3.0 // indirect
 	github.com/libp2p/go-netroute v0.2.1 // indirect
-	github.com/masslbs/go-pgmmr v0.0.0-20250206120136-b5495a477745 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.14 // indirect
@@ -213,4 +212,4 @@ require (
 
 replace github.com/ethereum/go-ethereum => github.com/ethereum-optimism/op-geth v1.101411.4
 
-replace github.com/masslbs/network-schema => ../network-schema
+// replace github.com/masslbs/network-schema => ../network-schema

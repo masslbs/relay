@@ -322,6 +322,7 @@ github.com/holiman/bloomfilter/v2 v2.0.3/go.mod h1:zpoh+gs7qcpqrHr3dB55AMiJwo0iU
 github.com/holiman/uint256 v1.3.2 h1:a9EgMPSC1AAaj1SZL5zIQD3WbwTuHrMGOerLjGmM/TA=
 github.com/holiman/uint256 v1.3.2/go.mod h1:EOMSn4q6Nyt9P6efbI3bueV4e1b3dGlUCXeiRV4ng7E=
 github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpOxQnU=
+github.com/huandu/go-assert v1.1.5 h1:fjemmA7sSfYHJD7CUqs9qTwwfdNAx7/j2/ZlHXzNB3c=
 github.com/huandu/go-assert v1.1.5/go.mod h1:yOLvuqZwmcHIC5rIzrBhT7D3Q9c3GFnd0JrPVhn/06U=
 github.com/huandu/go-clone v1.7.2 h1:3+Aq0Ed8XK+zKkLjE2dfHg0XrpIfcohBE1K+c8Usxoo=
 github.com/huandu/go-clone v1.7.2/go.mod h1:ReGivhG6op3GYr+UY3lS6mxjKp7MIGTknuU5TbTVaXE=
@@ -517,8 +518,8 @@ github.com/marten-seemann/tcp v0.0.0-20210406111302-dfbc87cc63fd h1:br0buuQ854V8
 github.com/marten-seemann/tcp v0.0.0-20210406111302-dfbc87cc63fd/go.mod h1:QuCEs1Nt24+FYQEqAAncTDPJIuGs+LxK1MCiFL25pMU=
 github.com/masslbs/go-pgmmr v0.0.0-20250206120136-b5495a477745 h1:net5CF8odxdbBk1AHWUpgJwVGqZkSkDVXJXYrcsQcAo=
 github.com/masslbs/go-pgmmr v0.0.0-20250206120136-b5495a477745/go.mod h1:mxKVjxmg1oYlQjCUmZrNLTcrbp4Fu8l360z66xoMKzM=
-github.com/masslbs/network-schema v0.0.0-20250213095931-461b56ed9e17 h1:WF2u/mpTlnZMpLKRfTeMIRnZdMxyWo7t0vMK2+NR5TQ=
-github.com/masslbs/network-schema v0.0.0-20250213095931-461b56ed9e17/go.mod h1:MunZXXGwMfBQK5f+wjz1E2LjrdUTNci/dvaNARvZpn4=
+github.com/masslbs/network-schema v0.0.0-20250226142520-c78c90d4ee00 h1:v3sa4eNqdhbqb5FqLCEfqnoZOy9U6tP/eCPeqMdgCfI=
+github.com/masslbs/network-schema v0.0.0-20250226142520-c78c90d4ee00/go.mod h1:u7ytztBwFJ4Kc3RWOzjs7t2GLqOkRabTpRtzLtoJEiY=
 github.com/mattn/go-colorable v0.1.13 h1:fFA4WZxdEF4tXPZVKMLwD8oUnCTTo08duU7wxecdEvA=
 github.com/mattn/go-colorable v0.1.13/go.mod h1:7S9/ev0klgBDR4GtXTXX8a3vIGJpMovkB8vQcUbaXHg=
 github.com/mattn/go-isatty v0.0.13/go.mod h1:cbi8OIDigv2wuxKPP5vlRcQ1OAZbq2CE4Kysco4FUpU=

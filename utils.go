@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	cbor "github.com/masslbs/network-schema/go/cbor"
+	"github.com/masslbs/network-schema/go/objects"
 	pb "github.com/masslbs/network-schema/go/pb"
 )
 
@@ -106,8 +106,8 @@ func validateString(s string, field string, maxLength int) *pb.Error {
 }
 
 const (
-	publicKeyBytes = cbor.PublicKeySize
-	signatureBytes = cbor.SignatureSize
+	publicKeyBytes = objects.PublicKeySize
+	signatureBytes = objects.SignatureSize
 )
 
 func validateBytes(val []byte, field string, want uint) *pb.Error {
@@ -374,7 +374,7 @@ func (ui *SQLUint64Bytes) Uint64() uint64 {
 }
 
 // ScoreRegions compares all configured regions to a chosen address and picks the one most applicable.
-func ScoreRegions(configured map[string]*cbor.AddressDetails, chosen *cbor.AddressDetails) (*cbor.AddressDetails, error) {
+func ScoreRegions(configured map[string]*objects.AddressDetails, chosen *objects.AddressDetails) (*objects.AddressDetails, error) {
 	type score struct {
 		Name   string
 		Points int

@@ -23,6 +23,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	cbor "github.com/masslbs/network-schema/go/cbor"
+	"github.com/masslbs/network-schema/go/objects"
+	"github.com/masslbs/network-schema/go/patch"
 	pb "github.com/masslbs/network-schema/go/pb"
 )
 
@@ -83,11 +85,11 @@ type EventWriteOp struct {
 	requestID *pb.RequestId
 	im        *pb.PatchSetWriteRequest
 	// derived from im
-	decoded    *cbor.SignedPatchSet
+	decoded    *patch.SignedPatchSet
 	headerData []byte
 	proofs     [][]byte
 	// response data
-	newShopHash cbor.Hash
+	newShopHash objects.Hash
 	err         *pb.Error
 }
 
@@ -150,8 +152,8 @@ func NewEventLoopPing() (<-chan struct{}, *EventLoopPingInternalOp) {
 type KeyCardEnrolledInternalOp struct {
 	shopNFT          big.Int
 	keyCardIsGuest   bool
-	keyCardPublicKey cbor.PublicKey
-	userWallet       cbor.EthereumAddress
+	keyCardPublicKey objects.PublicKey
+	userWallet       objects.EthereumAddress
 	done             chan error
 }
 
@@ -167,8 +169,8 @@ type OnchainActionInternalOp struct {
 type PaymentFoundInternalOp struct {
 	orderID   ObjectIDArray
 	shopID    ObjectIDArray
-	txHash    *cbor.Hash
-	blockHash *cbor.Hash
+	txHash    *objects.Hash
+	blockHash *objects.Hash
 
 	done chan struct{}
 }
@@ -528,16 +530,16 @@ func (op *EventWriteOp) process(r *Relay) {
 	proposal := gclone.Clone(shopState.data)
 
 	assert(r.validator != nil)
-	patcher := cbor.NewPatcher(r.validator, proposal)
+	patcher := patch.NewPatcher(r.validator, proposal)
 
 	assert(proposal != nil)
-	for i, patch := range op.decoded.Patches {
+	for i, p := range op.decoded.Patches {
 		// TODO: check who is allowed to write to which patch.path
 
 		// change shop state
-		if err := patcher.ApplyPatch(patch); err != nil {
+		if err := patcher.ApplyPatch(p); err != nil {
 			logSR("relay.eventWriteOp.applyPatchFailed patch=%d err=%s", sessionID, requestID, i, err.Error())
-			var notFoundError cbor.ObjectNotFoundError
+			var notFoundError patch.ObjectNotFoundError
 			if errors.As(err, &notFoundError) {
 				op.err = &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: notFoundError.Error()}
 			} else {
@@ -1768,9 +1770,9 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 
 	// TODO: check if account already exists
 	// if it does we need to append the keycard to the list instead
-	account := cbor.Account{
+	account := objects.Account{
 		Guest: false,
-		KeyCards: []cbor.PublicKey{
+		KeyCards: []objects.PublicKey{
 			op.keyCardPublicKey,
 		},
 	}
@@ -1779,10 +1781,10 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 
 	// emit new keycard event
 	r.createRelayPatch(shopID,
-		cbor.Patch{
-			Op: cbor.AddOp,
-			Path: cbor.PatchPath{
-				Type:        cbor.ObjectTypeAccount,
+		patch.Patch{
+			Op: patch.AddOp,
+			Path: patch.PatchPath{
+				Type:        patch.ObjectTypeAccount,
 				AccountAddr: &op.userWallet,
 			},
 			Value: accountBytes,
