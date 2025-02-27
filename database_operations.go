@@ -538,10 +538,13 @@ func (op *EventWriteOp) process(r *Relay) {
 
 		// change shop state
 		if err := patcher.ApplyPatch(p); err != nil {
-			logSR("relay.eventWriteOp.applyPatchFailed patch=%d err=%s", sessionID, requestID, i, err.Error())
+			logSR("relay.eventWriteOp.applyPatchFailed patch=%d err=%s errType=%T", sessionID, requestID, i, err.Error(), err)
 			var notFoundError patch.ObjectNotFoundError
+			var outOfStockError patch.OutOfStockError
 			if errors.As(err, &notFoundError) {
 				op.err = &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: notFoundError.Error()}
+			} else if errors.As(err, &outOfStockError) {
+				op.err = &pb.Error{Code: pb.ErrorCodes_OUT_OF_STOCK, Message: outOfStockError.Error()}
 			} else {
 				op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid patch"}
 			}

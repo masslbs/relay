@@ -75,7 +75,7 @@ create table patches (
     tagName text -- optional, for tag patches
 );
 alter table patches add constraint patchesObjectId check (
-    (objectType in ('listing', 'order') and octet_length(objectId) = 8) or
+    (objectType in ('listing', 'order', 'inventory') and octet_length(objectId) = 8) or
     (objectType = 'manifest' and objectId is null) or 
     (objectType = 'account' and objectId is null) or
     (objectType = 'tag' and objectId is null)
