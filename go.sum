@@ -522,6 +522,8 @@ github.com/masslbs/network-schema v0.0.0-20250226142520-c78c90d4ee00 h1:v3sa4eNq
 github.com/masslbs/network-schema v0.0.0-20250226142520-c78c90d4ee00/go.mod h1:u7ytztBwFJ4Kc3RWOzjs7t2GLqOkRabTpRtzLtoJEiY=
 github.com/masslbs/network-schema v0.0.0-20250227095705-c76bc7b3ff3e h1:/aFmnit2FSPNLLIZij26feb0GA2XFNhV/OAurYDqJ9I=
 github.com/masslbs/network-schema v0.0.0-20250227095705-c76bc7b3ff3e/go.mod h1:u7ytztBwFJ4Kc3RWOzjs7t2GLqOkRabTpRtzLtoJEiY=
+github.com/masslbs/network-schema v0.0.0-20250227175159-f3614179aa1d h1:w34cUKu0vpatfvu8I2IGknMoStec1RowiSOp6Xl7yKY=
+github.com/masslbs/network-schema v0.0.0-20250227175159-f3614179aa1d/go.mod h1:u7ytztBwFJ4Kc3RWOzjs7t2GLqOkRabTpRtzLtoJEiY=
 github.com/mattn/go-colorable v0.1.13 h1:fFA4WZxdEF4tXPZVKMLwD8oUnCTTo08duU7wxecdEvA=
 github.com/mattn/go-colorable v0.1.13/go.mod h1:7S9/ev0klgBDR4GtXTXX8a3vIGJpMovkB8vQcUbaXHg=
 github.com/mattn/go-isatty v0.0.13/go.mod h1:cbi8OIDigv2wuxKPP5vlRcQ1OAZbq2CE4Kysco4FUpU=
