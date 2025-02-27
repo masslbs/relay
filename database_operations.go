@@ -1603,7 +1603,7 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 				// this includes updates to orders created by the relay or clerks
 				where = where + fmt.Sprintf(`AND (ps.createdByKeyCardId=%d OR (
 			ps.createdByShopId = '\x%x' AND
-ps.objectId in (select p.objectId from patchSets ps2 join patches p2 on p2.patchsetServerSeq = ps2.serverSeq where ps2.objectType='order' and ps2.createdByKeyCardID=%d)
+ps.objectId in (select p.objectId from patchSets ps2 join patches p2 on p2.patchSetServerSeq = p2.serverSeq where ps2.objectType='order' and ps2.createdByKeyCardID=%d)
 )
 )`, session.keyCardID, session.shopID, session.keyCardID)
 			}
@@ -1622,8 +1622,8 @@ ps.objectId in (select p.objectId from patchSets ps2 join patches p2 on p2.patch
 	if n := len(verifyOrderIDs); n > 0 {
 		// check that all orders belong to the same person
 		var count int
-		const checkQry = `select count(*) from events
-where eventType="createOrder"
+		const checkQry = `select count(*) from patchSets
+where objectType="order"
 and createdByShopId = $1
 and createdByKeyCardId = $2
 and objectId = any($3)`
