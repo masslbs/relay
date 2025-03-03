@@ -659,7 +659,7 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 	start := now()
 	logS(sessionID, "relay.removeVariation.process listing=%d variations=%v", uint64(listingID), removedVariations.Slice())
 
-	otherOrderRows, err := r.syncTx.Query(ctx, `select orderId from payments
+	otherOrderRows, err := r.connPool.Query(ctx, `select orderId from payments
 	where shopId = $1
 		and payedAt is null
 		and itemsLockedAt >= now() - interval '1 day'`, sessionState.shopID[:])
@@ -710,7 +710,7 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 		binary.BigEndian.PutUint64(ordersAsBytes[i], oid)
 	}
 	const paymentsUpdateQry = `update payments set canceledAt=$3 where shopId=$1 and orderId=any($2)`
-	_, err = r.syncTx.Exec(ctx, paymentsUpdateQry, sessionState.shopID[:], ordersAsBytes, canceledAt)
+	_, err = r.connPool.Exec(ctx, paymentsUpdateQry, sessionState.shopID[:], ordersAsBytes, canceledAt)
 	check(err)
 	var patches []patch.Patch
 	cborCanceledAt, err := cbor.Marshal(canceledAt)
@@ -769,7 +769,7 @@ func (r *Relay) processOrderItemsCommitment(sessionID sessionID, p patch.Patch) 
 	// TODO: configure timeout
 	var orderDBID ObjectIDArray
 	binary.BigEndian.PutUint64(orderDBID[:], orderID)
-	otherOrderRows, err := r.syncTx.Query(ctx, `select orderId from payments
+	otherOrderRows, err := r.connPool.Query(ctx, `select orderId from payments
 where shopId = $1
 	  and orderId != $2
 	  and payedAt is null
@@ -834,7 +834,7 @@ where shopId = $1
 	shopState := r.shopIDsToShopState.MustGet(sessionState.shopID)
 	const insertPaymentQuery = `insert into payments (shopSeqNo, shopId, orderId, itemsLockedAt)
 		VALUES ($1, $2, $3, now())`
-	_, err = r.syncTx.Exec(ctx, insertPaymentQuery,
+	_, err = r.connPool.Exec(ctx, insertPaymentQuery,
 		shopState.lastUsedSeq,
 		sessionState.shopID[:],
 		orderDBID[:],
@@ -1128,7 +1128,7 @@ chainId = $9
 WHERE shopId = $1
 AND orderId = $2`
 
-	_, err = r.syncTx.Exec(ctx, insertPaymentWaiterQuery,
+	_, err = r.connPool.Exec(ctx, insertPaymentWaiterQuery,
 		// where
 		w.shopID[:],
 		w.orderID[:],
