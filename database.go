@@ -764,7 +764,9 @@ func (r *Relay) pushOutShopLog(sessionID sessionID, session *SessionState, subID
 		if !entryState.acked {
 			break
 		}
-		assert(entryState.shopSeq > sub.lastAckedSeq)
+		// TODO: patchSets/shopSeq vs pushed patches in a subscription are not the same anymore.
+		// we need to make sure that the shopSeq is >= the lastAckedSeq
+		assert(entryState.shopSeq >= sub.lastAckedSeq)
 		if i == 0 {
 			advancedFrom = sub.lastAckedSeq
 		}
@@ -832,26 +834,22 @@ func (r *Relay) pushOutShopLog(sessionID sessionID, session *SessionState, subID
 		check(err)
 		defer rows.Close()
 		for rows.Next() {
-			var (
-				pushStates                        = &PushStates{}
-				patchSetHeader, patchSetSignature []byte
-				encodedPatch, patchMMRProof       []byte
-			)
-			err := rows.Scan(&pushStates.shopSeq, &patchSetHeader, &patchSetSignature, &encodedPatch, &patchMMRProof)
+			var pushStates = &PushStates{}
+			err := rows.Scan(&pushStates.shopSeq, &pushStates.psHeader, &pushStates.psSignature,
+				&pushStates.patchData, &pushStates.patchInclProof)
 			check(err)
 			reads++
 			// log("relay.debounceSessions.debug event=%x", PushStates.eventID)
 
 			pushStates.acked = false
 			sub.buffer = append(sub.buffer, pushStates)
-			assert(pushStates.shopSeq > sub.lastBufferedSeq)
+			logS(sessionID, "relay.debounceSessions.debug bufferLen=%d lastBufferedSeq=%d pushStates.shopSeq=%d", len(sub.buffer), sub.lastBufferedSeq, pushStates.shopSeq)
+			// TODO: pushes and the shopSeq are not the same anymore.
+			// we now have multiple patches in one patchset, which is the sequenced entity.
+			// so we need to check if the pushStates.shopSeq is >= the lastBufferedSeq
+			// and if so, we can advance the lastBufferedSeq
+			assert(pushStates.shopSeq >= sub.lastBufferedSeq)
 			sub.lastBufferedSeq = pushStates.shopSeq
-
-			// re-create pb object from encoded database data
-			pushStates.patchData = encodedPatch
-			pushStates.patchInclProof = patchMMRProof
-			pushStates.psHeader = patchSetHeader
-			pushStates.psSignature = patchSetSignature
 		}
 		check(rows.Err())
 

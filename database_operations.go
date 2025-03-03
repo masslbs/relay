@@ -583,7 +583,7 @@ func (op *EventWriteOp) process(r *Relay) {
 			}
 		}
 		if isOrderStatePaymentChoice(p) {
-			patches, err := r.processOrderPaymentChoice(sessionID, p)
+			patches, err := r.processOrderPaymentChoice(sessionID, proposal, p)
 			if err != nil {
 				op.err = err
 				r.sendSessionOp(sessionState, op)
@@ -624,7 +624,7 @@ func (op *EventWriteOp) process(r *Relay) {
 // isListingVariationRemoved returns true if the patch is a variation removal (either option or variation)
 func isListingVariationRemoved(p patch.Patch) bool {
 	if !(p.Path.Type == patch.ObjectTypeListing &&
-		len(p.Path.Fields) == 1 &&
+		len(p.Path.Fields) >= 1 &&
 		p.Path.Fields[0] == "options") {
 		return false
 	}
@@ -715,16 +715,29 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 	var patches []patch.Patch
 	cborCanceledAt, err := cbor.Marshal(canceledAt)
 	check(err)
+	cborCanceledState, err := cbor.Marshal(objects.OrderStateCanceled)
+	check(err)
 	for _, orderID := range orderIDslice {
-		patches = append(patches, patch.Patch{
-			Path: patch.PatchPath{
-				Type:     patch.ObjectTypeOrder,
-				ObjectID: &orderID,
-				Fields:   []string{"canceledAt"},
+		patches = append(patches,
+			patch.Patch{
+				Path: patch.PatchPath{
+					Type:     patch.ObjectTypeOrder,
+					ObjectID: &orderID,
+					Fields:   []string{"canceledAt"},
+				},
+				Op:    patch.ReplaceOp,
+				Value: cborCanceledAt,
 			},
-			Op:    patch.ReplaceOp,
-			Value: cborCanceledAt,
-		})
+			patch.Patch{
+				Path: patch.PatchPath{
+					Type:     patch.ObjectTypeOrder,
+					ObjectID: &orderID,
+					Fields:   []string{"state"},
+				},
+				Op:    patch.ReplaceOp,
+				Value: cborCanceledState,
+			},
+		)
 	}
 
 	logS(sessionID, "relay.removeVariation.finish orders=%d took=%d", len(orderIDslice), took(start))
@@ -856,14 +869,14 @@ func isOrderStatePaymentChoice(p patch.Patch) bool {
 
 var big100 = new(big.Int).SetInt64(100)
 
-func (r *Relay) processOrderPaymentChoice(sessionID sessionID, p patch.Patch) ([]patch.Patch, *pb.Error) {
+func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Shop, p patch.Patch) ([]patch.Patch, *pb.Error) {
 	ctx := context.Background()
 	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
 	shopID := sessionState.shopID
 
 	start := now()
 	orderID := *p.Path.ObjectID
-	shop := r.shopIDsToShopState.MustGet(shopID).data
+
 	logS(sessionID, "relay.orderPaymentChoiceOp.process order=%x", orderID)
 
 	// load related data
@@ -880,7 +893,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, p patch.Patch) ([
 	}
 
 	// check if shipping regions are set
-	if shop.Manifest.ShippingRegions == nil {
+	if len(shop.Manifest.ShippingRegions) == 0 {
 		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "no shipping regions"}
 	}
 
@@ -889,7 +902,6 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, p patch.Patch) ([
 		logS(sessionID, "relay.orderPaymentChoiceOp.scoreRegions regions=%d err=%s", len(shop.Manifest.ShippingRegions), err)
 		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to determin shipping region"}
 	}
-
 	shippingRegion := shop.Manifest.ShippingRegions[region]
 
 	// determain total price and create snapshot of items
@@ -1003,9 +1015,8 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, p patch.Patch) ([
 	}
 
 	// create payment address for order content
-	var (
-		chosenCurrency = order.ChosenCurrency
-	)
+	var chosenCurrency = order.ChosenCurrency
+	assert(chosenCurrency != nil)
 	if !chosenCurrency.Equal(shop.Manifest.PricingCurrency) {
 		// convert base to chosen currency
 		bigTotal, err = r.prices.Convert(shop.Manifest.PricingCurrency, *chosenCurrency, bigTotal)
@@ -1046,7 +1057,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, p patch.Patch) ([
 	pr.Amount = bigTotal
 	pr.PayeeAddress = common.Address(ownerAddr)
 	pr.IsPaymentEndpoint = false
-	pr.ShopId.Set(&shop.Manifest.ShopID)
+	pr.ShopId = &shop.Manifest.ShopID
 	// TODO: calculate signature
 	pr.ShopSignature = bytes.Repeat([]byte{0}, 64)
 
@@ -1079,7 +1090,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, p patch.Patch) ([
 	check(err)
 
 	patches := []patch.Patch{
-		patch.Patch{
+		{
 			Path: patch.PatchPath{
 				Type:     patch.ObjectTypeOrder,
 				ObjectID: &orderID,
@@ -1088,7 +1099,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, p patch.Patch) ([
 			Op:    patch.AddOp,
 			Value: finBytes,
 		},
-		patch.Patch{
+		{
 			Path: patch.PatchPath{
 				Type:     patch.ObjectTypeOrder,
 				ObjectID: &orderID,
