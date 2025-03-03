@@ -374,7 +374,7 @@ func (ui *SQLUint64Bytes) Uint64() uint64 {
 }
 
 // ScoreRegions compares all configured regions to a chosen address and picks the one most applicable.
-func ScoreRegions(configured map[string]*objects.AddressDetails, chosen *objects.AddressDetails) (*objects.AddressDetails, error) {
+func ScoreRegions(configured objects.ShippingRegions, chosen *objects.AddressDetails) (string, error) {
 	type score struct {
 		Name   string
 		Points int
@@ -404,7 +404,7 @@ func ScoreRegions(configured map[string]*objects.AddressDetails, chosen *objects
 	}
 
 	if len(scores) == 0 {
-		return nil, fmt.Errorf("no shipping region matched")
+		return "", fmt.Errorf("no shipping region matched")
 	}
 
 	//spew.Dump(scores)
@@ -423,7 +423,7 @@ func ScoreRegions(configured map[string]*objects.AddressDetails, chosen *objects
 		})
 	}
 
-	reg, has := configured[scores[0].Name]
+	_, has := configured[scores[0].Name]
 	assert(has)
-	return reg, nil
+	return scores[0].Name, nil
 }

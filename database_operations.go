@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	crand "crypto/rand"
 	"encoding/base64"
@@ -26,6 +27,7 @@ import (
 	"github.com/masslbs/network-schema/go/objects"
 	"github.com/masslbs/network-schema/go/patch"
 	pb "github.com/masslbs/network-schema/go/pb"
+	contractsabi "github.com/masslbs/relay/internal/contractabis"
 )
 
 // SessionOp are operations that are sent to the database and are specific to a session
@@ -169,8 +171,8 @@ type OnchainActionInternalOp struct {
 type PaymentFoundInternalOp struct {
 	orderID   ObjectIDArray
 	shopID    ObjectIDArray
-	txHash    *objects.Hash
-	blockHash *objects.Hash
+	txHash    *common.Hash
+	blockHash common.Hash
 
 	done chan struct{}
 }
@@ -520,6 +522,7 @@ func (op *EventWriteOp) process(r *Relay) {
 		r.sendSessionOp(sessionState, op)
 		return
 	}
+
 	r.hydrateShops(NewSetInts(sessionState.shopID))
 
 	// start patching shop state
@@ -532,11 +535,22 @@ func (op *EventWriteOp) process(r *Relay) {
 	assert(r.validator != nil)
 	patcher := patch.NewPatcher(r.validator, proposal)
 
-	assert(proposal != nil)
+	// we dont apply these to the shop state yet.
+	// this happens in commitTx to be more orthogonal with other places the relay creates patch sets
+	var relayPatches []patch.Patch
 	for i, p := range op.decoded.Patches {
 		// TODO: check who is allowed to write to which patch.path
+		if sessionState.keyCardOfAGuest {
+			if p.Path.Type != patch.ObjectTypeOrder {
+				logSR("relay.eventWriteOp.guestKeycardWriteNotAllowed path=%+v", sessionID, requestID, p.Path)
+				op.err = &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: "not allowed"}
+				r.sendSessionOp(sessionState, op)
+				return
+			}
+			// TODO: check if the order is new or theirs
+		}
 
-		// change shop state
+		// change proposedshop state
 		if err := patcher.ApplyPatch(p); err != nil {
 			logSR("relay.eventWriteOp.applyPatchFailed patch=%d err=%s errType=%T", sessionID, requestID, i, err.Error(), err)
 			var notFoundError patch.ObjectNotFoundError
@@ -551,6 +565,32 @@ func (op *EventWriteOp) process(r *Relay) {
 			r.sendSessionOp(sessionState, op)
 			return
 		}
+
+		// processing for side-effects
+		// - variation removal needs to cancel orders with them
+		// - commit starts the payment timer
+		// - payment choice starts the watcher
+		if isListingVariationRemoved(p) {
+			patches := r.processRemoveVariation(sessionID, p)
+			relayPatches = append(relayPatches, patches...)
+		}
+		if isOrderStateCommited(p) {
+			err := r.processOrderItemsCommitment(sessionID, p)
+			if err != nil {
+				op.err = err
+				r.sendSessionOp(sessionState, op)
+				return
+			}
+		}
+		if isOrderStatePaymentChoice(p) {
+			patches, err := r.processOrderPaymentChoice(sessionID, p)
+			if err != nil {
+				op.err = err
+				r.sendSessionOp(sessionState, op)
+				return
+			}
+			relayPatches = append(relayPatches, patches...)
+		}
 	}
 
 	// all patches applied successfully, update shop state
@@ -560,33 +600,11 @@ func (op *EventWriteOp) process(r *Relay) {
 	r.beginSyncTransaction()
 	meta := newMetadata(sessionState.keyCardID, sessionState.shopID, uint16(sessionState.version))
 	r.queuePatchSet(meta, op.decoded, op.headerData, op.proofs)
-	/*
-		// processing for side-effects
-		// - variation removal needs to cancel orders with them
-		// - commit starts the payment timer
-		// - payment choice starts the watcher
-		{
-			var err *Error
-			if ul := op.decodedShopEvt.GetUpdateListing(); ul != nil &&
-				(len(ul.RemoveVariationIds) > 0 || len(ul.RemoveOptionIds) > 0) {
-				err = r.processRemoveVariation(sessionID, ul)
-			}
-			if uo := op.decodedShopEvt.GetUpdateOrder(); uo != nil {
-				if ci := uo.GetCommitItems(); ci != nil {
-					err = r.processOrderItemsCommitment(sessionID, uo.Id.Array())
-				}
-				if p := uo.GetChoosePayment(); p != nil {
-					err = r.processOrderPaymentChoice(sessionID, uo.Id.Array(), p)
-				}
-			}
-			if err != nil {
-				op.err = err
-				r.sendSessionOp(sessionState, op)
-				r.rollbackSyncTransaction()
-				return
-			}
-		}
-	*/
+
+	if len(relayPatches) > 0 {
+		r.createRelayPatchSet(sessionState.shopID, relayPatches...)
+	}
+
 	setCount := len(r.queuedPatchSetInserts)
 
 	// compute resulting hash
@@ -603,882 +621,502 @@ func (op *EventWriteOp) process(r *Relay) {
 	logSR("relay.eventWriteOp.finish new_events=%d took=%d", sessionID, requestID, setCount, took(start))
 }
 
-/*
-	func (r *Relay) checkShopEventWriteConsistency(union *ShopEvent, m CachedMetadata, sess *SessionState) *Error {
-
-		switch tv := union.Union.(type) {
-
-		case *ShopEvent_Manifest:
-			if sess.keyCardOfAGuest {
-				return notFoundError
-			}
-			if shopManifestExists {
-				return &Error{Code: ErrorCodes_INVALID, Message: "shop already exists"}
-			}
-			m := tv.Manifest
-			usedNames := make(map[string]struct{})
-			for _, payee := range m.Payees {
-				_, has := usedNames[payee.Name]
-				if has {
-					return &Error{Code: ErrorCodes_INVALID, Message: "duplicate payee: " + payee.Name}
-				}
-				usedNames[payee.Name] = struct{}{}
-			}
-			usedCurrencies := make(map[cachedShopCurrency]struct{})
-			for _, curr := range m.AcceptedCurrencies {
-				k := curr.cached()
-				_, has := usedCurrencies[k]
-				if has {
-					return &Error{
-						Code:    ErrorCodes_INVALID,
-						Message: fmt.Sprintf("duplicate currency: %v", k),
-					}
-				}
-				usedCurrencies[k] = struct{}{}
-			}
-			usedNames = make(map[string]struct{})
-			for _, region := range m.ShippingRegions {
-				_, has := usedNames[region.Name]
-				if has {
-					return &Error{Code: ErrorCodes_INVALID, Message: fmt.Sprintf("duplicate region name: %q", region.Name)}
-				}
-				usedNames[region.Name] = struct{}{}
-			}
-
-		case *ShopEvent_UpdateManifest:
-			if !shopManifestExists {
-				return notFoundError
-			}
-			if sess.keyCardOfAGuest {
-				return notFoundError
-			}
-			um := tv.UpdateManifest
-			// this feels like a pre-op validation step but we dont have access to the relay there
-			if p := um.AddPayee; p != nil {
-				if _, has := manifest.payees[p.Name]; has {
-					return &Error{Code: ErrorCodes_INVALID, Message: "payee nickname already taken"}
-				}
-				for name, payee := range manifest.payees {
-					if bytes.Equal(payee.Address.Raw[:], p.Address.Raw) && payee.ChainId == p.ChainId {
-						return &Error{Code: ErrorCodes_INVALID, Message: "conflicting payee: " + name}
-					}
-				}
-			}
-			if p := um.RemovePayee; p != nil {
-				if _, has := manifest.payees[p.Name]; !has {
-					return notFoundError
-				}
-			}
-			for _, add := range um.AddAcceptedCurrencies {
-				// check if already assigned
-				c := cachedShopCurrency{
-					common.Address(add.Address.Raw),
-					add.ChainId,
-				}
-				if _, has := manifest.acceptedCurrencies[c]; has {
-					return &Error{Code: ErrorCodes_INVALID, Message: "currency already in use"}
-				}
-				if !bytes.Equal(ZeroAddress[:], add.Address.Raw) {
-					// validate existance of contract
-					err := r.ethereum.CheckValidERC20Metadata(add.ChainId, common.Address(add.Address.Raw))
-					if err != nil {
-						return err
-					}
-				}
-			}
-			if curr := um.SetPricingCurrency; curr != nil {
-				if !bytes.Equal(ZeroAddress[:], curr.Address.Raw) {
-					err := r.ethereum.CheckValidERC20Metadata(curr.ChainId, common.Address(curr.Address.Raw))
-					if err != nil {
-						return err
-					}
-				}
-			}
-			for _, add := range um.AddShippingRegions {
-				_, has := manifest.shippingRegions[add.Name]
-				if has {
-					return &Error{
-						Code:    ErrorCodes_INVALID,
-						Message: "name for shipping region already taken",
-					}
-				}
-			}
-			for _, rm := range um.RemoveShippingRegions {
-				_, has := manifest.shippingRegions[rm]
-				if !has {
-					return &Error{
-						Code:    ErrorCodes_INVALID,
-						Message: "unknown shipping region",
-					}
-				}
-			}
-
-		case *ShopEvent_Listing:
-			if !shopManifestExists || sess.keyCardOfAGuest {
-				log("relay.checkEventWrite.createItem manifestExists=%v isGuest=%v", shopManifestExists, sess.keyCardOfAGuest)
-				return notFoundError
-			}
-			evt := tv.Listing
-			_, itemExists := r.listingsByListingID.get(m.createdByShopID, evt.Id.Array())
-			if itemExists {
-				return &Error{Code: ErrorCodes_INVALID, Message: "item already exists"}
-			}
-
-		case *ShopEvent_UpdateListing:
-			if !shopManifestExists || sess.keyCardOfAGuest {
-				log("relay.checkEventWrite.updateItem manifestExists=%v isGuest=%v", shopManifestExists, sess.keyCardOfAGuest)
-				return notFoundError
-			}
-			evt := tv.UpdateListing
-			item, itemExists := r.listingsByListingID.get(m.createdByShopID, evt.Id.Array())
-			if !itemExists {
-				return notFoundError
-			}
-			if !item.createdByShopID.Equal(sess.shopID) { // not allow to alter data from other shop
-				return notFoundError
-			}
-			for _, opt := range evt.AddOptions {
-				if _, has := item.options[opt.Id.Array()]; has {
-					return &Error{Code: ErrorCodes_INVALID, Message: "option id already taken"}
-				}
-			}
-			for _, opt := range evt.RemoveOptionIds {
-				if _, has := item.options[opt.Array()]; !has {
-					return &Error{Code: ErrorCodes_NOT_FOUND, Message: "option id not found"}
-				}
-			}
-			for _, a := range evt.AddVariations {
-				if _, has := item.options[a.OptionId.Array()]; !has {
-					return notFoundError
-				}
-				// TODO: find a better mechanism to make variation IDs unique per item
-				// so that we dont have to check all of them every time
-				for _, vars := range item.options {
-					if _, has := vars[a.Variation.Id.Array()]; has {
-						return &Error{Code: ErrorCodes_INVALID, Message: "variation id already taken"}
-					}
-				}
-			}
-			for _, varid := range evt.RemoveVariationIds {
-				var found bool
-				for _, vars := range item.options {
-					if _, has := vars[varid.Array()]; has {
-						found = true
-					}
-				}
-				if !found {
-					return &Error{Code: ErrorCodes_NOT_FOUND, Message: "variation id not found"}
-				}
-			}
-
-		case *ShopEvent_ChangeInventory:
-			if !shopManifestExists || sess.keyCardOfAGuest {
-				log("relay.checkEventWrite.changeStock manifestExists=%v isGuest=%v", shopManifestExists, sess.keyCardOfAGuest)
-				return notFoundError
-			}
-			evt := tv.ChangeInventory
-			itemID := evt.Id
-			change := evt.Diff
-			item, itemExists := r.listingsByListingID.get(m.createdByShopID, itemID.Array())
-			if !itemExists {
-				return notFoundError
-			}
-			if !item.createdByShopID.Equal(sess.shopID) { // not allow to alter data from other shops
-				return notFoundError
-			}
-			// check wether variation is valid (all variations belong to different options)
-			optUsed := make(map[ObjectIDArray]struct{})
-			for _, wantVarID := range evt.VariationIds {
-				var foundVarID ObjectIDArray
-				var found bool
-				// find option for variation
-			lookForVar:
-				for _, opt := range item.options {
-					for varID := range opt {
-						if bytes.Equal(wantVarID.Raw, varID[:]) {
-							found = true
-							foundVarID = varID
-							break lookForVar
-						}
-					}
-				}
-				if !found {
-					return &Error{Code: ErrorCodes_NOT_FOUND, Message: "option not found"}
-				}
-				if _, has := optUsed[foundVarID]; has {
-					return &Error{Code: ErrorCodes_INVALID, Message: "option used more then once"}
-				}
-				optUsed[foundVarID] = struct{}{}
-			}
-			shopStock, shopStockExists := r.stockByShopID.get(m.createdByShopID, m.createdByShopID)
-			if shopStockExists {
-				if shopStock.inventory == nil && change < 0 {
-					return notEnoughStockError
-				}
-				if shopStock.inventory != nil && change < 0 {
-					items, has := shopStock.inventory.GetHas(newCombinedID(itemID, evt.VariationIds...))
-					if has && items+change < 0 {
-						return notEnoughStockError
-					}
-				}
-			} else { // this might be the first changeStock event
-				if change < 0 {
-					return notEnoughStockError
-				}
-			}
-
-		case *ShopEvent_Tag:
-			if !shopManifestExists || sess.keyCardOfAGuest {
-				return notFoundError
-			}
-			evt := tv.Tag
-			_, tagExists := r.tagsByTagID.get(m.createdByShopID, evt.Id.Array())
-			if tagExists {
-				return &Error{Code: ErrorCodes_INVALID, Message: "tag already exists"}
-			}
-
-		case *ShopEvent_UpdateTag:
-			if !shopManifestExists || sess.keyCardOfAGuest {
-				return notFoundError
-			}
-			evt := tv.UpdateTag
-			tag, tagExists := r.tagsByTagID.get(m.createdByShopID, evt.Id.Array())
-			if !tagExists {
-				return notFoundError
-			}
-			if !tag.createdByShopID.Equal(sess.shopID) { // not allow to alter data from other shops
-				return notFoundError
-			}
-			for _, id := range evt.AddListingIds {
-				item, itemExists := r.listingsByListingID.get(m.createdByShopID, id.Array())
-				if !itemExists {
-					return notFoundError
-				}
-				if item.createdByShopID != sess.shopID { // not allow to alter data from other shops
-					return notFoundError
-				}
-			}
-			for _, id := range evt.RemoveListingIds {
-				item, itemExists := r.listingsByListingID.get(m.createdByShopID, id.Array())
-				if !itemExists {
-					return notFoundError
-				}
-				if item.createdByShopID != sess.shopID { // not allow to alter data from other shops
-					return notFoundError
-				}
-			}
-			if d := evt.Delete; d != nil && !*d {
-				return &Error{Code: ErrorCodes_INVALID, Message: "Can't undelete a tag"}
-			}
-
-		case *ShopEvent_CreateOrder:
-			if !shopManifestExists {
-				return notFoundError
-			}
-			evt := union.GetCreateOrder()
-			_, orderExists := r.ordersByOrderID.get(m.createdByShopID, evt.Id.Array())
-			if orderExists {
-				return &Error{Code: ErrorCodes_INVALID, Message: "order already exists"}
-			}
-
-		case *ShopEvent_UpdateOrder:
-			if !shopManifestExists {
-				return notFoundError
-			}
-			evt := tv.UpdateOrder
-			order, orderExists := r.ordersByOrderID.get(m.createdByShopID, evt.Id.Array())
-			if !orderExists {
-				return notFoundError
-			}
-			if !order.createdByShopID.Equal(sess.shopID) { // not allow to alter data from other shops
-				return notFoundError
-			}
-
-			if sess.keyCardOfAGuest && order.createdByKeyCardID != sess.keyCardID {
-				return notFoundError
-			}
-
-			switch act := evt.Action.(type) {
-			case *UpdateOrder_ChangeItems_:
-				ci := act.ChangeItems
-				if order.order.CommitedAt != nil {
-					return &Error{Code: ErrorCodes_INVALID, Message: "order already finalized"}
-				}
-				changes := NewMapInts[combinedID, int64]()
-				for _, item := range ci.Adds {
-					obj, itemExists := r.listingsByListingID.get(m.createdByShopID, item.ListingId.Array())
-					if !itemExists {
-						return notFoundError
-					}
-					// not allow to use items from other shops
-					if obj.createdByShopID != sess.shopID {
-						return notFoundError
-					}
-					// check variation exists
-					if n := len(item.VariationIds); n > 0 {
-						var found int
-						for _, want := range item.VariationIds {
-							// TODO: find a better way to index these
-							for _, opt := range obj.value.Options {
-								for _, has := range opt.Variations {
-									// TODO: ignore linting. 'Id' comes from proto
-									if has.Id.Equal(want) {
-										found++
-									}
-								}
-							}
-						}
-						if found != n {
-							return notFoundError
-						}
-					}
-					sid := newCombinedID(item.ListingId, item.VariationIds...)
-					changes.Set(sid, int64(item.Quantity))
-				}
-				for _, item := range ci.Removes {
-					obj, itemExists := r.listingsByListingID.get(m.createdByShopID, item.ListingId.Array())
-					if !itemExists {
-						return notFoundError
-					}
-					// not allow to use items from other shops
-					if !obj.createdByShopID.Equal(sess.shopID) {
-						return notFoundError
-					}
-					sid := newCombinedID(item.ListingId, item.VariationIds...)
-					changes.Set(sid, -int64(item.Quantity))
-				}
-
-			case *UpdateOrder_CommitItems_:
-				stock, has := r.stockByShopID.get(m.createdByShopID, m.createdByShopID)
-				if !has {
-					return &Error{Code: ErrorCodes_INVALID, Message: "no stock for shop"}
-				}
-				items := order.items.Keys()
-				if len(items) == 0 {
-					return &Error{Code: ErrorCodes_INVALID, Message: "order is empty"}
-				}
-				for _, stockID := range items {
-					_, has := r.listingsByListingID.get(m.createdByShopID, stockID.listingID)
-					if !has {
-						return notFoundError
-					}
-					// TODO: check variation exists?
-					inStock, has := stock.inventory.GetHas(stockID)
-					if !has || inStock == 0 {
-						log("relay.checkEventWrite.commitItems stock=%x not found", stockID)
-						return notEnoughStockError
-					}
-					inOrder := order.items.Get(stockID)
-					if inOrder > uint32(inStock) {
-						log("relay.checkEventWrite.commitItems stock=%x inOrder=%d inStock=%d", stockID, inOrder, inStock)
-						return notEnoughStockError
-					}
-				}
-
-			case *UpdateOrder_SetInvoiceAddress:
-				// noop
-
-			case *UpdateOrder_SetShippingAddress:
-				// noop
-
-			case *UpdateOrder_Cancel_:
-				if order.order.CommitedAt == nil {
-					return &Error{Code: ErrorCodes_INVALID, Message: "order is not yet commited"}
-				}
-
-			case *UpdateOrder_ChoosePayment:
-				if order.order.CommitedAt == nil {
-					return &Error{Code: ErrorCodes_INVALID, Message: "order is not yet commited"}
-				}
-				if order.order.ShippingAddress == nil && order.order.InvoiceAddress == nil {
-					return &Error{Code: ErrorCodes_INVALID, Message: "no shipping address chosen"}
-				}
-				if order.items.Size() == 0 {
-					return &Error{Code: ErrorCodes_INVALID, Message: "order is empty"}
-				}
-				method := act.ChoosePayment
-				p, has := manifest.payees[method.Payee.Name]
-				if !has {
-					return &Error{Code: ErrorCodes_INVALID, Message: "no such payee"}
-				}
-				if p.ChainId != method.Payee.ChainId || !bytes.Equal(p.Address.Raw, method.Payee.Address.Raw) {
-					return &Error{Code: ErrorCodes_INVALID, Message: "payee missmatch"}
-				}
-				if method.Payee.ChainId != method.Currency.ChainId {
-					return &Error{Code: ErrorCodes_INVALID, Message: "payee and chosenCurrency chain_id mismatch"}
-				}
-				chosenCurrency := cachedShopCurrency{
-					common.Address(method.Currency.Address.Raw),
-					method.Currency.ChainId,
-				}
-				_, has = manifest.acceptedCurrencies[chosenCurrency]
-				if !has {
-					return &Error{Code: ErrorCodes_INVALID, Message: "chosen currency not available"}
-				}
-
-			default:
-				log("relay.checkEventWrite.updateOrder action=%T", act)
-				return &Error{Code: ErrorCodes_INVALID, Message: "no action on updateOrder"}
-
-			}
-
-		default:
-			panic(fmt.Errorf("eventWriteOp.validateWrite.unrecognizeType eventType=%T", union.Union))
-		}
-		return nil
+// isListingVariationRemoved returns true if the patch is a variation removal (either option or variation)
+func isListingVariationRemoved(p patch.Patch) bool {
+	if !(p.Path.Type == patch.ObjectTypeListing &&
+		len(p.Path.Fields) == 1 &&
+		p.Path.Fields[0] == "options") {
+		return false
 	}
+	return p.Op == patch.RemoveOp
+}
 
 // if we remove a variation from an unpayed order, we need to cancel open orders for it to avoid edge cases
+func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []patch.Patch {
+	ctx := context.Background()
+	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
+	listingID := *p.Path.ObjectID
+	// this shop state is the prior state to the patch
+	// we destil the needed change from the passed patch
+	shop := r.shopIDsToShopState.MustGet(sessionState.shopID).data
+	listing, has := shop.Listings.Get(listingID)
+	assert(has)
 
-	func (r *Relay) processRemoveVariation(sessionID sessionID, listingUpdate *UpdateListing) *Error {
-		ctx := context.Background()
-		sessionState := r.sessionIDsToSessionStates.Get(sessionID)
-		listingID := listingUpdate.Id
-		listing, has := r.listingsByListingID.get(sessionState.shopID, listingID.Array())
+	// collect all variation IDs from both removed options and removed removedVariations
+	removedVariations := NewSetInts[string]()
+	if len(p.Path.Fields) == 2 && p.Path.Fields[0] == "options" {
+		optName := p.Path.Fields[1]
+		opt, has := listing.Options[optName]
 		assert(has)
-
-		// collect all variation IDs from both remove option(s) and remove variation(s)
-		variations := NewSetInts[ObjectIDArray]()
-		for _, vid := range listingUpdate.RemoveVariationIds {
-			variations.Add(vid.Array())
+		for varName, _ := range opt.Variations {
+			removedVariations.Add(varName)
 		}
-		for _, optID := range listingUpdate.RemoveOptionIds {
-			for _, opt := range listing.value.Options {
-				if opt.Id.Equal(optID) {
-					for _, variation := range opt.Variations {
-						variations.Add(variation.Id.Array())
+	} else if len(p.Path.Fields) == 4 && p.Path.Fields[0] == "options" && p.Path.Fields[2] == "variations" {
+		varName := p.Path.Fields[3]
+		removedVariations.Add(varName)
+	}
+
+	start := now()
+	logS(sessionID, "relay.removeVariation.process listing=%d variations=%v", uint64(listingID), removedVariations.Slice())
+
+	otherOrderRows, err := r.syncTx.Query(ctx, `select orderId from payments
+	where shopId = $1
+		and payedAt is null
+		and itemsLockedAt >= now() - interval '1 day'`, sessionState.shopID[:])
+	check(err)
+
+	otherOrderIDs := NewMapInts[uint64, objects.Order]()
+	for otherOrderRows.Next() {
+		var otherOrderID SQLUint64Bytes
+		check(otherOrderRows.Scan(&otherOrderID))
+		otherOrder, has := shop.Orders.Get(otherOrderID.Uint64())
+		assert(has)
+		otherOrderIDs.Set(otherOrderID.Uint64(), otherOrder)
+	}
+	check(otherOrderRows.Err())
+	otherOrderRows.Close()
+
+	// see if any orders include this listing and variation
+	matchingOrders := NewSetInts[uint64]()
+	otherOrderIDs.All(func(orderID uint64, order objects.Order) bool {
+		for _, item := range order.Items {
+			if item.ListingID == listingID { // matched the listing that is being edited
+			itemLoop:
+				// go through all variations of the item
+				for _, vid := range item.VariationIDs {
+					if removedVariations.Has(vid) {
+						matchingOrders.Add(orderID)
+						// we can break here because we know there is only one item per variation
+						break itemLoop
 					}
 				}
 			}
 		}
+		return false
+	})
 
-		start := now()
-		logS(sessionID, "relay.removeVariation.process listing=%x variations=%v", listingID.Raw, variations.Slice())
-
-		otherOrderRows, err := r.syncTx.Query(ctx, `select orderId from payments
-
-where shopId = $1
-
-	  and payedAt is null
-	  and itemsLockedAt >= now() - interval '1 day'`, sessionState.shopID[:])
-		check(err)
-		defer otherOrderRows.Close()
-
-		otherOrderIDs := NewMapInts[ObjectIDArray, *CachedOrder]()
-		for otherOrderRows.Next() {
-			var otherOrderID SQLUint64Bytes
-			check(otherOrderRows.Scan(&otherOrderID))
-			otherOrder, has := r.ordersByOrderID.get(sessionState.shopID, otherOrderID.Data)
-			assert(has)
-			otherOrderIDs.Set(otherOrderID.Data, otherOrder)
-		}
-		check(otherOrderRows.Err())
-
-		// see if any orders include this listing and variation
-		matchingOrders := NewSetInts[ObjectIDArray]()
-		otherOrderIDs.All(func(orderID ObjectIDArray, order *CachedOrder) bool {
-			order.items.All(func(ci combinedID, _ uint32) bool {
-				if bytes.Equal(ci.listingID[:], listingID.Raw) {
-					for _, vid := range ci.Variations() {
-						if variations.Has(vid) {
-							matchingOrders.Add(orderID)
-							return true
-						}
-					}
-				}
-				return false
-			})
-			return false
-		})
-
-		if matchingOrders.Size() == 0 {
-			logS(sessionID, "relay.removeVariation.noMatchingOrders took=%d", took(start))
-			return nil
-		}
-
-		// cancel open orders
-		now := timestamppb.Now()
-		var orderIDslice = matchingOrders.Slice()
-		// sadly go can't deal with []driver.Value directly
-		var ordersAsBytes = make([][]byte, matchingOrders.Size())
-		for i, oid := range orderIDslice {
-			ordersAsBytes[i] = oid[:]
-		}
-		const paymentsUpdateQry = `update payments set canceledAt=$3 where shopId=$1 and orderId=any($2)`
-		_, err = r.syncTx.Exec(ctx, paymentsUpdateQry, sessionState.shopID[:], ordersAsBytes, now.AsTime())
-		check(err)
-		for _, orderID := range orderIDslice {
-			r.createRelayEvent(sessionState.shopID,
-				&ShopEvent_UpdateOrder{
-					&UpdateOrder{
-						Id: &ObjectId{Raw: orderID[:]},
-						Action: &UpdateOrder_Cancel_{
-							&UpdateOrder_Cancel{},
-						},
-					},
-				},
-			)
-		}
-
-		logS(sessionID, "relay.removeVariation.finish orders=%d took=%d", len(orderIDslice), took(start))
+	if matchingOrders.Size() == 0 {
+		logS(sessionID, "relay.removeVariation.noMatchingOrders took=%d", took(start))
 		return nil
 	}
 
-	func (r *Relay) processOrderItemsCommitment(sessionID sessionID, orderID ObjectIDArray) *Error {
-		ctx := context.Background()
-		sessionState := r.sessionIDsToSessionStates.Get(sessionID)
+	// cancel open orders
+	canceledAt := now()
+	var orderIDslice = matchingOrders.Slice()
+	// sadly go can't deal with []driver.Value directly
+	var ordersAsBytes = make([][]byte, matchingOrders.Size())
+	for i, oid := range orderIDslice {
+		ordersAsBytes[i] = make([]byte, 8)
+		binary.BigEndian.PutUint64(ordersAsBytes[i], oid)
+	}
+	const paymentsUpdateQry = `update payments set canceledAt=$3 where shopId=$1 and orderId=any($2)`
+	_, err = r.syncTx.Exec(ctx, paymentsUpdateQry, sessionState.shopID[:], ordersAsBytes, canceledAt)
+	check(err)
+	var patches []patch.Patch
+	cborCanceledAt, err := cbor.Marshal(canceledAt)
+	check(err)
+	for _, orderID := range orderIDslice {
+		patches = append(patches, patch.Patch{
+			Path: patch.PatchPath{
+				Type:     patch.ObjectTypeOrder,
+				ObjectID: &orderID,
+				Fields:   []string{"canceledAt"},
+			},
+			Op:    patch.ReplaceOp,
+			Value: cborCanceledAt,
+		})
+	}
 
-		start := now()
-		logS(sessionID, "relay.orderCommitItemsOp.process order=%x", orderID)
+	logS(sessionID, "relay.removeVariation.finish orders=%d took=%d", len(orderIDslice), took(start))
+	return patches
+}
 
-		// load realted data
-		order, has := r.ordersByOrderID.get(sessionState.shopID, orderID)
-		assert(has)
+func isOrderStateCommited(p patch.Patch) bool {
+	if !(p.Path.Type == patch.ObjectTypeOrder &&
+		len(p.Path.Fields) == 1 &&
+		p.Path.Fields[0] == "state") {
+		return false
+	}
+	if p.Op != patch.ReplaceOp {
+		return false
+	}
+	if p.Value == nil {
+		return false
+	}
+	var orderState objects.OrderState
+	if err := cbor.Unmarshal(p.Value, &orderState); err != nil {
+		return false
+	}
+	return orderState == objects.OrderStateCommited
+}
 
-		shopID := order.createdByShopID
+func (r *Relay) processOrderItemsCommitment(sessionID sessionID, p patch.Patch) *pb.Error {
+	start := now()
+	ctx := context.Background()
+	sessionState := r.sessionIDsToSessionStates.MustGet(sessionID)
 
-		stock, has := r.stockByShopID.get(shopID, shopID)
-		assert(has)
+	orderID := *p.Path.ObjectID
+	logS(sessionID, "relay.orderCommitItemsOp.process order=%d", orderID)
 
-		// get all other orders that haven't been paid yet
-		// TODO: configure timeout
-		otherOrderRows, err := r.syncTx.Query(ctx, `select orderId from payments
+	// load related data
+	// this shop state is the prior state to the patch
+	// we destil the needed change from the passed patch
+	shop := r.shopIDsToShopState.MustGet(sessionState.shopID).data
+	order, has := shop.Orders.Get(orderID)
+	assert(has)
 
+	// get all other orders that haven't been paid yet
+	// TODO: configure timeout
+	var orderDBID ObjectIDArray
+	binary.BigEndian.PutUint64(orderDBID[:], orderID)
+	otherOrderRows, err := r.syncTx.Query(ctx, `select orderId from payments
 where shopId = $1
-
 	  and orderId != $2
 	  and payedAt is null
 	  and itemsLockedAt >= now() - interval '1 day'`,
-			sessionState.shopID[:],
-			orderID[:],
-		)
+		sessionState.shopID[:],
+		orderDBID[:],
+	)
+	check(err)
+	var otherOrderIDBytes [][]byte
+	// first we need to drain all the otherOrderRows
+	for otherOrderRows.Next() {
+		var otherOrderID SQLUint64Bytes
+		err := otherOrderRows.Scan(&otherOrderID)
 		check(err)
-		var otherOrderIDBytes [][]byte
-		// first we need to drain all the otherOrderRows
-		for otherOrderRows.Next() {
-			var otherOrderID SQLUint64Bytes
-			err := otherOrderRows.Scan(&otherOrderID)
-			check(err)
-			otherOrderIDBytes = append(otherOrderIDBytes, otherOrderID.Data[:])
-		}
-		check(otherOrderRows.Err())
-		otherOrderRows.Close()
-		// now we can use the ordersByOrderID to reduce the orders
-		// (this can load in data from psql and if we did it in the same loop would lead to conn busy errors)
-		otherOrderIDs := NewMapInts[ObjectIDArray, *CachedOrder]()
-		for _, orderIDBytes := range otherOrderIDBytes {
-			var orderID ObjectIDArray
-			copy(orderID[:], orderIDBytes)
-			otherOrder, has := r.ordersByOrderID.get(sessionState.shopID, orderID)
-			assert(has)
-			otherOrderIDs.Set(orderID, otherOrder)
-		}
-		// for convenience, sum up all items in the other orders
-		otherOrderItemQuantities := NewMapInts[combinedID, uint32]()
-		otherOrderIDs.All(func(_ ObjectIDArray, order *CachedOrder) bool {
-			if order.order.CanceledAt != nil { // skip canceled orders
-				return false
-			}
-			order.items.All(func(stockID combinedID, quantity uint32) bool {
-				current := otherOrderItemQuantities.Get(stockID)
-				current += quantity
-				otherOrderItemQuantities.Set(stockID, current)
-				return false
-			})
-			return false
-		})
-
-		// iterate over this order
-		var invalidErr *Error
-		order.items.All(func(cid combinedID, quantity uint32) bool {
-			stockItems, has := stock.inventory.GetHas(cid)
-			if !has {
-				invalidErr = notEnoughStockError
-				return true
-			}
-			usedInOtherOrders := otherOrderItemQuantities.Get(cid)
-			if stockItems < 0 || uint32(stockItems)-usedInOtherOrders < quantity {
-				invalidErr = notEnoughStockError
-				return true
-			}
-			return false
-		})
-		if invalidErr != nil {
-			return invalidErr
-		}
-
-		shopState := r.shopIDsToShopState.MustGet(sessionState.shopID)
-		const insertPaymentQuery = `insert into payments (shopSeqNo, shopId, orderId, itemsLockedAt)
-		VALUES ($1, $2, $3, now())`
-		_, err = r.syncTx.Exec(ctx, insertPaymentQuery,
-			shopState.lastUsedSeq,
-			shopID[:],
-			orderID[:],
-		)
-		check(err)
-
-		logS(sessionID, "relay.orderCommitItemsOp.finish took=%d", took(start))
-		return nil
+		otherOrderIDBytes = append(otherOrderIDBytes, otherOrderID.Data[:])
 	}
+	check(otherOrderRows.Err())
+	otherOrderRows.Close()
+	// now we can use the ordersByOrderID to reduce the orders
+	// (this can load in data from psql and if we did it in the same loop would lead to conn busy errors)
+	otherOrderIDs := NewMapInts[uint64, objects.Order]()
+	for _, orderIDBytes := range otherOrderIDBytes {
+		orderID := binary.BigEndian.Uint64(orderIDBytes)
+		otherOrder, has := shop.Orders.Get(orderID)
+		assert(has)
+		otherOrderIDs.Set(orderID, otherOrder)
+	}
+	// for convenience, sum up all items in the other orders
+	otherOrderItemQuantities := NewMapInts[combinedID, uint32]()
+	otherOrderIDs.All(func(_ uint64, order objects.Order) bool {
+		if order.CanceledAt != nil { // skip canceled orders
+			return false
+		}
+		for _, item := range order.Items {
+			combinedID := newCombinedID(item.ListingID, item.VariationIDs...)
+			current := otherOrderItemQuantities.Get(combinedID)
+			current += item.Quantity
+			otherOrderItemQuantities.Set(combinedID, current)
+		}
+		return false
+	})
+
+	// iterate over this order
+	var invalidErr *pb.Error
+	for _, item := range order.Items {
+		stockItems, has := shop.Inventory.Get(item.ListingID, item.VariationIDs)
+		if !has {
+			invalidErr = notEnoughStockError
+			break
+		}
+		combinedID := newCombinedID(item.ListingID, item.VariationIDs...)
+		usedInOtherOrders := otherOrderItemQuantities.Get(combinedID)
+		if stockItems < 0 || uint32(stockItems)-usedInOtherOrders < item.Quantity {
+			invalidErr = notEnoughStockError
+			break
+		}
+	}
+	if invalidErr != nil {
+		return invalidErr
+	}
+
+	shopState := r.shopIDsToShopState.MustGet(sessionState.shopID)
+	const insertPaymentQuery = `insert into payments (shopSeqNo, shopId, orderId, itemsLockedAt)
+		VALUES ($1, $2, $3, now())`
+	_, err = r.syncTx.Exec(ctx, insertPaymentQuery,
+		shopState.lastUsedSeq,
+		sessionState.shopID[:],
+		orderDBID[:],
+	)
+	check(err)
+
+	logS(sessionID, "relay.orderCommitItemsOp.finish took=%d", took(start))
+	return nil
+}
+
+func isOrderStatePaymentChoice(p patch.Patch) bool {
+	if !(p.Path.Type == patch.ObjectTypeOrder &&
+		len(p.Path.Fields) == 1 &&
+		p.Path.Fields[0] == "chosenCurrency") {
+		return false
+	}
+	return p.Op == patch.ReplaceOp
+}
 
 var big100 = new(big.Int).SetInt64(100)
 
-	func (r *Relay) processOrderPaymentChoice(sessionID sessionID, orderID ObjectIDArray, method *UpdateOrder_ChoosePaymentMethod) *Error {
-		ctx := context.Background()
-		sessionState := r.sessionIDsToSessionStates.Get(sessionID)
-		shopID := sessionState.shopID
+func (r *Relay) processOrderPaymentChoice(sessionID sessionID, p patch.Patch) ([]patch.Patch, *pb.Error) {
+	ctx := context.Background()
+	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
+	shopID := sessionState.shopID
 
-		start := now()
-		logS(sessionID, "relay.orderPaymentChoiceOp.process order=%x", orderID)
+	start := now()
+	orderID := *p.Path.ObjectID
+	shop := r.shopIDsToShopState.MustGet(shopID).data
+	logS(sessionID, "relay.orderPaymentChoiceOp.process order=%x", orderID)
 
-		// load related data
-		order, has := r.ordersByOrderID.get(sessionState.shopID, orderID)
-		assert(has)
+	// load related data
+	order, has := shop.Orders.Get(orderID)
+	assert(has)
 
-		shop, has := r.shopManifestsByShopID.get(shopID, shopID)
-		assert(has)
+	shippingAddr := order.ShippingAddress
+	if shippingAddr == nil {
+		shippingAddr = order.InvoiceAddress
+	}
 
-		shippingAddr := order.order.ShippingAddress
-		if shippingAddr == nil {
-			shippingAddr = order.order.InvoiceAddress
+	if shippingAddr == nil {
+		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "no shipping address"}
+	}
+
+	// check if shipping regions are set
+	if shop.Manifest.ShippingRegions == nil {
+		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "no shipping regions"}
+	}
+
+	region, err := ScoreRegions(shop.Manifest.ShippingRegions, shippingAddr)
+	if err != nil {
+		logS(sessionID, "relay.orderPaymentChoiceOp.scoreRegions regions=%d err=%s", len(shop.Manifest.ShippingRegions), err)
+		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to determin shipping region"}
+	}
+
+	shippingRegion := shop.Manifest.ShippingRegions[region]
+
+	// determain total price and create snapshot of items
+	var (
+		bigSubtotal = new(big.Int)
+		orderHash   [32]byte
+		done        = make(chan struct{})
+	)
+
+	snapshotter, savedItems, err := newListingSnapshotter(r.metric, shopID)
+	if err != nil {
+		logS(sessionID, "relay.orderPaymentChoiceOp.ipfsClientFailed error=%s", err)
+		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "internal ipfs error"}
+	}
+
+	// iterate over this order
+	for _, ordered := range order.Items {
+		listing, has := shop.Listings.Get(ordered.ListingID)
+		if !has {
+			return nil, notFoundError
 		}
 
-		region, err := ScoreRegions(shop.shippingRegions, shippingAddr)
-		if err != nil {
-			logS(sessionID, "relay.orderPaymentChoiceOp.scoreRegions regions=%d err=%s", len(shop.shippingRegions), err)
-			return &Error{Code: ErrorCodes_INVALID, Message: "unable to determin shipping region"}
-		}
+		cid := newCombinedID(ordered.ListingID, ordered.VariationIDs...)
+		snapshotter.save(cid, &listing)
 
-		// determain total price and create snapshot of items
-		var (
-			bigSubtotal = new(big.Int)
-			invalidErr  *Error
+		// total += quantity * price
+		bigQuant := big.NewInt(int64(ordered.Quantity))
 
-			orderHash [32]byte
+		bigPrice := new(big.Int)
+		bigPrice.Set(&listing.Price)
 
-			done = make(chan struct{})
-		)
+		chosenVars := cid.Variations()
+		found := 0
+		for _, chosen := range chosenVars {
+			// TODO: faster lookup of variations
+			for _, availableOption := range listing.Options {
+				for varName, variation := range availableOption.Variations {
+					if varName == chosen {
+						if variation.PriceModifier.ModificationAbsolute != nil {
+							found++
+							bigPriceDiff := new(big.Int)
+							bigPriceDiff.Set(&variation.PriceModifier.ModificationAbsolute.Amount)
 
-		snapshotter, savedItems, err := newListingSnapshotter(r.metric, shopID)
-		if err != nil {
-			logS(sessionID, "relay.orderPaymentChoiceOp.ipfsClientFailed error=%s", err)
-			return &Error{Code: ErrorCodes_INVALID, Message: "internal ipfs error"}
-		}
-
-		// iterate over this order
-		order.items.All(func(cid combinedID, quantity uint32) bool {
-			item, has := r.listingsByListingID.get(shopID, cid.listingID)
-			if !has {
-				invalidErr = notFoundError
-				return true
-			}
-
-			snapshotter.save(cid, item)
-
-			// total += quantity * price
-			bigQuant := big.NewInt(int64(quantity))
-
-			bigPrice := new(big.Int)
-			bigPrice.SetBytes(item.value.Price.Raw)
-
-			chosenVars := cid.Variations()
-			found := 0
-			for _, chosen := range chosenVars {
-				// TODO: faster lookup of variations
-				for _, availableVars := range item.options {
-					for varID, variation := range availableVars {
-						if varID.Equal(chosen) {
-							if diff := variation.Diff; diff != nil {
-								found++
-								bigPriceDiff := new(big.Int)
-								bigPriceDiff.SetBytes(diff.Diff.Raw)
-
-								if variation.Diff.PlusSign {
-									bigPrice.Add(bigPrice, bigPriceDiff)
-								} else {
-									bigPrice.Sub(bigPrice, bigPriceDiff)
-								}
+							if variation.PriceModifier.ModificationAbsolute.Plus {
+								bigPrice.Add(bigPrice, bigPriceDiff)
+							} else {
+								bigPrice.Sub(bigPrice, bigPriceDiff)
 							}
 						}
 					}
 				}
 			}
-			if len(chosenVars) != found {
-				invalidErr = &Error{Code: ErrorCodes_OUT_OF_STOCK, Message: "variation no longer available"}
-				return true
-			}
-
-			logS(sessionID, "relay.orderPaymentChoiceOp.subTotal current=%s | quant=%s price=%s", bigSubtotal, bigQuant, bigPrice)
-			bigQuant.Mul(bigQuant, bigPrice)
-
-			bigSubtotal.Add(bigSubtotal, bigQuant)
-			logS(sessionID, "relay.orderPaymentChoiceOp.subTotal new=%s = oldSubTotal + quant_times_price(%s)", bigSubtotal, bigQuant)
-
-			return false
-		})
-		if invalidErr != nil {
-			return invalidErr
 		}
-		// worker to consume snapshot jobs
-		var items []savedItem
-		go func() {
-			for it := range savedItems {
-				items = append(items, it)
+		if len(chosenVars) != found {
+			return nil, &pb.Error{Code: pb.ErrorCodes_OUT_OF_STOCK, Message: "variation no longer available"}
+		}
+
+		logS(sessionID, "relay.orderPaymentChoiceOp.subTotal current=%s | quant=%s price=%s", bigSubtotal, bigQuant, bigPrice)
+		bigQuant.Mul(bigQuant, bigPrice)
+
+		bigSubtotal.Add(bigSubtotal, bigQuant)
+		logS(sessionID, "relay.orderPaymentChoiceOp.subTotal new=%s = oldSubTotal + quant_times_price(%s)", bigSubtotal, bigQuant)
+	}
+	// worker to consume snapshot jobs
+	var items []savedItem
+	go func() {
+		for it := range savedItems {
+			items = append(items, it)
+		}
+
+		// previously used to get the orderHash
+
+		close(done)
+	}()
+	err = snapshotter.Wait() // also closes saveItems channel
+	if err != nil {
+		logS(sessionID, "relay.orderPaymentChoiceOp.itemSnapshots err=%s", err)
+		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to snapshot items"}
+	}
+	<-done // wait for consumer to create orderHash
+
+	// add taxes and shipping
+	bigTotal := new(big.Int).Set(bigSubtotal)
+	diff := new(big.Int)
+	logS(sessionID, "relay.orderPaymentChoiceOp.total beforeModifiers=%s", bigTotal)
+	for _, mod := range shippingRegion.PriceModifiers {
+		if mod.ModificationPrecents != nil {
+			perc := mod.ModificationPrecents
+			diff.Set(perc)
+			bigTotal.Mul(bigTotal, diff)
+			bigTotal.Div(bigTotal, big100)
+		} else if mod.ModificationAbsolute != nil {
+			abs := mod.ModificationAbsolute
+			diff.Set(&abs.Amount)
+			if abs.Plus {
+				bigTotal.Add(bigTotal, diff)
+			} else {
+				bigTotal.Sub(bigTotal, diff)
 			}
-			// create a sorting to make a deterministic order_hash
-			slices.SortFunc(items, func(a, b savedItem) int {
-				if a.cid.listingID != b.cid.listingID {
-					return bytes.Compare(a.cid.listingID[:], b.cid.listingID[:])
-				}
-				return strings.Compare(a.cid.variations, b.cid.variations)
-			})
-			// TODO: merkleization
-			for _, it := range items {
-				h := it.cid.Hash()
-				//debug("DEBUG/itemHash id=%v hash=%s ipfs=%s", it.cid, h.Hex(), it.versioned)
-				hasher.Write(h.Bytes())
-			}
-			hs := hasher.Sum(nil)
-			copy(orderHash[:], hs)
-			close(done)
-		}()
-		err = snapshotter.Wait() // also closes saveItems channel
+		} else {
+			logS(sessionID, "relay.orderPaymentChoiceOp.unknownPriceModifier mod=%v", mod)
+			panic("unknown price modifier")
+		}
+	}
+
+	logS(sessionID, "relay.orderPaymentChoiceOp.total after=%s", bigTotal)
+
+	if n := len(bigTotal.Bytes()); n > 32 {
+		logS(sessionID, "relay.orderPaymentChoiceOp.totalTooBig got=%d", n)
+		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "payment amount exceeded uint256"}
+	}
+
+	// create payment address for order content
+	var (
+		chosenCurrency = order.ChosenCurrency
+	)
+	if !chosenCurrency.Equal(shop.Manifest.PricingCurrency) {
+		// convert base to chosen currency
+		bigTotal, err = r.prices.Convert(shop.Manifest.PricingCurrency, *chosenCurrency, bigTotal)
 		if err != nil {
-			logS(sessionID, "relay.orderPaymentChoiceOp.itemSnapshots err=%s", err)
-			return &Error{Code: ErrorCodes_INVALID, Message: "failed to snapshot items"}
+			logS(sessionID, "relay.orderPaymentChoiceOp.priceConversion err=%s", err)
+			return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to establish conversion price"}
 		}
-		<-done // wait for consumer to create orderHash
+	}
 
-		// add taxes and shipping
-		bigTotal := new(big.Int).Set(bigSubtotal)
-		diff := new(big.Int)
-		logS(sessionID, "relay.orderPaymentChoiceOp.total beforeModifiers=%s", bigTotal)
-		for _, mod := range region.OrderPriceModifiers {
-			switch tv := mod.Modification.(type) {
-			case *OrderPriceModifier_Absolute:
-				abs := tv.Absolute
-				diff.SetBytes(abs.Diff.Raw)
-				if abs.PlusSign {
-					bigTotal.Add(bigTotal, diff)
-				} else {
-					bigTotal.Sub(bigTotal, diff)
-				}
-			case *OrderPriceModifier_Percentage:
-				perc := tv.Percentage
-				diff.SetBytes(perc.Raw)
-				bigTotal.Mul(bigTotal, diff)
-				bigTotal.Div(bigTotal, big100)
-			}
-		}
+	// fallback for paymentAddr
+	ownerAddr, err := r.ethereum.GetOwnerOfShop(&shop.Manifest.ShopID)
+	if err != nil {
+		logS(sessionID, "relay.orderPaymentChoiceOp.shopOwnerFailed err=%s", err)
+		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to get shop owner"}
+	}
 
-		logS(sessionID, "relay.orderPaymentChoiceOp.total after=%s", bigTotal)
+	// ttl
+	blockNo, err := r.ethereum.GetCurrentBlockNumber(chosenCurrency.ChainID)
+	if err != nil {
+		logS(sessionID, "relay.orderPaymentChoiceOp.blockNumberFailed err=%s", err)
+		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to get current block number"}
+	}
+	bigBlockNo := new(big.Int).SetInt64(int64(blockNo))
 
-		if n := len(bigTotal.Bytes()); n > 32 {
-			logS(sessionID, "relay.orderPaymentChoiceOp.totalTooBig got=%d", n)
-			return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "payment amount exceeded uint256"}
-		}
+	block, err := r.ethereum.GetBlockByNumber(chosenCurrency.ChainID, bigBlockNo)
+	if err != nil {
+		logS(sessionID, "relay.orderPaymentChoiceOp.blockByNumberFailed block=%d err=%s", blockNo, err)
+		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to get block by number"}
+	}
 
-		// create payment address for order content
-		var (
-			chosenCurrency = cachedShopCurrency{
-				common.Address(method.Currency.Address.Raw),
-				method.Currency.ChainId,
-			}
-		)
-		if !chosenCurrency.Equal(shop.pricingCurrency) {
-			// convert base to chosen currency
-			bigTotal, err = r.prices.Convert(shop.pricingCurrency, chosenCurrency, bigTotal)
-			if err != nil {
-				logS(sessionID, "relay.orderPaymentChoiceOp.priceConversion err=%s", err)
-				return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to establish conversion price"}
-			}
-		}
+	// construct payment request for ID and pay-by-address
+	var pr = contractsabi.PaymentRequest{}
+	pr.ChainId = new(big.Int).SetUint64(chosenCurrency.ChainID)
+	pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
+	pr.Order = orderHash
+	commonChosenCurrency := common.Address(chosenCurrency.Address)
+	pr.Currency = commonChosenCurrency
+	pr.Amount = bigTotal
+	pr.PayeeAddress = common.Address(ownerAddr)
+	pr.IsPaymentEndpoint = false
+	pr.ShopId.Set(&shop.Manifest.ShopID)
+	// TODO: calculate signature
+	pr.ShopSignature = bytes.Repeat([]byte{0}, 64)
 
-		// fallback for paymentAddr
-		bigShopTokenID := new(big.Int).SetBytes(shop.shopTokenID)
-		ownerAddr, err := r.ethereum.GetOwnerOfShop(bigShopTokenID)
-		if err != nil {
-			logS(sessionID, "relay.orderPaymentChoiceOp.shopOwnerFailed err=%s", err)
-			return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to get shop owner"}
-		}
+	paymentID, paymentAddr, err := r.ethereum.GetPaymentIDAndAddress(chosenCurrency.ChainID, &pr, ownerAddr)
+	if err != nil {
+		logS(sessionID, "relay.orderPaymentChoiceOp.paymentIDandAddrFailed order=%x err=%s", orderID, err)
+		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to get paymentID"}
+	}
 
-		// ttl
-		blockNo, err := r.ethereum.GetCurrentBlockNumber(chosenCurrency.ChainID)
-		if err != nil {
-			logS(sessionID, "relay.orderPaymentChoiceOp.blockNumberFailed err=%s", err)
-			return &Error{Code: ErrorCodes_INVALID, Message: "failed to get current block number"}
-		}
-		bigBlockNo := new(big.Int).SetInt64(int64(blockNo))
+	logS(sessionID, "relay.orderPaymentChoiceOp.paymentRequest id=%x addr=%x total=%s currentBlock=%d order_hash=%x", paymentID, paymentAddr, bigTotal.String(), blockNo, orderHash)
 
-		block, err := r.ethereum.GetBlockByNumber(chosenCurrency.ChainID, bigBlockNo)
-		if err != nil {
-			logS(sessionID, "relay.orderPaymentChoiceOp.blockByNumberFailed block=%d err=%s", blockNo, err)
-			return &Error{Code: ErrorCodes_INVALID, Message: "failed to get block by number"}
-		}
+	// mark order as finalized by creating the event and updating payments table
+	var fin objects.PaymentDetails
+	copy(fin.PaymentID[:], paymentID)
+	fin.TTL = pr.Ttl.Uint64()
 
-		// construct payment request for ID and pay-by-address
-		var pr = contractsabi.PaymentRequest{}
-		pr.ChainId = new(big.Int).SetUint64(method.Payee.ChainId)
-		pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
-		pr.Order = orderHash
-		pr.Currency = chosenCurrency.Addr
-		pr.Amount = bigTotal
-		pr.PayeeAddress = common.Address(method.Payee.Address.Raw)
-		pr.IsPaymentEndpoint = method.Payee.CallAsContract
-		pr.ShopId = bigShopTokenID
-		// TODO: calculate signature
-		pr.ShopSignature = bytes.Repeat([]byte{0}, 64)
+	fin.ListingHashes = make([][]byte, len(items))
+	for i, it := range items {
+		fin.ListingHashes[i] = it.cborHash[:]
+	}
 
-		paymentID, paymentAddr, err := r.ethereum.GetPaymentIDAndAddress(chosenCurrency.ChainID, &pr, ownerAddr)
-		if err != nil {
-			logS(sessionID, "relay.orderPaymentChoiceOp.paymentIDandAddrFailed order=%x err=%s", orderID, err)
-			return &Error{Code: ErrorCodes_INVALID, Message: "failed to get paymentID"}
-		}
+	fin.Total = objects.Uint256(*bigTotal)
+	copy(fin.ShopSignature[:], pr.ShopSignature)
 
-		logS(sessionID, "relay.orderPaymentChoiceOp.paymentRequest id=%x addr=%x total=%s currentBlock=%d order_hash=%x", paymentID, paymentAddr, bigTotal.String(), blockNo, orderHash)
+	finBytes, err := cbor.Marshal(fin)
+	check(err)
 
-		// mark order as finalized by creating the event and updating payments table
-		var (
-			fin PaymentDetails
-			w   PaymentWaiter
-		)
-		fin.PaymentId = &Hash{Raw: paymentID}
-		fin.ShippingRegion = region
-		fin.Ttl = pr.Ttl.String()
+	// TODO: once
+	unpaidBytes, err := cbor.Marshal(objects.OrderStateUnpaid)
+	check(err)
 
-		fin.ListingHashes = make([]*IPFSAddress, len(items))
-		for i, it := range items {
-			fin.ListingHashes[i] = &IPFSAddress{Cid: it.versioned.RootCid().String()}
-		}
+	patches := []patch.Patch{
+		patch.Patch{
+			Path: patch.PatchPath{
+				Type:     patch.ObjectTypeOrder,
+				ObjectID: &orderID,
+				Fields:   []string{"paymentDetails"},
+			},
+			Op:    patch.AddOp,
+			Value: finBytes,
+		},
+		patch.Patch{
+			Path: patch.PatchPath{
+				Type:     patch.ObjectTypeOrder,
+				ObjectID: &orderID,
+				Fields:   []string{"state"},
+			},
+			Op:    patch.ReplaceOp,
+			Value: unpaidBytes,
+		},
+	}
 
-		var pbTotal = &Uint256{Raw: make([]byte, 32)}
-		bigTotal.FillBytes(pbTotal.Raw)
-		fin.Total = pbTotal
-		fin.ShopSignature = &Signature{Raw: pr.ShopSignature}
+	var w PaymentWaiter
+	w.shopID = shopID
+	var dbOrderID ObjectIDArray
+	binary.BigEndian.PutUint64(dbOrderID[:], orderID)
+	w.orderID = dbOrderID
+	w.paymentChosenAt = now()
+	w.purchaseAddr = paymentAddr
+	w.chainID = chosenCurrency.ChainID
+	w.lastBlockNo.SetInt64(int64(blockNo))
+	w.coinsTotal.Set(bigTotal)
+	w.paymentID = paymentID
 
-		r.createRelayEvent(shopID,
-			&ShopEvent_UpdateOrder{
-				&UpdateOrder{
-					Id:     &ObjectId{Raw: orderID[:]},
-					Action: &UpdateOrder_SetPaymentDetails{&fin},
-				},
-			})
+	var chosenIsErc20 = ZeroAddress.Cmp(commonChosenCurrency) != 0
+	if chosenIsErc20 {
+		w.erc20TokenAddr = &commonChosenCurrency
+	}
 
-		w.shopID = shopID
-		w.orderID = order.order.Id.Array()
-		w.paymentChosenAt = now()
-		w.purchaseAddr = paymentAddr
-		w.chainID = chosenCurrency.ChainID
-		w.lastBlockNo.SetInt64(int64(blockNo))
-		w.coinsTotal.Set(bigTotal)
-		w.paymentID = paymentID
-
-		var chosenIsErc20 = ZeroAddress.Cmp(chosenCurrency.Addr) != 0
-		if chosenIsErc20 {
-			w.erc20TokenAddr = &chosenCurrency.Addr
-		}
-
-		const insertPaymentWaiterQuery = `update payments set
+	const insertPaymentWaiterQuery = `update payments set
 
 paymentChosenAt = $3,
 purchaseAddr = $4,
@@ -1490,24 +1128,23 @@ chainId = $9
 WHERE shopId = $1
 AND orderId = $2`
 
-		_, err = r.syncTx.Exec(ctx, insertPaymentWaiterQuery,
-			// where
-			w.shopID[:],
-			w.orderID[:],
-			// set
-			w.paymentChosenAt,
-			w.purchaseAddr.Bytes(),
-			w.lastBlockNo,
-			w.coinsTotal,
-			w.erc20TokenAddr,
-			w.paymentID,
-			w.chainID)
-		check(err)
+	_, err = r.syncTx.Exec(ctx, insertPaymentWaiterQuery,
+		// where
+		w.shopID[:],
+		w.orderID[:],
+		// set
+		w.paymentChosenAt,
+		w.purchaseAddr.Bytes(),
+		w.lastBlockNo,
+		w.coinsTotal,
+		w.erc20TokenAddr,
+		w.paymentID,
+		w.chainID)
+	check(err)
 
-		logS(sessionID, "relay.orderPaymentChoiceOp.finish took=%d", took(start))
-		return nil
-	}
-*/
+	logS(sessionID, "relay.orderPaymentChoiceOp.finish took=%d", took(start))
+	return patches, nil
+}
 
 func (op *SubscriptionRequestOp) process(r *Relay) {
 	start := now()
@@ -1603,8 +1240,11 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 				// this includes updates to orders created by the relay or clerks
 				where = where + fmt.Sprintf(`AND (ps.createdByKeyCardId=%d OR (
 			ps.createdByShopId = '\x%x' AND
-ps.objectId in (select p.objectId from patchSets ps2 join patches p2 on p2.patchSetServerSeq = p2.serverSeq where ps2.objectType='order' and ps2.createdByKeyCardID=%d)
-)
+p.objectId in (select patch2.objectId 
+	from patchSets pset2
+	join patches patch2 on patch2.patchSetServerSeq = pset2.serverSeq
+	where patch2.objectType='order' and pset2.createdByKeyCardID=%d)
+	)
 )`, session.keyCardID, session.shopID, session.keyCardID)
 			}
 		}
@@ -1783,7 +1423,7 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 	check(err)
 
 	// emit new keycard event
-	r.createRelayPatch(shopID,
+	r.createRelayPatchSet(shopID,
 		patch.Patch{
 			Op: patch.AddOp,
 			Path: patch.PatchPath{
@@ -1799,119 +1439,149 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 	log("relay.KeyCardEnrolledOp.finish shopId=%d took=%d", shopDBID, took(start))
 }
 
-/*
-	func (op *OnchainActionInternalOp) process(r *Relay) {
-		assert(!op.shopID.Equal(zeroObjectIDArr))
-		assert(op.user.Cmp(ZeroAddress) != 0)
-		log("db.onchainActionInternalOp.start shopID=%x user=%s", op.shopID, op.user)
-		start := now()
+func (op *OnchainActionInternalOp) process(r *Relay) {
+	assert(!op.shopID.Equal(zeroObjectIDArr))
+	assert(op.user.Cmp(ZeroAddress) != 0)
+	log("db.onchainActionInternalOp.start shopID=%x user=%s", op.shopID, op.user)
+	start := now()
 
-		var action isAccount_Action
-		if op.add {
-			action = &Account_Add{
-				Add: &Account_OnchainAction{
-					AccountAddress: &EthereumAddress{
-						Raw: op.user.Bytes(),
-					},
-					Tx: &Hash{Raw: op.txHash.Bytes()},
-				},
-			}
-		} else {
-			action = &Account_Remove{
-				Remove: &Account_OnchainAction{
-					AccountAddress: &EthereumAddress{
-						Raw: op.user.Bytes(),
-					},
-					Tx: &Hash{Raw: op.txHash.Bytes()},
-				},
-			}
+	// TODO: we are not including the on-chain transactoin hash here yet
+
+	var user objects.EthereumAddress
+	copy(user[:], op.user.Bytes())
+	var action patch.OpString
+	var value []byte
+	if op.add {
+		action = patch.AddOp
+
+		account := objects.Account{
+			Guest:    false,
+			KeyCards: nil,
 		}
-
-		r.beginSyncTransaction()
-		r.hydrateShops(NewSetInts(op.shopID))
-		r.createRelayEvent(op.shopID,
-			&ShopEvent_Account{
-				&Account{
-					Action: action,
-				},
-			},
-		)
-		r.commitSyncTransaction()
-
-		log("db.onchainActionInternalOp.finish took=%d", took(start))
+		var err error
+		value, err = cbor.Marshal(account)
+		check(err)
+	} else {
+		action = patch.RemoveOp
 	}
 
-	func (op *PaymentFoundInternalOp) process(r *Relay) {
-		shopID := op.shopID
-		assert(!shopID.Equal(zeroObjectIDArr))
-		orderID := op.orderID
-		assert(!orderID.Equal(zeroObjectIDArr))
-		assert(op.blockHash != nil)
+	userPatch := patch.Patch{
+		Op: action,
+		Path: patch.PatchPath{
+			Type:        patch.ObjectTypeAccount,
+			AccountAddr: &user,
+		},
+		Value: value,
+	}
 
-		log("db.paymentFoundInternalOp.start shopID=%x orderID=%x", shopID, orderID)
-		start := now()
+	r.beginSyncTransaction()
+	r.hydrateShops(NewSetInts(op.shopID))
+	r.createRelayPatchSet(op.shopID, userPatch)
+	r.commitSyncTransaction()
 
-		order, has := r.ordersByOrderID.get(shopID, orderID)
-		assertWithMessage(has, fmt.Sprintf("order not found for orderId=%x", orderID))
+	log("db.onchainActionInternalOp.finish took=%d", took(start))
+}
 
-		r.beginSyncTransaction()
+func (op *PaymentFoundInternalOp) process(r *Relay) {
+	shopID := op.shopID
+	assert(!shopID.Equal(zeroObjectIDArr))
+	ordeDBID := op.orderID
+	assert(!ordeDBID.Equal(zeroObjectIDArr))
 
-		paid := &OrderTransaction{
-			BlockHash: op.blockHash,
-		}
-		var txHash, blockHash *[]byte // for sql
-		blockHash = &op.blockHash.Raw
-		if t := op.txHash; t != nil { // we only get the tx hash for non-internal tx's
-			paid.TxHash = t
-			txHash = &t.Raw
-		}
+	log("db.paymentFoundInternalOp.start shopID=%x orderID=%x", shopID, ordeDBID)
+	start := now()
 
-		const markOrderAsPayedQuery = `UPDATE payments SET
+	paid := &objects.OrderPaid{
+		BlockHash: objects.Hash(op.blockHash),
+	}
+	var txHash, blockHash *[]byte // for sql
+	bh := op.blockHash.Bytes()
+	blockHash = &bh
+	if t := op.txHash; t != nil { // we only get the tx hash for non-internal tx's
+		txHashBytes := t.Bytes()
+		txHash = &txHashBytes
+		paid.TxHash = &objects.Hash{}
+		copy(paid.TxHash[:], txHashBytes)
+	}
 
+	const markOrderAsPayedQuery = `UPDATE payments SET
 payedAt = NOW(),
 payedTx = $1,
 payedBlock = $2
 WHERE shopID = $3 and orderId = $4;`
+	commandTag, err := r.syncTx.Exec(context.Background(), markOrderAsPayedQuery, txHash, blockHash, op.shopID[:], op.orderID[:])
+	check(err)
+	// check that the command tag is 1 row affected
+	if commandTag.RowsAffected() != 1 {
+		log("db.paymentFoundInternalOp.error commandTag=%d", commandTag.RowsAffected())
+		close(op.done)
+		return
+	}
 
-		_, err := r.syncTx.Exec(context.Background(), markOrderAsPayedQuery, txHash, blockHash, op.shopID[:], op.orderID[:])
-		check(err)
+	r.beginSyncTransaction()
+	r.hydrateShops(NewSetInts(shopID))
 
-		r.hydrateShops(NewSetInts(shopID))
+	shopState := r.shopIDsToShopState.MustGet(shopID).data
 
-		// emit changeInventory events for each item
-		order.items.All(func(cid combinedID, quantity uint32) bool {
-			assert(quantity < math.MaxInt32)
-			varIDArrs := cid.Variations()
-			varIDs := make([]*ObjectId, len(varIDArrs))
-			for i, v := range varIDArrs {
-				varIDs[i] = &ObjectId{Raw: v[:]}
-			}
-			r.createRelayEvent(shopID, &ShopEvent_ChangeInventory{
-				&ChangeInventory{
-					Id:           &ObjectId{Raw: cid.listingID[:]},
-					VariationIds: varIDs,
-					Diff:         -int32(quantity),
-				},
-			})
-			return false
+	order, has := shopState.Orders.Get(ordeDBID.Uint64())
+	assertWithMessage(has, fmt.Sprintf("order not found for orderId=%x", ordeDBID))
+
+	var inventoryPatches []patch.Patch
+	// emit inventory decrement patches for each item
+	for _, item := range order.Items {
+		// Create a patch to decrement inventory for each item
+		listingID := item.ListingID
+
+		// Prepare the patch path with variations in the fields
+		patchPath := patch.PatchPath{
+			Type:     patch.ObjectTypeInventory,
+			ObjectID: &listingID,
+			Fields:   item.VariationIDs,
+		}
+
+		// Create the decrement patch
+		inventoryPatches = append(inventoryPatches, patch.Patch{
+			Path:  patchPath,
+			Op:    patch.DecrementOp,
+			Value: []byte{byte(item.Quantity)}, // Decrement by the item quantity
+		})
+	}
+
+	orderID := objects.ObjectId(ordeDBID.Uint64())
+
+	paidBytes, err := cbor.Marshal(paid)
+	check(err)
+
+	// TODO: only once
+	orderStateBytes, err := cbor.Marshal(objects.OrderStatePaid)
+	check(err)
+
+	inventoryPatches = append(inventoryPatches,
+		patch.Patch{
+			Op: patch.AddOp,
+			Path: patch.PatchPath{
+				Type:     patch.ObjectTypeOrder,
+				ObjectID: &orderID,
+				Fields:   []string{"txDetails"},
+			},
+			Value: paidBytes,
+		},
+		patch.Patch{
+			Op: patch.ReplaceOp,
+			Path: patch.PatchPath{
+				Type:     patch.ObjectTypeOrder,
+				ObjectID: &orderID,
+				Fields:   []string{"state"},
+			},
+			Value: orderStateBytes,
 		})
 
-		r.createRelayEvent(shopID,
-			&ShopEvent_UpdateOrder{
-				&UpdateOrder{
-					Id: &ObjectId{Raw: orderID[:]},
-					Action: &UpdateOrder_AddPaymentTx{
-						paid,
-					},
-				},
-			},
-		)
+	r.createRelayPatchSet(shopID, inventoryPatches...)
 
-		r.commitSyncTransaction()
-		log("db.paymentFoundInternalOp.finish orderID=%x took=%d", orderID, took(start))
-		close(op.done)
-	}
-*/
+	r.commitSyncTransaction()
+	log("db.paymentFoundInternalOp.finish orderID=%x took=%d", ordeDBID, took(start))
+	close(op.done)
+}
 
 func (op *EventLoopPingInternalOp) process(_ *Relay) {
 	close(op.done)

@@ -1,6 +1,3 @@
-//go:build ignore
-// +build ignore
-
 // SPDX-FileCopyrightText: 2024 - 2025 Mass Labs
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -252,14 +249,11 @@ watch:
 			orderID := order.orderID
 			log("watcher.subscribeFilterLogsPaymentsMade.found orderId=%x txHash=%x", orderID, vLog.TxHash)
 
-			_, has := r.ordersByOrderID.get(order.shopID, orderID)
-			assertWithMessage(has, fmt.Sprintf("order not found for orderId=%x", orderID))
-
 			op := PaymentFoundInternalOp{
 				shopID:    order.shopID,
 				orderID:   order.orderID,
-				txHash:    &Hash{Raw: vLog.TxHash.Bytes()},
-				blockHash: &Hash{Raw: vLog.BlockHash.Bytes()},
+				txHash:    &vLog.TxHash,
+				blockHash: vLog.BlockHash,
 				done:      make(chan struct{}),
 			}
 			r.opsInternal <- &op
@@ -331,12 +325,6 @@ func (r *Relay) subscribeFilterLogsERC20Transfers(geth *ethClient) error {
 }
 
 func (r *Relay) processERC20Transfer(geth *ethClient, order PaymentWaiter, vLog types.Log) error {
-
-	_, has := r.ordersByOrderID.get(order.shopID, order.orderID)
-	if !has {
-		return fmt.Errorf("order not found for orderId=%x", order.orderID)
-	}
-
 	evts, err := geth.erc20ContractABI.Unpack("Transfer", vLog.Data)
 	if err != nil {
 		return fmt.Errorf("failedToUnpackTransfer tx=%s err=%s", vLog.TxHash.Hex(), err)
@@ -355,8 +343,8 @@ func (r *Relay) processERC20Transfer(geth *ethClient, order PaymentWaiter, vLog 
 		op := PaymentFoundInternalOp{
 			shopID:    order.shopID,
 			orderID:   order.orderID,
-			txHash:    &Hash{Raw: vLog.TxHash.Bytes()},
-			blockHash: &Hash{Raw: vLog.BlockHash.Bytes()},
+			txHash:    &vLog.TxHash,
+			blockHash: vLog.BlockHash,
 			done:      make(chan struct{}),
 		}
 		r.opsInternal <- &op
@@ -420,13 +408,11 @@ func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
 
 				debug("watcher.subscribeNewHeadsForEther.checkTx checkingBlock=%s to=%s", newHead.Hash().Hex(), addr.Hex())
 				orderID := order.orderID
-				_, has := r.ordersByOrderID.get(order.shopID, orderID)
-				assertWithMessage(has, fmt.Sprintf("order not found for orderId=%x", orderID))
 
 				op := PaymentFoundInternalOp{
 					shopID:    order.shopID,
 					orderID:   order.orderID,
-					blockHash: &Hash{Raw: newHead.Hash().Bytes()},
+					blockHash: newHead.Hash(),
 					done:      make(chan struct{}),
 				}
 				r.opsInternal <- &op

@@ -33,16 +33,10 @@ func NewObjectIDArray(obj uint64) ObjectIDArray {
 	return arr
 }
 
-// // Uint64 converts the ObjectId to a uint64
-// func (obj *ObjectId) Uint64() uint64 {
-// 	assert(len(obj.Raw) == 8)
-// 	return binary.BigEndian.Uint64(obj.Raw)
-// }
-
-// // Equal checks if two ObjectIds are equal
-// func (obj *ObjectId) Equal(other *ObjectId) bool {
-// 	return bytes.Equal(obj.Raw, other.Raw)
-// }
+// Uint64 converts the ObjectId to a uint64
+func (obj ObjectIDArray) Uint64() uint64 {
+	return binary.BigEndian.Uint64(obj[:])
+}
 
 // Equal checks if two ObjectIDArrays are equal
 func (obj ObjectIDArray) Equal(other ObjectIDArray) bool {

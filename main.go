@@ -27,6 +27,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
+	"github.com/ssgreg/repeat"
 )
 
 // set via ldflags during build
@@ -295,68 +296,67 @@ func server() {
 
 	// spawn on-chain watchers
 
-	/*
-		type watcher struct {
-			name string
-			fn   func(*ethClient) error
+	type watcher struct {
+		name string
+		fn   func(*ethClient) error
+	}
+	var (
+		fns = []watcher{
+			{"paymentMade", r.subscribeFilterLogsPaymentsMade},
+			{"erc20", r.subscribeFilterLogsERC20Transfers},
+			{"vanilla-eth", r.subscribeNewHeadsForEther},
 		}
-		var (
-			fns = []watcher{
-				{"paymentMade", r.subscribeFilterLogsPaymentsMade},
-				{"erc20", r.subscribeFilterLogsERC20Transfers},
-				{"vanilla-eth", r.subscribeNewHeadsForEther},
-			}
+	)
+
+	delay := repeat.FullJitterBackoff(250 * time.Millisecond)
+	delay.MaxDelay = ethereumBlockInterval
+
+	// onchain accounts only need to happen on the chain where the shop registry contract is hosted
+	go func() {
+		defer sentryRecover()
+		chainID := r.ethereum.registryChainID
+		geth, has := r.ethereum.chains[chainID]
+		assert(has)
+
+		countError := repeat.FnOnError(repeat.FnES(func(err error) {
+			log("watcher.error name=onchain-accounts chainId=%d err=%s", chainID, err)
+			r.metric.counterAdd("relay_watchError_error", 1)
+		}))
+
+		err := repeat.Repeat(
+			repeat.Fn(func() error {
+				return r.subscribeAccountEvents(geth)
+			}),
+			repeat.WithDelay(delay.Set()),
+			countError,
 		)
+		panic(err) // TODO: panic reporting
+	}()
 
-		delay := repeat.FullJitterBackoff(250 * time.Millisecond)
-		delay.MaxDelay = ethereumBlockInterval
+	for _, geth := range r.ethereum.chains {
+		for _, w := range fns {
+			go func(w watcher, c *ethClient) {
+				defer sentryRecover()
+				log("watcher.spawned name=%s chainId=%d", w.name, c.chainID)
 
-		// onchain accounts only need to happen on the chain where the shop registry contract is hosted
-		go func() {
-			defer sentryRecover()
-			chainID := r.ethereum.registryChainID
-			geth, has := r.ethereum.chains[chainID]
-			assert(has)
-
-			countError := repeat.FnOnError(repeat.FnES(func(err error) {
-				log("watcher.error name=onchain-accounts chainId=%d err=%s", chainID, err)
-				r.metric.counterAdd("relay_watchError_error", 1)
-			}))
-
-			err := repeat.Repeat(
-				repeat.Fn(func() error {
-					return r.subscribeAccountEvents(geth)
-				}),
-				repeat.WithDelay(delay.Set()),
-				countError,
-			)
-			panic(err) // TODO: panic reporting
-		}()
-
-		for _, geth := range r.ethereum.chains {
-			for _, w := range fns {
-				go func(w watcher, c *ethClient) {
-					defer sentryRecover()
-					log("watcher.spawned name=%s chainId=%d", w.name, c.chainID)
-
-					countError := repeat.FnOnError(repeat.FnES(func(err error) {
-						log("watcher.error name=%s chainId=%d err=%s", w.name, c.chainID, err)
-						r.metric.counterAdd("relay_watchError_error", 1)
-					}))
-					waitForNextBlock := repeat.FnOnSuccess(repeat.FnS(func() {
-						log("watcher.success name=%s chainId=%d", w.name, c.chainID)
-					}))
-					err := repeat.Repeat(
-						repeat.Fn(func() error { return w.fn(c) }),
-						waitForNextBlock,
-						countError,
-						repeat.WithDelay(delay.Set()),
-					)
-					panic(err) // TODO: panic reporting
-				}(w, geth)
-			}
+				countError := repeat.FnOnError(repeat.FnES(func(err error) {
+					log("watcher.error name=%s chainId=%d err=%s", w.name, c.chainID, err)
+					r.metric.counterAdd("relay_watchError_error", 1)
+				}))
+				waitForNextBlock := repeat.FnOnSuccess(repeat.FnS(func() {
+					log("watcher.success name=%s chainId=%d", w.name, c.chainID)
+				}))
+				err := repeat.Repeat(
+					repeat.Fn(func() error { return w.fn(c) }),
+					waitForNextBlock,
+					countError,
+					repeat.WithDelay(delay.Set()),
+				)
+				panic(err) // TODO: panic reporting
+			}(w, geth)
 		}
-	*/
+	}
+
 	// open metrics and pprof after relay & ethclient booted
 	openPProfEndpoint()
 	go metric.connect()

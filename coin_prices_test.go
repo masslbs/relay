@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/masslbs/network-schema/go/objects"
 	tassert "github.com/stretchr/testify/assert"
 )
 
@@ -45,8 +46,8 @@ func TestCoinGeckoERC20(t *testing.T) {
 	eth := newEthRPCService(nil)
 	cg := newCoinGecko(demoKey, "usd", eth)
 
-	usdt := cachedShopCurrency{
-		Addr:    common.HexToAddress("0xdac17f958d2ee523a2206206994597c13d831ec7"),
+	usdt := objects.ChainAddress{
+		Address: objects.EthereumAddress(common.HexToAddress("0xdac17f958d2ee523a2206206994597c13d831ec7")),
 		ChainID: 1,
 	}
 	price, err := cg.GetERC20Price(usdt)
@@ -69,12 +70,12 @@ func TestCoinGeckoConvertErc20ToErc20(t *testing.T) {
 	})
 	cg := newCoinGecko(demoKey, "usd", eth)
 
-	usdc := cachedShopCurrency{
-		Addr:    common.HexToAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+	usdc := objects.ChainAddress{
+		Address: objects.EthereumAddress(common.HexToAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")),
 		ChainID: 1,
 	}
-	matic := cachedShopCurrency{
-		Addr:    common.HexToAddress("0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0"),
+	matic := objects.ChainAddress{
+		Address: objects.EthereumAddress(common.HexToAddress("0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0")),
 		ChainID: 1,
 	}
 
@@ -100,12 +101,12 @@ func TestCoinGeckoConvertCoinToErc20(t *testing.T) {
 	})
 	cg := newCoinGecko(demoKey, "usd", e)
 
-	eth := cachedShopCurrency{
-		Addr:    ZeroAddress,
+	eth := objects.ChainAddress{
+		Address: objects.EthereumAddress(ZeroAddress),
 		ChainID: 1,
 	}
-	usdt := cachedShopCurrency{
-		Addr:    common.HexToAddress("0xdac17f958d2ee523a2206206994597c13d831ec7"),
+	usdt := objects.ChainAddress{
+		Address: objects.EthereumAddress(common.HexToAddress("0xdac17f958d2ee523a2206206994597c13d831ec7")),
 		ChainID: 1,
 	}
 
@@ -133,12 +134,12 @@ func TestCoinGeckoConvertERC20ToCoin(t *testing.T) {
 	})
 	cg := newCoinGecko(demoKey, "usd", e)
 
-	op := cachedShopCurrency{
-		Addr:    common.HexToAddress("0x4200000000000000000000000000000000000042"),
+	op := objects.ChainAddress{
+		Address: objects.EthereumAddress(common.HexToAddress("0x4200000000000000000000000000000000000042")),
 		ChainID: 10,
 	}
-	eth := cachedShopCurrency{
-		Addr:    ZeroAddress,
+	eth := objects.ChainAddress{
+		Address: objects.EthereumAddress(ZeroAddress),
 		ChainID: 1,
 	}
 

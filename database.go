@@ -17,8 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/go-playground/validator/v10"
+	clone "github.com/huandu/go-clone/generic"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/time/rate"
@@ -88,28 +88,6 @@ func newMetadata(keyCardID keyCardID, shopID ObjectIDArray, version uint16) Cach
 	metadata.createdByNetworkVersion = version
 	return metadata
 }
-
-// TODO: move
-
-// comparable type, usable for map keys
-type cachedShopCurrency struct {
-	Addr    common.Address
-	ChainID uint64
-}
-
-func newCachedShopCurrency(sc *objects.ChainAddress) cachedShopCurrency {
-	assert(sc.ChainID != 0)
-	return cachedShopCurrency{
-		Addr:    common.Address(sc.Address),
-		ChainID: sc.ChainID,
-	}
-}
-
-func (a cachedShopCurrency) Equal(b cachedShopCurrency) bool {
-	return a.ChainID == b.ChainID && a.Addr.Cmp(b.Addr) == 0
-}
-
-type cachedCurrenciesMap map[cachedShopCurrency]struct{}
 
 // ShopState helps with writing events to the database
 type ShopState struct {
@@ -525,10 +503,9 @@ func (r *Relay) queuePatchSet(cm CachedMetadata, pset *patch.SignedPatchSet, hea
 		proofs:         proofs,
 	}
 	r.queuedPatchSetInserts = append(r.queuedPatchSetInserts, insert)
-	// r.applyEvent(insert)
 }
 
-func (r *Relay) createRelayPatch(shopID ObjectIDArray, p patch.Patch) {
+func (r *Relay) createRelayPatchSet(shopID ObjectIDArray, patches ...patch.Patch) {
 	shopState := r.shopIDsToShopState.MustGet(shopID)
 	header := &patch.PatchSetHeader{
 		KeyCardNonce: shopState.nextRelayEventNonce(),
@@ -536,8 +513,6 @@ func (r *Relay) createRelayPatch(shopID ObjectIDArray, p patch.Patch) {
 		Timestamp:    time.Now(),
 	}
 
-	var patches []patch.Patch
-	patches = append(patches, p)
 	var err error
 	rootHash, tree, err := patch.RootHash(patches)
 	check(err)
@@ -578,8 +553,28 @@ func (r *Relay) beginSyncTransaction() {
 func (r *Relay) commitSyncTransaction() {
 	assert(r.queuedPatchSetInserts != nil)
 	assert(r.syncTx != nil)
-	ctx := context.Background()
 	r.flushPatchSets()
+	for _, insert := range r.queuedPatchSetInserts {
+		if insert.writtenByRelay {
+			shopState := r.shopIDsToShopState.MustGet(insert.createdByShopID)
+			proposal := clone.Clone(shopState.data)
+			for i, p := range insert.pset.Patches {
+				patcher := patch.NewPatcher(r.validator, proposal)
+				if err := patcher.ApplyPatch(p); err != nil {
+					log("relay.commitSyncTransaction.applyPatchFailed shopID=%x serverSeq=%d patch=%d err=%s",
+						insert.createdByShopID,
+						insert.serverSeq,
+						i,
+						err,
+					)
+					check(err)
+					return
+				}
+			}
+			shopState.data = proposal
+		}
+	}
+	ctx := context.Background()
 	check(r.syncTx.Commit(ctx))
 	r.queuedPatchSetInserts = nil
 	r.syncTx = nil

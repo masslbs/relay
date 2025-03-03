@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -200,8 +201,9 @@ func ipfsCatHandleFunc() func(http.ResponseWriter, *http.Request) {
 }
 
 type savedItem struct {
-	cid       combinedID
-	versioned ipfsPath.ImmutablePath
+	cid      combinedID
+	cborHash [32]byte
+	ipfs     ipfsPath.ImmutablePath
 }
 
 type listingSnapshotter struct {
@@ -247,15 +249,19 @@ func (ls *listingSnapshotter) save(cid combinedID, item *objects.Listing) {
 		}
 
 		// TODO: wait with pinning until after the item was sold..?
-		pinKey := fmt.Sprintf("shop-%x-item-%x", ls.shopID, item.ID)
+		pinKey := fmt.Sprintf("shop-%x-item-%d", ls.shopID, item.ID)
 		if !isDevEnv {
 			_, err = pinataPin(uploadedCid, pinKey)
 			if err != nil {
-				return fmt.Errorf("mkSnapshot.pinataFail item=%x err=%s", item.ID, err)
+				log("relay.mkSnapshot.pinataFail item=%x err=%s", item.ID, err)
 			}
 		}
 
-		ls.items <- savedItem{cid, uploadedCid}
+		ls.items <- savedItem{
+			cid:      cid,
+			cborHash: sha256.Sum256(data),
+			ipfs:     uploadedCid,
+		}
 
 		log("relay.mkSnapshot item=%s bytes=%d path=%s", pinKey, len(data), uploadedCid)
 		ls.metric.counterAdd("listing_snapshot", 1)
