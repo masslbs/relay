@@ -1336,8 +1336,6 @@ p.objectId in (select distinct patch2.objectId
 		subscription.whereFragment = strings.Join(wheres, " OR ")
 	}
 
-	logSR("relay.subscriptionRequestOp.whereFragment whereFragment=%s guest=%t", sessionID, requestID, subscription.whereFragment, session.keyCardOfAGuest)
-
 	if n := len(verifyOrderIDs); n > 0 {
 		// check that all orders belong to the same person
 		var count int

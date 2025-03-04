@@ -594,12 +594,13 @@ func (lookup *paymentIDandAddressEthLookup) process(client *ethClient) {
 		return
 	}
 
-	paymentID, err := paymentsContract.GetPaymentId(callOpts, *lookup.paymentReq)
+	paymentID, err := GetPaymentId(*lookup.paymentReq)
 	if err != nil {
-		lookup.closeWithError(fmt.Errorf("failed to retreive paymentID: %w", err))
+		lookup.closeWithError(fmt.Errorf("failed to get paymentID: %w", err))
 		return
 	}
 
+	// TODO: this is call is bit more involved, since we need the bytecode of the to be deployed contract
 	purchaseAddr, err := paymentsContract.GetPaymentAddress(callOpts, *lookup.paymentReq, lookup.fallback)
 	if err != nil {
 		lookup.closeWithError(fmt.Errorf("failed to retreive paymentAddr: %w", err))

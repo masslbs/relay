@@ -7,11 +7,13 @@ package main
 import (
 	"crypto/ecdsa"
 	"fmt"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/masslbs/network-schema/go/objects"
+	contractsabi "github.com/masslbs/relay/internal/contractabis"
 )
 
 func ecrecoverEIP191(message, signature []byte) (*ecdsa.PublicKey, error) {
@@ -81,4 +83,23 @@ func signEIP191(evtData []byte, secret *ecdsa.PrivateKey) (*objects.Signature, e
 	}
 	wrapped := objects.Signature(signature)
 	return &wrapped, nil
+}
+
+func GetPaymentId(payment contractsabi.PaymentRequest) (*big.Int, error) {
+	genabi, err := contractsabi.PaymentsByAddressMetaData.GetAbi()
+	if err != nil {
+		return nil, fmt.Errorf("GetPaymentId failed to construct ABI: %w", err)
+	}
+
+	encoded, err := genabi.Pack("getPaymentId", payment)
+	if err != nil {
+		return nil, fmt.Errorf("GetPaymentId failed to pack arguments: %w", err)
+	}
+
+	// take of the first 4 bytes (method id)
+	encoded = encoded[4:]
+	// fmt.Printf("encoded: %x\n", encoded)
+
+	hash := crypto.Keccak256(encoded)
+	return new(big.Int).SetBytes(hash), nil
 }
