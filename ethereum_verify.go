@@ -64,7 +64,7 @@ func verifyChallengeResponse(publicKey, challange, signature []byte) error {
 }
 
 // VerifyPatchSetSignature verifies the signature of the event
-func VerifyPatchSetSignature(op *EventWriteOp, publicKey []byte) error {
+func VerifyPatchSetSignature(op *PatchSetWriteOp, publicKey []byte) error {
 	// log("DEBUG.verifyPatchSetSignature headerBytes=%x", headerBytes)
 	return ecrecoverEIP191AndCompare(op.headerData, op.decoded.Signature[:], publicKey)
 }

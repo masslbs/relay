@@ -81,8 +81,8 @@ type SyncStatusOp struct {
 	unpushedPatches uint64
 }
 
-// EventWriteOp processes a write of an event to the database
-type EventWriteOp struct {
+// PatchSetWriteOp processes a write of an event to the database
+type PatchSetWriteOp struct {
 	sessionID sessionID
 	requestID *pb.RequestId
 	im        *pb.PatchSetWriteRequest
@@ -230,7 +230,7 @@ func (op *GetBlobUploadURLOp) handle(sess *Session) {
 	sess.writeResponse(op.requestID, resp)
 }
 
-func (op *EventWriteOp) handle(sess *Session) {
+func (op *PatchSetWriteOp) handle(sess *Session) {
 	om := newGenericResponse(op.err)
 	if op.err == nil {
 		om.Response = &pb.Envelope_GenericResponse_Payload{
@@ -305,9 +305,10 @@ func (op *StartOp) process(r *Relay) {
 	assert(op.sessionOps != nil)
 	logS(op.sessionID, "relay.startOp.start")
 	sessionState := &SessionState{
-		version:       op.sessionVersion,
-		sessionOps:    op.sessionOps,
-		subscriptions: make(map[uint16]*SubscriptionState),
+		keyCardOfAGuest: true,
+		version:         op.sessionVersion,
+		sessionOps:      op.sessionOps,
+		subscriptions:   make(map[uint16]*SubscriptionState),
 	}
 	r.sessionIDsToSessionStates.Set(op.sessionID, sessionState)
 	r.lastSeenAtTouch(sessionState)
@@ -458,11 +459,7 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 		panic(err)
 	} else if dbUnlinkedAt != nil {
 		logS(op.sessionID, "relay.challengeSolvedOp.unlinkedDevice")
-		if sessionState.version >= 8 {
-			op.err = unlinkedKeyCardError
-		} else {
-			op.err = notFoundError
-		}
+		op.err = unlinkedKeyCardError
 		r.sendSessionOp(sessionState, op)
 		return
 	}
@@ -484,22 +481,22 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 	logS(op.sessionID, "relay.challengeSolvedOp.finish elapsed=%d", took(challengeSolvedOpStart))
 }
 
-func (op *EventWriteOp) process(r *Relay) {
+func (op *PatchSetWriteOp) process(r *Relay) {
 	ctx := context.Background()
 	sessionID := op.sessionID
 	requestID := op.requestID.Raw
 	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
 	if sessionState == nil {
-		logSR("relay.eventWriteOp.drain", sessionID, requestID)
+		logSR("relay.patchSetWriteOp.drain", sessionID, requestID)
 		return
 	} else if sessionState.shopID.Equal(zeroObjectIDArr) {
-		logSR("relay.eventWriteOp.notAuthenticated", sessionID, requestID)
+		logSR("relay.patchSetWriteOp.notAuthenticated", sessionID, requestID)
 		op.err = notAuthenticatedError
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 	start := now()
-	logSR("relay.eventWriteOp.process", sessionID, requestID)
+	logSR("relay.patchSetWriteOp.process", sessionID, requestID)
 	r.lastSeenAtTouch(sessionState)
 
 	// check nonce reuse
@@ -509,7 +506,7 @@ func (op *EventWriteOp) process(r *Relay) {
 	err := r.connPool.QueryRow(ctx, maxNonceQry, sessionState.shopID[:], sessionState.keyCardID).Scan(&writtenNonce)
 	check(err)
 	if writtenNonce != nil && *writtenNonce >= usedNonce {
-		logSR("relay.eventWriteOp.nonceReuse keyCard=%d written=%d new=%d", sessionID, requestID, sessionState.keyCardID, *writtenNonce, usedNonce)
+		logSR("relay.patchSetWriteOp.nonceReuse keyCard=%d written=%d new=%d", sessionID, requestID, sessionState.keyCardID, *writtenNonce, usedNonce)
 		op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "event nonce re-use"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -517,7 +514,7 @@ func (op *EventWriteOp) process(r *Relay) {
 
 	// check signature
 	if err := VerifyPatchSetSignature(op, sessionState.keyCardPublicKey); err != nil {
-		logSR("relay.eventWriteOp.verifySignatureFailed err=%s", sessionID, requestID, err.Error())
+		logSR("relay.patchSetWriteOp.verifySignatureFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid signature"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -542,7 +539,7 @@ func (op *EventWriteOp) process(r *Relay) {
 		// TODO: check who is allowed to write to which patch.path
 		if sessionState.keyCardOfAGuest {
 			if p.Path.Type != patch.ObjectTypeOrder {
-				logSR("relay.eventWriteOp.guestKeycardWriteNotAllowed path=%+v", sessionID, requestID, p.Path)
+				logSR("relay.patchSetWriteOp.guestKeycardWriteNotAllowed path=%+v", sessionID, requestID, p.Path)
 				op.err = &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: "not allowed"}
 				r.sendSessionOp(sessionState, op)
 				return
@@ -552,7 +549,7 @@ func (op *EventWriteOp) process(r *Relay) {
 
 		// change proposedshop state
 		if err := patcher.ApplyPatch(p); err != nil {
-			logSR("relay.eventWriteOp.applyPatchFailed patch=%d err=%s errType=%T", sessionID, requestID, i, err.Error(), err)
+			logSR("relay.patchSetWriteOp.applyPatchFailed patch=%d err=%s errType=%T", sessionID, requestID, i, err.Error(), err)
 			var notFoundError patch.ObjectNotFoundError
 			var outOfStockError patch.OutOfStockError
 			if errors.As(err, &notFoundError) {
@@ -575,7 +572,7 @@ func (op *EventWriteOp) process(r *Relay) {
 			relayPatches = append(relayPatches, patches...)
 		}
 		if isOrderStateCommited(p) {
-			err := r.processOrderItemsCommitment(sessionID, p)
+			err := r.processOrderItemsCommitment(sessionID, proposal, p)
 			if err != nil {
 				op.err = err
 				r.sendSessionOp(sessionState, op)
@@ -610,7 +607,7 @@ func (op *EventWriteOp) process(r *Relay) {
 	// compute resulting hash
 	op.newShopHash, err = shopState.data.Hash()
 	if err != nil {
-		logSR("relay.eventWriteOp.hashFailed err=%s", sessionID, requestID, err.Error())
+		logSR("relay.patchSetWriteOp.hashFailed err=%s", sessionID, requestID, err.Error())
 		op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to hash shop state"}
 		r.sendSessionOp(sessionState, op)
 		return
@@ -618,7 +615,7 @@ func (op *EventWriteOp) process(r *Relay) {
 	r.commitSyncTransaction()
 
 	r.sendSessionOp(sessionState, op)
-	logSR("relay.eventWriteOp.finish new_events=%d took=%d", sessionID, requestID, setCount, took(start))
+	logSR("relay.patchSetWriteOp.finish new_events=%d took=%d", sessionID, requestID, setCount, took(start))
 }
 
 // isListingVariationRemoved returns true if the patch is a variation removal (either option or variation)
@@ -760,10 +757,10 @@ func isOrderStateCommited(p patch.Patch) bool {
 	if err := cbor.Unmarshal(p.Value, &orderState); err != nil {
 		return false
 	}
-	return orderState == objects.OrderStateCommited
+	return orderState == objects.OrderStateCommitted
 }
 
-func (r *Relay) processOrderItemsCommitment(sessionID sessionID, p patch.Patch) *pb.Error {
+func (r *Relay) processOrderItemsCommitment(sessionID sessionID, shop *objects.Shop, p patch.Patch) *pb.Error {
 	start := now()
 	ctx := context.Background()
 	sessionState := r.sessionIDsToSessionStates.MustGet(sessionID)
@@ -774,7 +771,6 @@ func (r *Relay) processOrderItemsCommitment(sessionID sessionID, p patch.Patch) 
 	// load related data
 	// this shop state is the prior state to the patch
 	// we destil the needed change from the passed patch
-	shop := r.shopIDsToShopState.MustGet(sessionState.shopID).data
 	order, has := shop.Orders.Get(orderID)
 	assert(has)
 
@@ -858,6 +854,7 @@ where shopId = $1
 	return nil
 }
 
+// TODO: we might want to introduce another state..?
 func isOrderStatePaymentChoice(p patch.Patch) bool {
 	if !(p.Path.Type == patch.ObjectTypeOrder &&
 		len(p.Path.Fields) == 1 &&
@@ -1157,6 +1154,13 @@ AND orderId = $2`
 	return patches, nil
 }
 
+var publicDefaultFilters = []*pb.SubscriptionRequest_Filter{
+	{ObjectType: pb.ObjectType_OBJECT_TYPE_MANIFEST},
+	{ObjectType: pb.ObjectType_OBJECT_TYPE_ACCOUNT},
+	{ObjectType: pb.ObjectType_OBJECT_TYPE_TAG},
+	{ObjectType: pb.ObjectType_OBJECT_TYPE_LISTING},
+}
+
 func (op *SubscriptionRequestOp) process(r *Relay) {
 	start := now()
 	ctx := context.Background()
@@ -1199,6 +1203,19 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 
 	subscription.initialStatus = false
 	subscription.nextPushIndex = 0
+
+	// enforce public default filters for guest users
+	if len(op.im.Filters) == 0 && session.keyCardOfAGuest {
+		if session.shopID.Equal(zeroObjectIDArr) { // not enrolled with a keycard
+			op.im.Filters = publicDefaultFilters
+		} else {
+			op.im.Filters = append(publicDefaultFilters,
+				&pb.SubscriptionRequest_Filter{
+					ObjectType: pb.ObjectType_OBJECT_TYPE_ORDER},
+			)
+		}
+	}
+
 	// Build WHERE fragment used for pushing events
 	var wheres []string
 	for _, filter := range op.im.Filters {
@@ -1249,26 +1266,37 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 			if session.keyCardOfAGuest {
 				// we need to include all orders created by the guest
 				// this includes updates to orders created by the relay or clerks
-				where = where + fmt.Sprintf(`AND (ps.createdByKeyCardId=%d OR (
-			ps.createdByShopId = '\x%x' AND
-p.objectId in (select patch2.objectId 
+				where = fmt.Sprintf(`(%s AND (ps.createdByKeyCardId=%d OR (
+p.objectId in (select distinct patch2.objectId 
 	from patchSets pset2
 	join patches patch2 on patch2.patchSetServerSeq = pset2.serverSeq
 	where patch2.objectType='order' and pset2.createdByKeyCardID=%d)
 	)
-)`, session.keyCardID, session.shopID, session.keyCardID)
+)
+)`, where, session.keyCardID, session.keyCardID)
 			}
 		}
 
 		// Add object ID constraint if provided
 		if id := filter.ObjectId; id != nil {
-			where = "(" + where + fmt.Sprintf(" AND objectId = '\\x%x')", id.Raw)
+			where = "(" + where + fmt.Sprintf(" AND p.objectId = '\\x%x')", id.Raw)
 		}
 		wheres = append(wheres, where)
 	}
 
-	// Combine all WHERE clauses with OR
-	subscription.whereFragment = strings.Join(wheres, " OR ")
+	if len(wheres) == 0 {
+		if session.keyCardOfAGuest {
+			logSR("relay.subscriptionRequestOp.noFilters", sessionID, requestID)
+			op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "no filters"}
+			r.sendSessionOp(session, op)
+			return
+		}
+		subscription.whereFragment = "True"
+	} else {
+		subscription.whereFragment = strings.Join(wheres, " OR ")
+	}
+
+	logSR("relay.subscriptionRequestOp.whereFragment whereFragment=%s guest=%t", sessionID, requestID, subscription.whereFragment, session.keyCardOfAGuest)
 
 	if n := len(verifyOrderIDs); n > 0 {
 		// check that all orders belong to the same person
@@ -1421,16 +1449,21 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 		}
 		check(err)
 	}
-
-	// TODO: check if account already exists
-	// if it does we need to append the keycard to the list instead
-	account := objects.Account{
-		Guest: false,
-		KeyCards: []objects.PublicKey{
-			op.keyCardPublicKey,
-		},
+	var value interface{}
+	var fields []string
+	_, has := r.shopIDsToShopState.MustGet(shopID).data.Accounts.Get(op.userWallet[:])
+	if has {
+		value = op.keyCardPublicKey
+		fields = []string{"keycards", "-"}
+	} else {
+		value = objects.Account{
+			Guest: op.keyCardIsGuest,
+			KeyCards: []objects.PublicKey{
+				op.keyCardPublicKey,
+			},
+		}
 	}
-	accountBytes, err := cbor.Marshal(account)
+	valueBytes, err := cbor.Marshal(value)
 	check(err)
 
 	// emit new keycard event
@@ -1440,8 +1473,9 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 			Path: patch.PatchPath{
 				Type:        patch.ObjectTypeAccount,
 				AccountAddr: &op.userWallet,
+				Fields:      fields,
 			},
-			Value: accountBytes,
+			Value: valueBytes,
 		},
 	)
 
@@ -1520,7 +1554,7 @@ payedAt = NOW(),
 payedTx = $1,
 payedBlock = $2
 WHERE shopID = $3 and orderId = $4;`
-	commandTag, err := r.syncTx.Exec(context.Background(), markOrderAsPayedQuery, txHash, blockHash, op.shopID[:], op.orderID[:])
+	commandTag, err := r.connPool.Exec(context.Background(), markOrderAsPayedQuery, txHash, blockHash, op.shopID[:], op.orderID[:])
 	check(err)
 	// check that the command tag is 1 row affected
 	if commandTag.RowsAffected() != 1 {

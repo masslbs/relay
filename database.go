@@ -823,7 +823,7 @@ func (r *Relay) pushOutShopLog(sessionID sessionID, session *SessionState, subID
 	if writesNotBuffered && readsAllowed > 0 {
 		readStart := now()
 		reads := 0
-		// Index: events(shopId, shopSeq)
+		// Index: patchSets(createdByShopId, shopSeq) on patches(patchsetServerSeq)
 		query := `select ps.shopSeq, ps.header, ps.signature, p.encoded, p.mmrProof
 				from patchSets ps
 				right join patches p on p.patchsetServerSeq = ps.serverSeq
@@ -843,7 +843,7 @@ func (r *Relay) pushOutShopLog(sessionID sessionID, session *SessionState, subID
 
 			pushStates.acked = false
 			sub.buffer = append(sub.buffer, pushStates)
-			logS(sessionID, "relay.debounceSessions.debug bufferLen=%d lastBufferedSeq=%d pushStates.shopSeq=%d", len(sub.buffer), sub.lastBufferedSeq, pushStates.shopSeq)
+			// logS(sessionID, "relay.debounceSessions.debug bufferLen=%d lastBufferedSeq=%d pushStates.shopSeq=%d", len(sub.buffer), sub.lastBufferedSeq, pushStates.shopSeq)
 			// TODO: pushes and the shopSeq are not the same anymore.
 			// we now have multiple patches in one patchset, which is the sequenced entity.
 			// so we need to check if the pushStates.shopSeq is >= the lastBufferedSeq

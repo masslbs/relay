@@ -366,7 +366,7 @@ func (im *WriteRequestHandler) validate(version uint) *masspb.Error {
 }
 
 func (im *WriteRequestHandler) handle(sess *Session, reqID *masspb.RequestId) {
-	op := &EventWriteOp{
+	op := &PatchSetWriteOp{
 		requestID:  reqID,
 		sessionID:  sess.id,
 		im:         im.PatchSetWriteRequest,

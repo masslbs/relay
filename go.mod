@@ -21,7 +21,7 @@ require (
 	github.com/ipfs/kubo v0.30.0-rc1
 	github.com/jackc/pgerrcode v0.0.0-20240316143900-6e2875d9b438
 	github.com/jackc/pgx/v5 v5.7.2
-	github.com/masslbs/network-schema v0.0.0-20250227175159-f3614179aa1d
+	github.com/masslbs/network-schema v0.0.0-20250304130115-d34776c88c7f
 	github.com/miolini/datacounter v1.0.3
 	github.com/multiformats/go-multiaddr v0.14.0
 	github.com/prometheus/client_golang v1.20.5
