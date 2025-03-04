@@ -195,7 +195,7 @@ func (r *Relay) connect() {
 
 // TODO: generics solution to reduce [][]any copies
 // Returns two slices: rows inserted, and rows not inserted due to conflicts.
-func (r *Relay) bulkInsert(table string, columns []string, rows [][]interface{}) ([][]interface{}, [][]interface{}) {
+func (r *Relay) bulkInsert(table string, columns []string, rows [][]interface{}) [][]interface{} {
 	assertNonemptyString(table)
 	assert(len(columns) > 0)
 	assert(len(rows) > 0)
@@ -218,10 +218,9 @@ func (r *Relay) bulkInsert(table string, columns []string, rows [][]interface{})
 			qb.WriteString(",")
 		}
 	}
-	qb.WriteString(") on conflict do nothing")
+	qb.WriteString(")")
 	q := qb.String()
 	insertedRows := make([][]interface{}, 0)
-	conflictingRows := make([][]interface{}, 0)
 	var tx pgx.Tx
 	var err error
 	if r.syncTx != nil {
@@ -250,8 +249,6 @@ func (r *Relay) bulkInsert(table string, columns []string, rows [][]interface{})
 		rowsAffected := ct.RowsAffected()
 		if rowsAffected == 1 {
 			insertedRows = append(insertedRows, rows[r])
-		} else if rowsAffected == 0 {
-			conflictingRows = append(conflictingRows, rows[r])
 		} else {
 			panic(fmt.Errorf("unexpected rowsAffected=%d", rowsAffected))
 		}
@@ -260,8 +257,8 @@ func (r *Relay) bulkInsert(table string, columns []string, rows [][]interface{})
 	if r.syncTx == nil {
 		check(tx.Commit(ctx))
 	}
-	debug("relay.bulkInsert table=%s columns=%d rows=%d insertedRows=%d conflictingRows=%d elapsed=%d", table, len(columns), len(rows), len(insertedRows), len(conflictingRows), took(start))
-	return insertedRows, conflictingRows
+	debug("relay.bulkInsert table=%s columns=%d rows=%d insertedRows=%d  elapsed=%d", table, len(columns), len(rows), len(insertedRows), took(start))
+	return insertedRows
 }
 
 func (r *Relay) assertCursors(sid sessionID, shopState *ShopState, state *SubscriptionState) {
@@ -344,7 +341,7 @@ func (r *Relay) getOrCreateInternalShopID(shopTokenID big.Int) (ObjectIDArray, u
 }
 
 func (r *Relay) hydrateShops(shopIDs *SetInts[ObjectIDArray]) {
-	start := now()
+	total := now()
 	ctx := context.Background()
 	novelShopIDs := NewSetInts[ObjectIDArray]()
 	shopIDs.All(func(sid ObjectIDArray) bool {
@@ -367,6 +364,7 @@ func (r *Relay) hydrateShops(shopIDs *SetInts[ObjectIDArray]) {
 			arraysToSlices[i] = arr[:]
 		}
 		for _, novelShopIDsSubslice := range subslice(arraysToSlices, 256) {
+			start := now()
 			// Index: events(createdByShopId, shopSeq)
 			const queryLatestShopSeq = `select createdByShopId, max(shopSeq) from patchSets where createdByShopId = any($1) group by createdByShopId`
 			rows, err := r.connPool.Query(ctx, queryLatestShopSeq, novelShopIDsSubslice)
@@ -384,7 +382,9 @@ func (r *Relay) hydrateShops(shopIDs *SetInts[ObjectIDArray]) {
 			}
 			check(rows.Err())
 			rows.Close()
+			log("relay.hydrateShops.shopSeq took=%d", took(start))
 
+			start = now()
 			const queryLastRelayNonce = "select shopId, id, lastWrittenEventNonce from relayKeyCards where shopId = any($1)"
 			rows, err = r.connPool.Query(ctx, queryLastRelayNonce, novelShopIDsSubslice)
 			check(err)
@@ -403,11 +403,41 @@ func (r *Relay) hydrateShops(shopIDs *SetInts[ObjectIDArray]) {
 			}
 			check(rows.Err())
 			rows.Close()
+			log("relay.hydrateShops.relayKeyCards took=%d", took(start))
 
 			// TODO: load all patches for the shop and apply them
+			start = now()
+			const queryAllPatchesForShop = `select ps.createdByShopId, p.encoded
+from patchSets ps
+join patches p on ps.serverSeq = p.patchsetServerSeq
+where ps.createdByShopId = any($1)
+order by ps.serverSeq, p.patchIndex`
+			rows, err = r.connPool.Query(ctx, queryAllPatchesForShop, novelShopIDsSubslice)
+			check(err)
+			var rowCount int
+			for rows.Next() {
+				var dbShopID uint64
+				var psetData []byte
+				err = rows.Scan(&dbShopID, &psetData)
+				check(err)
+				var shopID ObjectIDArray
+				binary.BigEndian.PutUint64(shopID[:], dbShopID)
+				shopState := r.shopIDsToShopState.MustGet(shopID)
+				patcher := patch.NewPatcher(r.validator, shopState.data)
+
+				var p patch.Patch
+				err = p.Path.UnmarshalCBOR(psetData)
+				check(err)
+				err = patcher.ApplyPatch(p)
+				check(err)
+				rowCount++
+			}
+			check(rows.Err())
+			rows.Close()
+			log("relay.hydrateShops.events rowCount=%d took=%d", rowCount, took(start))
 		}
 	}
-	elapsed := took(start)
+	elapsed := took(total)
 	if novelShopIDs.Size() > 0 || elapsed > 1 {
 		log("relay.hydrateShops shops=%d novelShops=%d elapsed=%d", shopIDs.Size(), novelShopIDs.Size(), elapsed)
 		r.metric.counterAdd("hydrate_users", float64(novelShopIDs.Size()))
@@ -429,52 +459,6 @@ func (r *Relay) loadServerSeq() {
 	r.lastUsedServerSeq = r.lastWrittenServerSeq
 	log("relay.loadServerSeq.finish serverSeq=%d elapsed=%d", r.lastUsedServerSeq, took(start))
 }
-
-// readEvents from the database according to some
-// `whereFragment` criteria, assumed to have a single `$1` arg for a
-// slice of indexedIds.
-// Does not change any in-memory caches; to be done by caller.
-
-// func (r *Relay) readEvents(whereFragment string, shopID, objectID ObjectIDArray) []PatchSetInsert {
-// 	// Index: events(field in whereFragment)
-// 	// The indicies eventsOnEventTypeAnd* should correspond to the various Loaders defined in newDatabase.
-// 	query := fmt.Sprintf(`select serverSeq, shopSeq, eventType, createdByKeyCardId, createdAt, createdByNetworkSchemaVersion, encoded
-
-// from events where createdByShopID = $1 and %s order by serverSeq asc`, whereFragment)
-
-// 	var rows pgx.Rows
-// 	var err error
-// 	if r.syncTx != nil {
-// 		rows, err = r.syncTx.Query(context.Background(), query, shopID[:], objectID[:])
-// 	} else {
-// 		rows, err = r.connPool.Query(context.Background(), query, shopID[:], objectID[:])
-// 	}
-// 	check(err)
-// 	defer rows.Close()
-// 	events := make([]PatchSetInsert, 0)
-// 	for rows.Next() {
-// 		var (
-// 			m         CachedMetadata
-// 			eventType eventType
-// 			createdAt time.Time
-// 			encoded   []byte
-// 		)
-// 		err := rows.Scan(&m.serverSeq, &m.shopSeq, &eventType, &m.createdByKeyCardID, &createdAt, &m.createdByNetworkVersion, &encoded)
-// 		check(err)
-// 		m.createdByShopID = ObjectIDArray(shopID)
-// 		m.objectID = &objectID
-// 		var e ShopEvent
-// 		err = proto.Unmarshal(encoded, &e)
-// 		check(err)
-// 		events = append(events, PatchSetInsert{
-// 			CachedMetadata: m,
-// 			evt:            &e,
-// 			evtType:        eventType,
-// 		})
-// 	}
-// 	check(rows.Err())
-// 	return events
-// }
 
 // PatchSetInsert is a struct that represents an event to be inserted into the database
 type PatchSetInsert struct {
@@ -609,14 +593,14 @@ func formPatchSetHeaderInsert(ins *PatchSetInsert) []interface{} {
 func formPatchSetPatchesInserts(ins *PatchSetInsert) [][]interface{} {
 	patches := make([][]interface{}, len(ins.pset.Patches))
 	for i, patch := range ins.pset.Patches {
-		patches[i] = formPatchInsert(patch, ins.serverSeq, ins.proofs[i])
+		patches[i] = formPatchInsert(patch, i, ins.serverSeq, ins.proofs[i])
 	}
 	return patches
 }
 
-var dbPatchInsertColumns = []string{"patchsetServerSeq", "op", "objectType", "objectId", "accountAddr", "tagName", "encoded", "mmrProof"}
+var dbPatchInsertColumns = []string{"patchsetServerSeq", "patchIndex", "op", "objectType", "objectId", "accountAddr", "tagName", "encoded", "mmrProof"}
 
-func formPatchInsert(p patch.Patch, serverSeq uint64, proof []byte) []interface{} {
+func formPatchInsert(p patch.Patch, patchIndex int, serverSeq uint64, proof []byte) []interface{} {
 	// pgx does not know how to handle cbor.* types.
 	// therefore, we need to "type down" the cbor.* types to basic types
 	// tagName is a *string and is handled correctly automatically
@@ -636,6 +620,7 @@ func formPatchInsert(p patch.Patch, serverSeq uint64, proof []byte) []interface{
 	check(err)
 	return []interface{}{
 		serverSeq,      // patch_set_server_seq
+		patchIndex,     // patch_index
 		p.Op,           // op
 		p.Path.Type,    // object_type
 		objID,          // object_id
@@ -667,7 +652,7 @@ func (r *Relay) flushPatchSets() {
 	}
 	assert(r.lastWrittenServerSeq < r.lastUsedServerSeq)
 
-	insertedPatchSets, conflictedPatchSets := r.bulkInsert("patchSets", dbPatchSetInsertColumns, patchSetTuples)
+	insertedPatchSets := r.bulkInsert("patchSets", dbPatchSetInsertColumns, patchSetTuples)
 	for _, row := range insertedPatchSets {
 		rowServerSeq := row[0].(uint64)
 		assert(r.lastWrittenServerSeq < rowServerSeq)
@@ -682,7 +667,7 @@ func (r *Relay) flushPatchSets() {
 		shopState.lastWrittenSeq = rowShopSeq
 	}
 	assert(r.lastWrittenServerSeq <= r.lastUsedServerSeq)
-	log("relay.flushPatchSets.patchSets insertedSets=%d conflictedSets=%d", len(insertedPatchSets), len(conflictedPatchSets))
+	log("relay.flushPatchSets.patchSets insertedSets=%d", len(insertedPatchSets))
 
 	ctx := context.Background()
 	if len(relayEvents) > 0 {
@@ -702,11 +687,11 @@ func (r *Relay) flushPatchSets() {
 	var patchTuples [][]any
 	for _, ins := range r.queuedPatchSetInserts {
 		for i, patch := range ins.pset.Patches {
-			patchTuples = append(patchTuples, formPatchInsert(patch, ins.serverSeq, ins.proofs[i]))
+			patchTuples = append(patchTuples, formPatchInsert(patch, i, ins.serverSeq, ins.proofs[i]))
 		}
 	}
-	insertedPatchRows, conflictedPatchRows := r.bulkInsert("patches", dbPatchInsertColumns, patchTuples)
-	log("relay.flushPatchSets.patches insertedPatches=%d conflictedPatches=%d", len(insertedPatchRows), len(conflictedPatchRows))
+	insertedPatchRows := r.bulkInsert("patches", dbPatchInsertColumns, patchTuples)
+	log("relay.flushPatchSets.patches insertedPatches=%d", len(insertedPatchRows))
 
 	r.queuedPatchSetInserts = nil
 	log("relay.flushPatchSets.finish took=%d", took(start))
