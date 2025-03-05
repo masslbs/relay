@@ -203,7 +203,7 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 			shopNFT:          shopTokenID,
 			keyCardIsGuest:   isGuest,
 			keyCardPublicKey: objects.PublicKey(keyCardPublicKey),
-			userWallet:       objects.EthereumAddress(userWallet),
+			userWallet:       objects.EthereumAddress{Address: userWallet},
 			done:             make(chan error),
 		}
 		r.opsInternal <- op

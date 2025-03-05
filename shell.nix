@@ -104,6 +104,7 @@ in
         if [ "$isNewPGInstance" -eq "1" ]; then
           createdb massmarket-relay-test
           psql < ./db/schema.sql
+          psql < ./db/test_hydration_data.sql
         fi
 
         # check if we can use the system IPFS daemon

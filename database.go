@@ -301,7 +301,8 @@ func (r *Relay) lastSeenAtTouch(sessionState *SessionState) time.Time {
 
 // used during keycard enroll. creates the keycard
 // only use this inside transactions
-func (r *Relay) getOrCreateInternalShopID(shopTokenID big.Int) (ObjectIDArray, uint64) {
+// the bool signals if the shop was created or not
+func (r *Relay) getOrCreateInternalShopID(shopTokenID big.Int) (ObjectIDArray, uint64, bool) {
 	var (
 		err       error
 		dbID      uint64
@@ -315,7 +316,7 @@ func (r *Relay) getOrCreateInternalShopID(shopTokenID big.Int) (ObjectIDArray, u
 	err = tx.QueryRow(ctx, `select id from shops where tokenId = $1`, shopTokenID.String()).Scan(&dbID)
 	if err == nil {
 		binary.BigEndian.PutUint64(shopID[:], dbID)
-		return shopID, dbID
+		return shopID, dbID, false
 	} else if err != pgx.ErrNoRows {
 		check(err)
 	}
@@ -337,7 +338,7 @@ func (r *Relay) getOrCreateInternalShopID(shopTokenID big.Int) (ObjectIDArray, u
 		data:           &newShop,
 	})
 
-	return shopID, dbID
+	return shopID, dbID, true
 }
 
 func (r *Relay) hydrateShops(shopIDs *SetInts[ObjectIDArray]) {
@@ -416,17 +417,18 @@ order by ps.serverSeq, p.patchIndex`
 			check(err)
 			var rowCount int
 			for rows.Next() {
-				var dbShopID uint64
-				var psetData []byte
-				err = rows.Scan(&dbShopID, &psetData)
-				check(err)
 				var shopID ObjectIDArray
-				binary.BigEndian.PutUint64(shopID[:], dbShopID)
+				var shopIDArray []byte
+				var patchData []byte
+				err = rows.Scan(&shopIDArray, &patchData)
+				check(err)
+				n := copy(shopID[:], shopIDArray)
+				assert(n == 8)
 				shopState := r.shopIDsToShopState.MustGet(shopID)
 				patcher := patch.NewPatcher(r.validator, shopState.data)
 
 				var p patch.Patch
-				err = p.Path.UnmarshalCBOR(psetData)
+				err = cbor.Unmarshal(patchData, &p)
 				check(err)
 				err = patcher.ApplyPatch(p)
 				check(err)
@@ -607,7 +609,7 @@ func formPatchInsert(p patch.Patch, patchIndex int, serverSeq uint64, proof []by
 	var addr *[]byte
 	var objID *[]byte
 	if id := p.Path.AccountAddr; id != nil {
-		sliced := id[:]
+		sliced := id.Address[:]
 		addr = &sliced
 	}
 	if id := p.Path.ObjectID; id != nil {

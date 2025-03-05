@@ -1431,12 +1431,34 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 
 	dbCtx := context.Background()
 
-	shopID, shopDBID := r.getOrCreateInternalShopID(op.shopNFT)
+	shopID, shopDBID, isNewShop := r.getOrCreateInternalShopID(op.shopNFT)
 	r.hydrateShops(NewSetInts(shopID))
+
+	var patches []patch.Patch
+	if isNewShop {
+		manifest := objects.Manifest{
+			ShopID:             op.shopNFT,
+			Payees:             make(objects.Payees),
+			AcceptedCurrencies: make(objects.ChainAddresses),
+			PricingCurrency: objects.ChainAddress{
+				ChainID: r.ethereum.registryChainID,
+			},
+		}
+		manifestBytes, err := cbor.Marshal(manifest)
+		check(err)
+		// emit a manifest patch
+		patches = append(patches, patch.Patch{
+			Op: patch.ReplaceOp,
+			Path: patch.PatchPath{
+				Type: patch.ObjectTypeManifest,
+			},
+			Value: manifestBytes,
+		})
+	}
 
 	const insertKeyCard = `insert into keyCards (shopId, cardPublicKey, userWalletAddr, isGuest, lastVersion,  lastAckedSeq, linkedAt, lastSeenAt)
 		VALUES ($1, $2, $3, $4, 0, 0, now(), now() )`
-	_, err := r.syncTx.Exec(dbCtx, insertKeyCard, shopDBID, op.keyCardPublicKey[:], op.userWallet[:], op.keyCardIsGuest)
+	_, err := r.syncTx.Exec(dbCtx, insertKeyCard, shopDBID, op.keyCardPublicKey[:], op.userWallet.Address[:], op.keyCardIsGuest)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
@@ -1451,7 +1473,7 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 	}
 	var value interface{}
 	var fields []string
-	_, has := r.shopIDsToShopState.MustGet(shopID).data.Accounts.Get(op.userWallet[:])
+	_, has := r.shopIDsToShopState.MustGet(shopID).data.Accounts.Get(op.userWallet.Address[:])
 	if has {
 		value = op.keyCardPublicKey
 		fields = []string{"keycards", "-"}
@@ -1466,18 +1488,16 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 	valueBytes, err := cbor.Marshal(value)
 	check(err)
 
-	// emit new keycard event
-	r.createRelayPatchSet(shopID,
-		patch.Patch{
-			Op: patch.AddOp,
-			Path: patch.PatchPath{
-				Type:        patch.ObjectTypeAccount,
-				AccountAddr: &op.userWallet,
-				Fields:      fields,
-			},
-			Value: valueBytes,
+	patches = append(patches, patch.Patch{
+		Op: patch.AddOp,
+		Path: patch.PatchPath{
+			Type:        patch.ObjectTypeAccount,
+			AccountAddr: &op.userWallet,
+			Fields:      fields,
 		},
-	)
+		Value: valueBytes,
+	})
+	r.createRelayPatchSet(shopID, patches...)
 
 	r.commitSyncTransaction()
 	close(op.done)
@@ -1493,7 +1513,7 @@ func (op *OnchainActionInternalOp) process(r *Relay) {
 	// TODO: we are not including the on-chain transactoin hash here yet
 
 	var user objects.EthereumAddress
-	copy(user[:], op.user.Bytes())
+	copy(user.Address[:], op.user.Bytes())
 	var action patch.OpString
 	var value []byte
 	if op.add {
