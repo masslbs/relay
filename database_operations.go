@@ -610,7 +610,7 @@ func (op *PatchSetWriteOp) process(r *Relay) {
 				return
 			}
 		}
-		if isOrderStatePaymentChoice(p) {
+		if isOrderStatePaymentChosen(p) {
 			patches, err := r.processOrderPaymentChoice(sessionID, proposal, p)
 			if err != nil {
 				op.err = err
@@ -885,14 +885,23 @@ where shopId = $1
 	return nil
 }
 
-// TODO: we might want to introduce another state..?
-func isOrderStatePaymentChoice(p patch.Patch) bool {
+func isOrderStatePaymentChosen(p patch.Patch) bool {
 	if !(p.Path.Type == patch.ObjectTypeOrder &&
 		len(p.Path.Fields) == 1 &&
-		p.Path.Fields[0] == "chosenCurrency") {
+		p.Path.Fields[0] == "state") {
 		return false
 	}
-	return p.Op == patch.ReplaceOp
+	if p.Op != patch.ReplaceOp {
+		return false
+	}
+	if p.Value == nil {
+		return false
+	}
+	var orderState objects.OrderState
+	if err := cbor.Unmarshal(p.Value, &orderState); err != nil {
+		return false
+	}
+	return orderState == objects.OrderStatePaymentChosen
 }
 
 var big100 = new(big.Int).SetInt64(100)

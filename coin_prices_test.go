@@ -145,12 +145,16 @@ func TestCoinGeckoConvertERC20ToCoin(t *testing.T) {
 	cg := newCoinGecko(demoKey, "usd", e)
 
 	op := objects.ChainAddress{
-		EthereumAddress: objects.EthereumAddress{common.HexToAddress("0x4200000000000000000000000000000000000042")},
-		ChainID:         10,
+		EthereumAddress: objects.EthereumAddress{
+			Address: common.HexToAddress("0x4200000000000000000000000000000000000042"),
+		},
+		ChainID: 10,
 	}
 	eth := objects.ChainAddress{
-		EthereumAddress: objects.EthereumAddress{ZeroAddress},
-		ChainID:         1,
+		EthereumAddress: objects.EthereumAddress{
+			Address: ZeroAddress,
+		},
+		ChainID: 1,
 	}
 
 	oneOp := big.NewInt(1_000_000_000_000_000_000)

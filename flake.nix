@@ -11,7 +11,7 @@
     pre-commit-hooks.url = "github:cachix/pre-commit-hooks.nix";
 
     contracts.url = "github:masslbs/contracts";
-    schema.url = "github:masslbs/network-schema/go-mod";
+    schema.url = "github:masslbs/network-schema/payment-chosen";
   };
 
   outputs = {

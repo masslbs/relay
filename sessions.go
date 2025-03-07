@@ -92,7 +92,7 @@ func (sess *Session) readerRun() {
 	}
 }
 
-const limitMaxMessageSize = 128 * 1024
+const limitMaxMessageSize = 2 * 1025 * 1024
 
 func (sess *Session) readerReadMessage() (*masspb.Envelope, error) {
 	bytes, err := wsutil.ReadClientBinary(sess.conn)
