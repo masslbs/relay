@@ -544,7 +544,38 @@ func (op *PatchSetWriteOp) process(r *Relay) {
 				r.sendSessionOp(sessionState, op)
 				return
 			}
-			// TODO: check if the order is new or theirs
+			assert(p.Path.Type == patch.ObjectTypeOrder)
+			assert(p.Path.ObjectID != nil)
+
+			// TODO: maybe we somehow need to attach data to the order itself / hamt?
+
+			// For guest keycards, check if they're trying to modify an order they created
+			orderID := *p.Path.ObjectID
+
+			// Query to check if this keycard created the order
+			var dbOrderID ObjectIDArray
+			binary.BigEndian.PutUint64(dbOrderID[:], orderID)
+			const creatorQuery = `
+				SELECT ps.createdByKeyCardId 
+				FROM patchSets ps
+				JOIN patches p ON ps.serverSeq = p.patchSetServerSeq
+				WHERE p.objectType = 'order' AND p.objectId = $1 AND ps.createdByShopID = $2
+				ORDER BY ps.createdAt ASC
+				LIMIT 1`
+			var creatorKeyCardID keyCardID
+			err := r.connPool.QueryRow(ctx, creatorQuery, dbOrderID[:], sessionState.shopID[:]).Scan(&creatorKeyCardID)
+			if err != nil && err != pgx.ErrNoRows {
+				check(err)
+			}
+
+			// If we found a creator and it's not the current keycard, deny access
+			if err != pgx.ErrNoRows && creatorKeyCardID != sessionState.keyCardID {
+				logSR("relay.patchSetWriteOp.unauthorizedOrderModification order=%d creator=%d requester=%d",
+					sessionID, requestID, orderID, creatorKeyCardID, sessionState.keyCardID)
+				op.err = &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: "order unavailable"}
+				r.sendSessionOp(sessionState, op)
+				return
+			}
 		}
 
 		// change proposedshop state

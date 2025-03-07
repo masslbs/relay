@@ -47,8 +47,10 @@ func TestCoinGeckoERC20(t *testing.T) {
 	cg := newCoinGecko(demoKey, "usd", eth)
 
 	usdt := objects.ChainAddress{
-		EthereumAddress: objects.EthereumAddress{common.HexToAddress("0xdac17f958d2ee523a2206206994597c13d831ec7")},
-		ChainID:         1,
+		EthereumAddress: objects.EthereumAddress{
+			Address: common.HexToAddress("0xdac17f958d2ee523a2206206994597c13d831ec7"),
+		},
+		ChainID: 1,
 	}
 	price, err := cg.GetERC20Price(usdt)
 	if err != nil {
@@ -71,12 +73,16 @@ func TestCoinGeckoConvertErc20ToErc20(t *testing.T) {
 	cg := newCoinGecko(demoKey, "usd", eth)
 
 	usdc := objects.ChainAddress{
-		EthereumAddress: objects.EthereumAddress{Address: common.HexToAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")},
-		ChainID:         1,
+		EthereumAddress: objects.EthereumAddress{
+			Address: common.HexToAddress("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+		},
+		ChainID: 1,
 	}
 	matic := objects.ChainAddress{
-		EthereumAddress: objects.EthereumAddress{Address: common.HexToAddress("0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0")},
-		ChainID:         1,
+		EthereumAddress: objects.EthereumAddress{
+			Address: common.HexToAddress("0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0"),
+		},
+		ChainID: 1,
 	}
 
 	result, err := cg.Convert(usdc, matic, big.NewInt(100))
@@ -102,12 +108,16 @@ func TestCoinGeckoConvertCoinToErc20(t *testing.T) {
 	cg := newCoinGecko(demoKey, "usd", e)
 
 	eth := objects.ChainAddress{
-		EthereumAddress: objects.EthereumAddress{Address: ZeroAddress},
-		ChainID:         1,
+		EthereumAddress: objects.EthereumAddress{
+			Address: ZeroAddress,
+		},
+		ChainID: 1,
 	}
 	usdt := objects.ChainAddress{
-		EthereumAddress: objects.EthereumAddress{Address: common.HexToAddress("0xdac17f958d2ee523a2206206994597c13d831ec7")},
-		ChainID:         1,
+		EthereumAddress: objects.EthereumAddress{
+			Address: common.HexToAddress("0xdac17f958d2ee523a2206206994597c13d831ec7"),
+		},
+		ChainID: 1,
 	}
 
 	halfAnEth := big.NewInt(500_000_000_000_000_000)
