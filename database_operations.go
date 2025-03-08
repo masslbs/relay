@@ -264,10 +264,13 @@ func (op *SubscriptionPushOp) handle(sess *Session) {
 		}
 	}
 
+	var idBytes []byte
+	binary.BigEndian.PutUint16(idBytes, op.subscriptionID)
 	spr := &pb.Envelope_SubscriptionPushRequest{
 		SubscriptionPushRequest: &pb.SubscriptionPushRequest{
-			Patches:      patches,
-			PatchSetMeta: meta,
+			SubscriptionId: idBytes,
+			Patches:        patches,
+			PatchSetMeta:   meta,
 		},
 	}
 	reqID := sess.nextRequestID()
