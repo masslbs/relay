@@ -10,8 +10,8 @@
     flake-utils.url = "github:numtide/flake-utils";
     pre-commit-hooks.url = "github:cachix/pre-commit-hooks.nix";
 
-    contracts.url = "github:masslbs/contracts/services";
-    schema.url = "github:masslbs/network-schema/payment-chosen";
+    contracts.url = "github:masslbs/contracts";
+    schema.url = "github:masslbs/network-schema/map-chainid-map-address";
   };
 
   outputs = {
