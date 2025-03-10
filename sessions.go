@@ -385,8 +385,9 @@ func (im *SubscriptionRequestHandler) validate(version uint) *masspb.Error {
 	if version < 4 {
 		return minimumVersionError
 	}
-	errs := []*masspb.Error{
-		validateBytes(im.ShopId.Raw, "shop_id", 32),
+	var errs []*masspb.Error
+	if len(im.ShopId.Raw) > 32 {
+		errs = append(errs, &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "shop_id too long"})
 	}
 	for _, f := range im.Filters {
 		if f.ObjectType == masspb.ObjectType_OBJECT_TYPE_UNSPECIFIED {

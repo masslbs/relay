@@ -78,16 +78,6 @@ func assertNonemptyString(s string) {
 	assertWithMessage(s != "", "string was empty")
 }
 
-// func validateObjectID(x *ObjectId, field string) *Error {
-// 	if x == nil {
-// 		return &Error{
-// 			Code:    ErrorCodes_INVALID,
-// 			Message: fmt.Sprintf("Field `%s` must be a non-zero objectId", field),
-// 		}
-// 	}
-// 	return validateBytes(x.Raw, field+".id", 8)
-// }
-
 func validateString(s string, field string, maxLength int) *pb.Error {
 	if s == "" {
 		return &pb.Error{
@@ -138,114 +128,6 @@ func validateSignature(sig *pb.Signature) *pb.Error {
 	return validateBytes(sig.Raw, "signature", signatureBytes)
 }
 
-/*
-			func (payee *Payee) validate(field string) *Error {
-				return coalesce(
-					validateString(payee.Name, field+".name", 128),
-					payee.Address.validate(field+".address"),
-					validateChainID(payee.ChainId, field+".chain_id"),
-				)
-			}
-
-	func (curr *ShopCurrency) validate(field string) *Error {
-		return coalesce(
-			curr.Address.validate(field+".address"),
-			validateChainID(curr.ChainId, field+".chain_id"),
-		)
-	}
-
-	func (addr *EthereumAddress) validate(field string) *Error {
-		return validateEthAddressBytes(addr.Raw, field)
-	}
-
-	func validateEthAddressBytes(addr []byte, field string) *Error {
-		return validateBytes(addr, field, 20)
-	}
-
-	func (lo *ListingOption) validate(field string) *Error {
-		errs := []*Error{
-			validateObjectID(lo.Id, field+".id"),
-			validateString(lo.Title, field+".title", 512),
-		}
-		for i, v := range lo.Variations {
-			field := field + fmt.Sprintf(".variation[%d]", i)
-			errs = append(errs, v.validate(field))
-		}
-		return coalesce(errs...)
-	}
-
-	func (lv *ListingVariation) validate(field string) *Error {
-		errs := []*Error{
-			validateObjectID(lv.Id, field+".id"),
-			lv.VariationInfo.validate(field + ".variation_info"),
-		}
-		return coalesce(errs...)
-
-}
-
-	func (lm *ListingMetadata) validate(field string) *Error {
-		errs := []*Error{
-			validateString(lm.Title, field+".title", 512),
-			validateString(lm.Description, field+".description", 512),
-		}
-		for i, img := range lm.Images {
-			field := field + fmt.Sprintf(".image[%d]", i)
-			errs = append(errs, validateURL(img, field))
-		}
-		return coalesce(errs...)
-	}
-
-	func (region *ShippingRegion) validate(field string) *Error {
-		errs := []*Error{
-			validateString(region.Name, field+".name", 128),
-		}
-		// if city is non-empty, the fields before it also have to be non-empty, etc.
-		if region.PostalCode != "" && region.Country == "" {
-			errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + ": country needs to be set if postal_code is"})
-		}
-
-		if region.City != "" && (region.PostalCode == "" || region.Country == "") {
-			errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + ": country and postal_code need to be set if city is"})
-		}
-		for i, mod := range region.OrderPriceModifiers {
-			modField := field + fmt.Sprintf(".order_price_modifier_id[%d]", i)
-			errs = append(errs, mod.validate(modField))
-		}
-		return coalesce(errs...)
-	}
-
-	func (mod *OrderPriceModifier) validate(field string) *Error {
-		errs := []*Error{
-			validateString(mod.Title, field+".title", 128),
-		}
-		switch tv := mod.Modification.(type) {
-		case *OrderPriceModifier_Absolute:
-			abs := tv.Absolute
-			errs = append(errs, abs.Diff.validate(field+".modification/absolute.diff"))
-		case *OrderPriceModifier_Percentage:
-			perc := tv.Percentage
-			errs = append(errs, perc.validate(field+".modification/percentage"))
-		default:
-			errs = append(errs, &Error{Code: ErrorCodes_INVALID, Message: field + fmt.Sprintf(".modification: unhandled type: %T", tv)})
-		}
-
-		return coalesce(errs...)
-	}
-
-	func (i *Uint256) validate(field string) *Error {
-		return validateBytes(i.Raw, field, 32)
-	}
-
-	func validateURL(k string, field string) *Error {
-		if _, err := url.Parse(k); err != nil {
-			return &Error{
-				Code:    ErrorCodes_INVALID,
-				Message: fmt.Sprintf("Field `%s` must be a valid URL", field),
-			}
-		}
-		return nil
-	}
-*/
 func assertLTE(v int, max int) {
 	assertWithMessage(v <= max, fmt.Sprintf("value was greater than max: %d > %d", v, max))
 }
