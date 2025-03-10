@@ -264,7 +264,7 @@ func (op *SubscriptionPushOp) handle(sess *Session) {
 		}
 	}
 
-	var idBytes []byte
+	var idBytes = make([]byte, 2)
 	binary.BigEndian.PutUint16(idBytes, op.subscriptionID)
 	spr := &pb.Envelope_SubscriptionPushRequest{
 		SubscriptionPushRequest: &pb.SubscriptionPushRequest{
