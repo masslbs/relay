@@ -242,35 +242,48 @@ func (op *PatchSetWriteOp) handle(sess *Session) {
 
 func (op *SubscriptionPushOp) handle(sess *Session) {
 	assertLTE(len(op.pushStates), limitMaxOutBatchSize)
-	patches := make([]*pb.SubscriptionPushRequest_SequencedPatch, len(op.pushStates))
-	for i, pushState := range op.pushStates {
-		assert(pushState.shopSeq != 0)
-		patches[i] = &pb.SubscriptionPushRequest_SequencedPatch{
-			ShopSeqNo:      pushState.shopSeq,
-			PatchLeafIndex: pushState.leafIndex,
-			PatchData:      pushState.patchData,
-			MmrProof:       pushState.patchInclProof,
-		}
-	}
-	var meta = make(map[uint64]*pb.SubscriptionPushRequest_PatchSetMeta)
-	for _, pushState := range op.pushStates {
-		_, has := meta[pushState.shopSeq]
-		if has {
-			continue
-		}
-		meta[pushState.shopSeq] = &pb.SubscriptionPushRequest_PatchSetMeta{
-			Header:    pushState.psHeader,
-			Signature: pushState.psSignature,
-		}
+	if len(op.pushStates) == 0 {
+		return
 	}
 
+	var sets []*pb.SubscriptionPushRequest_SequencedPartialPatchSet
+	var currentSet *pb.SubscriptionPushRequest_SequencedPartialPatchSet
+	var currentShopSeq uint64 = 0
+
+	// Group pushStates by shopSeq
+	for _, pushState := range op.pushStates {
+		assert(pushState.shopSeq != 0)
+
+		// Start a new set whenever the shop sequence changes
+		if pushState.shopSeq != currentShopSeq {
+			if currentSet != nil {
+				sets = append(sets, currentSet)
+			}
+
+			currentSet = &pb.SubscriptionPushRequest_SequencedPartialPatchSet{
+				ShopSeqNo: pushState.shopSeq,
+				Header:    pushState.psHeader,
+				Signature: pushState.psSignature,
+			}
+			currentShopSeq = pushState.shopSeq
+		}
+
+		currentSet.Patches = append(currentSet.Patches, pushState.patchData)
+		currentSet.Proofs = append(currentSet.Proofs, pushState.patchInclProof)
+	}
+
+	// Add the final set
+	if currentSet != nil {
+		sets = append(sets, currentSet)
+	}
+
+	// Rest of the function remains the same
 	var idBytes = make([]byte, 2)
 	binary.BigEndian.PutUint16(idBytes, op.subscriptionID)
 	spr := &pb.Envelope_SubscriptionPushRequest{
 		SubscriptionPushRequest: &pb.SubscriptionPushRequest{
 			SubscriptionId: idBytes,
-			Patches:        patches,
-			PatchSetMeta:   meta,
+			Sets:           sets,
 		},
 	}
 	reqID := sess.nextRequestID()

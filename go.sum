@@ -518,8 +518,8 @@ github.com/marten-seemann/tcp v0.0.0-20210406111302-dfbc87cc63fd h1:br0buuQ854V8
 github.com/marten-seemann/tcp v0.0.0-20210406111302-dfbc87cc63fd/go.mod h1:QuCEs1Nt24+FYQEqAAncTDPJIuGs+LxK1MCiFL25pMU=
 github.com/masslbs/go-pgmmr v0.0.0-20250206120136-b5495a477745 h1:net5CF8odxdbBk1AHWUpgJwVGqZkSkDVXJXYrcsQcAo=
 github.com/masslbs/go-pgmmr v0.0.0-20250206120136-b5495a477745/go.mod h1:mxKVjxmg1oYlQjCUmZrNLTcrbp4Fu8l360z66xoMKzM=
-github.com/masslbs/network-schema v0.0.0-20250308132743-a3043c7d5059 h1:J/zpRR/MIqEXvJylb30eH+novDrzTGYwFc4LhTYQCBM=
-github.com/masslbs/network-schema v0.0.0-20250308132743-a3043c7d5059/go.mod h1:JV37X/eyhkZlk5HTRvpxRhvTu/eH4ZDKOUxR2gZNCaE=
+github.com/masslbs/network-schema v0.0.0-20250310140929-ce6d5f044a85 h1:+mgHw6e1nasgo/CQs2uWzQb71gzyby4kpHI065cm9mo=
+github.com/masslbs/network-schema v0.0.0-20250310140929-ce6d5f044a85/go.mod h1:JV37X/eyhkZlk5HTRvpxRhvTu/eH4ZDKOUxR2gZNCaE=
 github.com/mattn/go-colorable v0.1.13 h1:fFA4WZxdEF4tXPZVKMLwD8oUnCTTo08duU7wxecdEvA=
 github.com/mattn/go-colorable v0.1.13/go.mod h1:7S9/ev0klgBDR4GtXTXX8a3vIGJpMovkB8vQcUbaXHg=
 github.com/mattn/go-isatty v0.0.13/go.mod h1:cbi8OIDigv2wuxKPP5vlRcQ1OAZbq2CE4Kysco4FUpU=
