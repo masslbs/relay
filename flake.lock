@@ -1,21 +1,5 @@
 {
   "nodes": {
-    "bryce-mmrs-py": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1732639710,
-        "narHash": "sha256-rgWSlJa4G7ZR8gfu0wu7C5XDmamIM9S8LJb0qSE4TbU=",
-        "owner": "robinbryce",
-        "repo": "draft-bryce-cose-merkle-mountain-range-proofs",
-        "rev": "c8c691d18dde39509e68a5a9cdc9eba18ea1062a",
-        "type": "github"
-      },
-      "original": {
-        "owner": "robinbryce",
-        "repo": "draft-bryce-cose-merkle-mountain-range-proofs",
-        "type": "github"
-      }
-    },
     "contracts": {
       "inputs": {
         "ds-test": "ds-test",
@@ -443,17 +427,16 @@
     },
     "schema": {
       "inputs": {
-        "bryce-mmrs-py": "bryce-mmrs-py",
         "gomod2nix": "gomod2nix",
         "nixpkgs": "nixpkgs_4",
         "utils": "utils"
       },
       "locked": {
-        "lastModified": 1741719601,
-        "narHash": "sha256-YUNiKhXv0LASueN/CXlj2++QZvMGp6xUD7K1MQBuQxM=",
+        "lastModified": 1741798280,
+        "narHash": "sha256-HV0cqylkjOESBEUzlsKl7tBlbGMbkOSMboefZWxB6Bs=",
         "owner": "masslbs",
         "repo": "network-schema",
-        "rev": "46aec10237e884d57e10ced733377c2970e8c1a5",
+        "rev": "4bbb6a36b5db40469b3d7427bfd8eaeddc412e0b",
         "type": "github"
       },
       "original": {
