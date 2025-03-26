@@ -572,7 +572,7 @@ func (op *PatchSetWriteOp) process(r *Relay) {
 			var dbOrderID ObjectIDArray
 			binary.BigEndian.PutUint64(dbOrderID[:], orderID)
 			const creatorQuery = `
-				SELECT ps.createdByKeyCardId 
+				SELECT ps.createdByKeyCardId
 				FROM patchSets ps
 				JOIN patches p ON ps.serverSeq = p.patchSetServerSeq
 				WHERE p.objectType = 'Orders' AND p.objectId = $1 AND ps.createdByShopID = $2
@@ -604,7 +604,7 @@ func (op *PatchSetWriteOp) process(r *Relay) {
 			} else if errors.As(err, &outOfStockError) {
 				op.err = &pb.Error{Code: pb.ErrorCodes_OUT_OF_STOCK, Message: outOfStockError.Error()}
 			} else {
-				op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "invalid patch"}
+				op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: err.Error()}
 			}
 			r.sendSessionOp(sessionState, op)
 			return
@@ -1324,7 +1324,7 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 				// we need to include all orders created by the guest
 				// this includes updates to orders created by the relay or clerks
 				where = fmt.Sprintf(`(%s AND (ps.createdByKeyCardId=%d OR (
-p.objectId in (select distinct patch2.objectId 
+p.objectId in (select distinct patch2.objectId
 	from patchSets pset2
 	join patches patch2 on patch2.patchSetServerSeq = pset2.serverSeq
 	where patch2.objectType='Orders' and pset2.createdByKeyCardID=%d)

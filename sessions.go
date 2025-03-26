@@ -110,7 +110,7 @@ func (sess *Session) readerReadMessage() (*masspb.Envelope, error) {
 	var envl masspb.Envelope
 	err = proto.Unmarshal(bytes, &envl)
 	if err != nil {
-		logS(sess.id, "session.reader.readMessage.envelopeUnmarshalError %+v", err)
+		logS(sess.id, "session.reader.readMessage.envelopeUnmarshalError %+v input=%x", err, bytes)
 		return nil, err
 	}
 
@@ -312,20 +312,20 @@ func (im *writeRequestHandler) validate(version uint) *masspb.Error {
 		Patches   []patch.Patch
 	}
 	if err := masscbor.Unmarshal(im.PatchSet, &decodingHelper); err != nil {
-		log("eventWriteRequest.validate: cbor unmarshal of patchset failed: %s", err.Error())
+		log("patchSetWriteRequest.validate: cbor unmarshal of patchset failed: %s", err.Error())
 		return &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "invalid CBOR encoding"}
 	}
 
 	var decodedPatchSet patch.SignedPatchSet
 	if err := cbor.Unmarshal(decodingHelper.Header, &decodedPatchSet.Header); err != nil {
-		log("eventWriteRequest.validate: cbor unmarshal of header failed: %s", err.Error())
+		log("patchSetWriteRequest.validate: cbor unmarshal of header failed: %s", err.Error())
 		return &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "unable to unmarshal header"}
 	}
 	decodedPatchSet.Signature = decodingHelper.Signature
 	decodedPatchSet.Patches = decodingHelper.Patches
 
 	if valErr := im.validator.Struct(decodedPatchSet); valErr != nil {
-		log("eventWriteRequest.validate: validator.Struct failed: %s", valErr.Error())
+		log("patchSetWriteRequest.validate: validator.Struct failed: %s", valErr.Error())
 		return &masspb.Error{Code: masspb.ErrorCodes_INVALID, Message: "unable to validate patch set"}
 	}
 	if decodedPatchSet.Header.Timestamp.IsZero() {
