@@ -41,14 +41,6 @@ jobs:
         ports:
           - 5001:5001
 
-      anvil:
-        image: ghcr.io/foundry-rs/foundry:latest
-        ports:
-          - 8545:8545
-        options: --entrypoint anvil
-        env:
-          ANVIL_IP_ADDR: 0.0.0.0
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,34 +63,23 @@ jobs:
       - name: Extract branches
         shell: bash
         run: |
-          echo "contracts=$(jq -r '.nodes.contracts.locked.rev' relay/flake.lock)" >> $GITHUB_OUTPUT
           echo "relay_pr=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
         id: branches
 
-      - name: git clone contracts
-        uses: ./relay/.github/actions/checkout
-        with:
-          repository: masslbs/contracts
-          ref: ${{ steps.branches.outputs.relay_pr }}
-          fallback-branch: ${{ steps.branches.outputs.contracts }}
-          path: contracts
-
       - name: build ABIs and deploy market contracts
-        run: nix develop -c deploy-market
-        working-directory: contracts
+        run: nix develop -c local-testnet -D
+        working-directory: relay
 
       - name: git clone pystoretest
         uses: ./relay/.github/actions/checkout
         with:
           repository: masslbs/pystoretest
-          ssh-key: ${{ secrets.SSH_CHECKOUT_PYSTORETEST }}
           path: pystoretest
           ref: ${{ steps.branches.outputs.relay_pr }}
 
       - name: prepare env file for relay
         run: |
           cp .env.sample .env
-          ../contracts/update_env.sh ../contracts/broadcast/deploy.s.sol/31337/run-latest.json | tee -a .env
           sed -i 's|PORT=4444|PORT=3434|' .env
           sed -i 's|localhost:4444|localhost:3434|' .env
           echo "KICK_TIMEOUT=15s" >> .env
@@ -135,11 +116,13 @@ jobs:
         working-directory: pystoretest
 
       - name: Run benchmarks
+        if: runner.name == 'ci-runner2'
         run: nix develop -c pytest --benchmark-only --benchmark-json ../bench-output.json
         working-directory: pystoretest
 
       # TODO: compare against previous run
       - name: Post benchmark results
+        if: runner.name == 'ci-runner2'
         run: |
           BENCHMARK_SUMMARY=$(jq -r '
           "## Benchmark Results\n\n" +

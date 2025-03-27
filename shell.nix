@@ -46,6 +46,7 @@ in
     packages =
       [
         deploy-rs
+        contracts.packages.${pkgs.system}.local-testnet
       ]
       ++ (with pkgs; [
         # handy
