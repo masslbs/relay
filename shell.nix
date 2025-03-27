@@ -84,7 +84,6 @@ in
         export $(egrep -v '^#' .env | xargs)
         export MASS_CONTRACTS=${contracts_abi}
         export MASS_SCHEMA=${schema}
-        ./generate_code.bash
 
         export DBPATH=$PWD/tmp/db
         isNewPGInstance=0
