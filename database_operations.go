@@ -596,7 +596,7 @@ func (op *PatchSetWriteOp) process(r *Relay) {
 
 		// change proposedshop state
 		if err := patcher.ApplyPatch(p); err != nil {
-			logSR("relay.patchSetWriteOp.applyPatchFailed patch=%d err=%s errType=%T", sessionID, requestID, i, err.Error(), err)
+			logSR("relay.patchSetWriteOp.applyPatchFailed patch=%d err=%s errType=%T patch.value=%x", sessionID, requestID, i, err.Error(), err, p.Value)
 			var notFoundError patch.ObjectNotFoundError
 			var outOfStockError patch.OutOfStockError
 			if errors.As(err, &notFoundError) {
