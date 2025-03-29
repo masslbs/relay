@@ -154,6 +154,11 @@ var unlinkedKeyCardError = &pb.Error{
 	Message: "Key Card was removed from the Shop",
 }
 
+var notAllowedError =  &pb.Error{
+	Code: pb.ErrorCodes_INVALID,
+	Message: "not allowed",
+}
+
 var notFoundError = &pb.Error{
 	Code:    pb.ErrorCodes_NOT_FOUND,
 	Message: "Item not found",

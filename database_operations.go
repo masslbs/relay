@@ -1282,7 +1282,7 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 				filter.ObjectType == pb.ObjectType_OBJECT_TYPE_ORDER) {
 			logSR("relay.subscriptionRequestOp.notAllowed why=\"other shop\" filter=%s",
 				sessionID, requestID, filter.ObjectType.String())
-			op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "not allowed"}
+			op.err = notAllowedError
 			r.sendSessionOp(session, op)
 			return
 		}
@@ -1298,7 +1298,7 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 			case pb.ObjectType_OBJECT_TYPE_INVENTORY:
 				logSR("relay.subscriptionRequestOp.notAllowed filter=%s",
 					sessionID, requestID, filter.ObjectType.String())
-				op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "not allowed"}
+				op.err = notAllowedError
 				r.sendSessionOp(session, op)
 				return
 			}
@@ -1445,6 +1445,11 @@ func (op *GetBlobUploadURLOp) process(r *Relay) {
 	} else if sessionState.shopID.Equal(zeroObjectIDArr) {
 		logSR("relay.getBlobUploadURLOp.notAuthenticated", sessionID, requestID)
 		op.err = notAuthenticatedError
+		r.sendSessionOp(sessionState, op)
+		return
+	} else if sessionState.keyCardOfAGuest {
+		logSR("relay.getBlobUploadURLOp.notAllowedForGuests", sessionID, requestID)
+		op.err = notAllowedError
 		r.sendSessionOp(sessionState, op)
 		return
 	}
