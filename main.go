@@ -146,7 +146,7 @@ var notAuthenticatedError = &pb.Error{
 
 var alreadyConnectedError = &pb.Error{
 	Code:    pb.ErrorCodes_ALREADY_CONNECTED,
-	Message: "Already connected from this device in another session",
+	Message: "Already connected from this keyCard in another session",
 }
 
 var unlinkedKeyCardError = &pb.Error{
@@ -154,8 +154,8 @@ var unlinkedKeyCardError = &pb.Error{
 	Message: "Key Card was removed from the Shop",
 }
 
-var notAllowedError =  &pb.Error{
-	Code: pb.ErrorCodes_INVALID,
+var notAllowedError = &pb.Error{
+	Code:    pb.ErrorCodes_INVALID,
 	Message: "not allowed",
 }
 

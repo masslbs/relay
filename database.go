@@ -730,7 +730,7 @@ func (r *Relay) pushOutShopLog(sessionID sessionID, session *SessionState, subID
 	shopState := r.shopIDsToShopState.MustGet(sub.shopID)
 	r.assertCursors(sessionID, shopState, sub)
 
-	// Calculate the new keyCard seq up to which the device has acked all pushes.
+	// Calculate the new sequence up to which the device keyCard has acked all pushes.
 	// Slice the buffer to drop such entries as they have completed their lifecycle.
 	// Do this all first to trim down the buffer before reading more, if possible.
 	var (

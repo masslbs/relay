@@ -381,10 +381,10 @@ func (op *AuthenticateOp) process(r *Relay) {
 	check(err)
 	logS(op.sessionID, "relay.authenticateOp.ids keyCardId=%d shopId=%d", keyCardID, shopID)
 
-	// Ensure the device isn't already connected via another session.
+	// Ensure the keyCard isn't already connected via another session.
 	// If we find such another session, initiate a stop on it because it is probably
 	// a dangling session that only the server side thinks is still alive.
-	// Reject this authentication attempt from the second device, but with the stop
+	// Reject this authentication attempt from the second keyCard, but with the stop
 	// the client should be able to successfully retry shortly.
 	var halt = false
 	r.sessionIDsToSessionStates.All(func(otherSessionID sessionID, otherSessionState *SessionState) bool {
@@ -459,7 +459,7 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 		return
 	}
 
-	// Create or update the device DB record.
+	// Create or update the keyCard DB record.
 	var dbUnlinkedAt *time.Time
 	var dbLastAckedSeq uint64
 	var dbLastVersion int
@@ -474,13 +474,13 @@ func (op *ChallengeSolvedOp) process(r *Relay) {
 	if err != nil {
 		panic(err)
 	} else if dbUnlinkedAt != nil {
-		logS(op.sessionID, "relay.challengeSolvedOp.unlinkedDevice")
+		logS(op.sessionID, "relay.challengeSolvedOp.unlinkedkeyCard")
 		op.err = unlinkedKeyCardError
 		r.sendSessionOp(sessionState, op)
 		return
 	}
 
-	logS(op.sessionID, "relay.challengeSolvedOp.existingDevice")
+	logS(op.sessionID, "relay.challengeSolvedOp.existingkeyCard")
 	// update sessionState
 	sessionState.keyCardOfAGuest = isGuestKeyCard
 	query = `update keyCards set lastVersion = $1, lastSeenAt = $2 where id = $3`
