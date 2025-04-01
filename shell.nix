@@ -46,6 +46,7 @@ in
     packages =
       [
         deploy-rs
+        contracts.packages.${pkgs.system}.local-testnet
       ]
       ++ (with pkgs; [
         # handy
@@ -73,7 +74,7 @@ in
         go-ethereum # for abigen
         gotools # for stringer
         ipfs
-        contracts_abi # for run-and-deploy
+        contracts_abi # abi code generation
       ]);
 
     shellHook =
@@ -83,7 +84,6 @@ in
         export $(egrep -v '^#' .env | xargs)
         export MASS_CONTRACTS=${contracts_abi}
         export MASS_SCHEMA=${schema}
-        ./generate_code.bash
 
         export DBPATH=$PWD/tmp/db
         isNewPGInstance=0
