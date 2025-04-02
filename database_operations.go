@@ -947,16 +947,17 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 	}
 
 	// check if shipping regions are set
-	if len(shop.Manifest.ShippingRegions) == 0 {
-		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "no shipping regions"}
-	}
+	// TODO: re-enable this
+	// if len(shop.Manifest.ShippingRegions) == 0 {
+	// 	return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "no shipping regions"}
+	// }
 
-	region, err := ScoreRegions(shop.Manifest.ShippingRegions, shippingAddr)
-	if err != nil {
-		logS(sessionID, "relay.orderPaymentChoiceOp.scoreRegions regions=%d err=%s", len(shop.Manifest.ShippingRegions), err)
-		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to determin shipping region"}
-	}
-	shippingRegion := shop.Manifest.ShippingRegions[region]
+	// region, err := ScoreRegions(shop.Manifest.ShippingRegions, shippingAddr)
+	// if err != nil {
+	// 	logS(sessionID, "relay.orderPaymentChoiceOp.scoreRegions regions=%d err=%s", len(shop.Manifest.ShippingRegions), err)
+	// 	return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to determin shipping region"}
+	// }
+	// shippingRegion := shop.Manifest.ShippingRegions[region]
 
 	// determain total price and create snapshot of items
 	var (
@@ -1039,27 +1040,27 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 
 	// add taxes and shipping
 	bigTotal := new(big.Int).Set(bigSubtotal)
-	diff := new(big.Int)
+	// diff := new(big.Int)
 	logS(sessionID, "relay.orderPaymentChoiceOp.total beforeModifiers=%s", bigTotal)
-	for _, mod := range shippingRegion.PriceModifiers {
-		if mod.ModificationPrecents != nil {
-			perc := mod.ModificationPrecents
-			diff.Set(perc)
-			bigTotal.Mul(bigTotal, diff)
-			bigTotal.Div(bigTotal, big100)
-		} else if mod.ModificationAbsolute != nil {
-			abs := mod.ModificationAbsolute
-			diff.Set(&abs.Amount)
-			if abs.Plus {
-				bigTotal.Add(bigTotal, diff)
-			} else {
-				bigTotal.Sub(bigTotal, diff)
-			}
-		} else {
-			logS(sessionID, "relay.orderPaymentChoiceOp.unknownPriceModifier mod=%v", mod)
-			panic("unknown price modifier")
-		}
-	}
+	// for _, mod := range shippingRegion.PriceModifiers {
+	// 	if mod.ModificationPrecents != nil {
+	// 		perc := mod.ModificationPrecents
+	// 		diff.Set(perc)
+	// 		bigTotal.Mul(bigTotal, diff)
+	// 		bigTotal.Div(bigTotal, big100)
+	// 	} else if mod.ModificationAbsolute != nil {
+	// 		abs := mod.ModificationAbsolute
+	// 		diff.Set(&abs.Amount)
+	// 		if abs.Plus {
+	// 			bigTotal.Add(bigTotal, diff)
+	// 		} else {
+	// 			bigTotal.Sub(bigTotal, diff)
+	// 		}
+	// 	} else {
+	// 		logS(sessionID, "relay.orderPaymentChoiceOp.unknownPriceModifier mod=%v", mod)
+	// 		panic("unknown price modifier")
+	// 	}
+	// }
 
 	logS(sessionID, "relay.orderPaymentChoiceOp.total after=%s", bigTotal)
 
@@ -1497,9 +1498,12 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 	var patches []patch.Patch
 	if isNewShop {
 		manifest := objects.Manifest{
-			ShopID:             op.shopNFT,
-			Payees:             make(objects.Payees),
-			ShippingRegions:    make(objects.ShippingRegions),
+			ShopID: op.shopNFT,
+			Payees: make(objects.Payees),
+			ShippingRegions: objects.ShippingRegions{
+				// catch-all for all countries
+				"default": objects.ShippingRegion{},
+			},
 			AcceptedCurrencies: make(objects.ChainAddresses),
 			PricingCurrency: objects.ChainAddress{
 				ChainID: r.ethereum.registryChainID,
