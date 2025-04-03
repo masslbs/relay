@@ -896,7 +896,16 @@ where shopId = $1
 		sessionState.shopID[:],
 		orderDBID[:],
 	)
-	check(err)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			// fmt.Fprintf(os.Stderr, "relay.keyCardEnrolledOp.debug pgErr.Code=%s pgErr.ConstraintName=%s\n", pgErr.Code, pgErr.ConstraintName)
+			if pgErr.Code == pgerrcode.UniqueViolation && pgErr.ConstraintName == "paymentsorderid" {
+				return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "order already committed"}
+			}
+		}
+		check(err)
+	}
 
 	logS(sessionID, "relay.orderCommitItemsOp.finish took=%d", took(start))
 	return nil
@@ -1143,6 +1152,11 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 	unpaidBytes, err := cbor.Marshal(objects.OrderStateUnpaid)
 	check(err)
 
+	var detailsOp patch.OpString = patch.AddOp
+	if order.PaymentDetails != nil {
+		detailsOp = patch.ReplaceOp
+	}
+
 	patches := []patch.Patch{
 		{
 			Path: patch.Path{
@@ -1150,7 +1164,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 				ObjectID: &orderID,
 				Fields:   []any{"PaymentDetails"},
 			},
-			Op:    patch.AddOp,
+			Op:    detailsOp,
 			Value: finBytes,
 		},
 		{
