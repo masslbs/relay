@@ -4,7 +4,7 @@
 
 relay
 .env
-tmp
+data
 /gomod2nix-template
 .pre-commit-config.yaml
 result

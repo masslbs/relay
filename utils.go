@@ -26,10 +26,6 @@ var (
 
 func logWrite(line string) {
 	os.Stdout.Write([]byte(line))
-	if isCIEnv {
-		err := os.Stdout.Sync()
-		check(err)
-	}
 }
 
 func debug(msg string, args ...interface{}) {
