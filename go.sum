@@ -516,8 +516,8 @@ github.com/libp2p/zeroconf/v2 v2.2.0 h1:Cup06Jv6u81HLhIj1KasuNM/RHHrJ8T7wOTS4+Tv
 github.com/libp2p/zeroconf/v2 v2.2.0/go.mod h1:fuJqLnUwZTshS3U/bMRJ3+ow/v9oid1n0DmyYyNO1Xs=
 github.com/marten-seemann/tcp v0.0.0-20210406111302-dfbc87cc63fd h1:br0buuQ854V8u83wA0rVZ8ttrq5CpaPZdvrK0LP2lOk=
 github.com/marten-seemann/tcp v0.0.0-20210406111302-dfbc87cc63fd/go.mod h1:QuCEs1Nt24+FYQEqAAncTDPJIuGs+LxK1MCiFL25pMU=
-github.com/masslbs/network-schema v0.0.0-20250312165120-4bbb6a36b5db h1:9RzN/DXxou87rs8rPSVgWEvT+siPHRU1skEsfbCl2LA=
-github.com/masslbs/network-schema v0.0.0-20250312165120-4bbb6a36b5db/go.mod h1:jtAOHj7Rvg3AsNYUBy8mKcmStyWXVsJolZBSmWafcBw=
+github.com/masslbs/network-schema v0.0.0-20250409165924-85f9dbf029a8 h1:0mfMt449q8WDz/YnO3EeYGi1HWm64tplxeFTYwX65WY=
+github.com/masslbs/network-schema v0.0.0-20250409165924-85f9dbf029a8/go.mod h1:jtAOHj7Rvg3AsNYUBy8mKcmStyWXVsJolZBSmWafcBw=
 github.com/mattn/go-colorable v0.1.13 h1:fFA4WZxdEF4tXPZVKMLwD8oUnCTTo08duU7wxecdEvA=
 github.com/mattn/go-colorable v0.1.13/go.mod h1:7S9/ev0klgBDR4GtXTXX8a3vIGJpMovkB8vQcUbaXHg=
 github.com/mattn/go-isatty v0.0.13/go.mod h1:cbi8OIDigv2wuxKPP5vlRcQ1OAZbq2CE4Kysco4FUpU=

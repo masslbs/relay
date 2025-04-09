@@ -130,6 +130,7 @@
               nixpkgs-fmt
               jq
               reuse
+              typos-lsp
 
               # dev tools
               go_1_23

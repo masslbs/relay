@@ -618,7 +618,7 @@ func (op *PatchSetWriteOp) process(r *Relay) {
 			patches := r.processRemoveVariation(sessionID, p)
 			relayPatches = append(relayPatches, patches...)
 		}
-		if isOrderStateCommited(p) {
+		if isOrderStateCommitted(p) {
 			err := r.processOrderItemsCommitment(sessionID, proposal, p)
 			if err != nil {
 				op.err = err
@@ -689,7 +689,7 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 	// collect all variation IDs from both removed options and removed removedVariations
 	removedVariations := NewSetInts[string]()
 	if len(p.Path.Fields) == 2 && p.Path.Fields[0] == "Options" {
-		// we dont need to safe-assert here since this already happend in the patch validator
+		// we dont need to safe-assert here since this already happened in the patch validator
 		optName := p.Path.Fields[1].(string)
 		opt, has := listing.Options[optName]
 		assert(has)
@@ -789,7 +789,7 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 	return patches
 }
 
-func isOrderStateCommited(p patch.Patch) bool {
+func isOrderStateCommitted(p patch.Patch) bool {
 	if !(p.Path.Type == patch.ObjectTypeOrder &&
 		len(p.Path.Fields) == 1 &&
 		p.Path.Fields[0] == "State") {
@@ -963,7 +963,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 	region, err := ScoreRegions(shop.Manifest.ShippingRegions, shippingAddr)
 	if err != nil {
 		logS(sessionID, "relay.orderPaymentChoiceOp.scoreRegions regions=%d err=%s", len(shop.Manifest.ShippingRegions), err)
-		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to determin shipping region"}
+		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "unable to determine shipping region"}
 	}
 	shippingRegion := shop.Manifest.ShippingRegions[region]
 
@@ -1288,7 +1288,7 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 	}
 
 	// Build WHERE fragment used for pushing events
-	var wheres []string
+	var whereFragments []string
 	for _, filter := range op.im.Filters {
 		// Ensure that non-authenticated sessions can only access public content
 		if !subscription.shopID.Equal(session.shopID) &&
@@ -1352,10 +1352,10 @@ p.objectId in (select distinct patch2.objectId
 		if id := filter.ObjectId; id != nil {
 			where = "(" + where + fmt.Sprintf(" AND p.objectId = '\\x%x')", id.Raw)
 		}
-		wheres = append(wheres, where)
+		whereFragments = append(whereFragments, where)
 	}
 
-	if len(wheres) == 0 {
+	if len(whereFragments) == 0 {
 		if session.keyCardOfAGuest {
 			logSR("relay.subscriptionRequestOp.noFilters", sessionID, requestID)
 			op.err = &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "no filters"}
@@ -1364,7 +1364,7 @@ p.objectId in (select distinct patch2.objectId
 		}
 		subscription.whereFragment = "True"
 	} else {
-		subscription.whereFragment = strings.Join(wheres, " OR ")
+		subscription.whereFragment = strings.Join(whereFragments, " OR ")
 	}
 
 	if n := len(verifyOrderIDs); n > 0 {
@@ -1511,9 +1511,11 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 	var patches []patch.Patch
 	if isNewShop {
 		manifest := objects.Manifest{
-			ShopID:             op.shopNFT,
-			Payees:             make(objects.Payees),
-			ShippingRegions:    make(objects.ShippingRegions),
+			ShopID: op.shopNFT,
+			Payees: make(objects.Payees),
+			ShippingRegions: objects.ShippingRegions{
+				"default": objects.ShippingRegion{},
+			},
 			AcceptedCurrencies: make(objects.ChainAddresses),
 			PricingCurrency: objects.ChainAddress{
 				ChainID: r.ethereum.registryChainID,
@@ -1588,7 +1590,7 @@ func (op *OnchainActionInternalOp) process(r *Relay) {
 	log("db.onchainActionInternalOp.start shopID=%x user=%s", op.shopID, op.user)
 	start := now()
 
-	// TODO: we are not including the on-chain transactoin hash here yet
+	// TODO: we are not including the on-chain transaction hash here yet
 
 	var user objects.EthereumAddress
 	copy(user.Address[:], op.user.Bytes())

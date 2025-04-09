@@ -175,8 +175,8 @@ var simulateError = &pb.Error{
 }
 
 var minimumVersionError = &pb.Error{
-	Code:    pb.ErrorCodes_MINUMUM_VERSION_NOT_REACHED,
-	Message: "Minumum version not reached for this request",
+	Code:    pb.ErrorCodes_MINIMUM_VERSION_NOT_REACHED,
+	Message: "Minimum version not reached for this request",
 }
 
 // Metric maps a name to a prometheus metric.
@@ -382,7 +382,8 @@ func server() {
 	mux.HandleFunc("/health", healthHandleFunc(r))
 	mux.HandleFunc("/sentry-test", sentryTestHandler())
 
-	// Reliablity Kludge
+	// Reliability Kludge
+	// by serving our own ipfs repository we ensure the blobs we added are immediately available
 	mux.HandleFunc("/ipfs/", ipfsCatHandleFunc())
 
 	corsOpts := cors.Options{
