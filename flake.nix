@@ -1,46 +1,172 @@
 # SPDX-FileCopyrightText: 2024 - 2025 Mass Labs
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
-
 {
   description = "Mass Market Relay";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-24.11";
-    flake-utils.url = "github:numtide/flake-utils";
-    pre-commit-hooks.url = "github:cachix/pre-commit-hooks.nix";
+    systems.url = "github:nix-systems/default";
+    flake-parts = {
+      url = "github:hercules-ci/flake-parts";
+    };
+    flake-root.url = "github:srid/flake-root";
+
+    process-compose-flake = {
+      url = "github:Platonic-Systems/process-compose-flake";
+    };
+    services-flake.url = "github:juspay/services-flake";
+
+    pre-commit-hooks = {
+      url = "github:cachix/git-hooks.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
 
     contracts.url = "github:masslbs/contracts";
+    foundry.follows = "contracts/foundry";
+
     schema.url = "github:masslbs/network-schema/cbor";
   };
 
-  outputs = {
-    self,
-    nixpkgs,
-    flake-utils,
-    pre-commit-hooks,
+  outputs = inputs @ {
+    flake-parts,
+    systems,
+    foundry,
     contracts,
     schema,
     ...
-  } @ inputs: (flake-utils.lib.eachDefaultSystem
-    (system: let
-      pkgs = nixpkgs.legacyPackages.${system};
+  }:
+    flake-parts.lib.mkFlake {inherit inputs;} {
+      systems = import systems;
+      imports = [
+        inputs.flake-root.flakeModule
+        inputs.pre-commit-hooks.flakeModule
+        inputs.process-compose-flake.flakeModule
+      ];
 
-      # The current default sdk for macOS fails to compile go projects, so we use a newer one for now.
-      # This has no effect on other platforms.
-      callPackage = pkgs.darwin.apple_sdk_11_0.callPackage or pkgs.callPackage;
-    in {
-      packages = rec {
-        relay = callPackage ./default.nix {};
-        default = relay;
+      flake = {
+        processComposeModules.default = ./services.nix;
       };
-      apps = rec {
-        relay = flake-utils.lib.mkApp {drv = self.packages.${system}.relay;};
-        default = relay;
+      perSystem = {
+        pkgs,
+        system,
+        config,
+        self',
+        lib,
+        ...
+      }: let
+        contracts_abi = contracts.packages.${pkgs.system}.default;
+      in {
+        _module.args.pkgs = import inputs.nixpkgs {
+          inherit system;
+          overlays = [
+            foundry.overlay
+          ];
+        };
+        process-compose = let
+          cli = {
+            options = {
+              no-server = false;
+              port = 8321;
+            };
+          };
+          imports = [
+            inputs.services-flake.processComposeModules.default
+            inputs.contracts.processComposeModules.default
+            inputs.self.processComposeModules.default
+          ];
+          services = {
+            ipfs.enable = true;
+            postgres."psql-relay-test" = {
+              enable = true;
+              initialDatabases = [
+                {
+                  name = "mm-relay-test";
+                  schemas = [./db/schema.sql];
+                }
+              ];
+            };
+            anvil.enable = true;
+            deploy.enable = true;
+          };
+        in {
+          # all but the relay
+          local-testnet-dev = {
+            inherit services imports cli;
+          };
+          local-testnet = {
+            inherit imports cli;
+            services =
+              services
+              // {
+                relay.enable = true;
+              };
+          };
+        };
+
+        pre-commit = {
+          check.enable = true;
+          settings = {
+            src = ./.;
+            hooks = {
+              typos.enable = true;
+              gotest.enable = true;
+              gofmt.enable = true;
+            };
+          };
+        };
+
+        devShells.default = pkgs.mkShell {
+          # local devshell scripts need to come first.
+          buildInputs =
+            [
+              self'.packages.local-testnet-dev
+              pkgs.typos-lsp # code spell checker
+              pkgs.nixd
+            ]
+            ++ config.pre-commit.settings.enabledPackages
+            ++ (with pkgs; [
+              # handy
+              nixpkgs-fmt
+              jq
+              reuse
+
+              # dev tools
+              go_1_23
+              go-outline
+              gopls
+              gopkgs
+              go-tools
+              delve
+              revive
+              errcheck
+              unconvert
+              godef
+              clang
+
+              # mass deps
+              postgresql # TODO: sync with services version
+              protobuf
+              protoc-gen-go
+              go-ethereum # for abigen
+              gotools # for stringer
+              ipfs
+              contracts_abi # abi code generation
+            ]);
+
+          shellHook = ''
+               ${config.pre-commit.settings.installationScript}
+               export $(egrep -v '^#' .env | xargs)
+            export MASS_CONTRACTS=${contracts_abi}
+            export MASS_SCHEMA=${schema}
+            export IPFS_PATH=$PWD/data/ipfs
+          '';
+        };
+
+        packages = rec {
+          relay = pkgs.callPackage ./default.nix {};
+          default = relay;
+        };
       };
-      devShells.default = callPackage ./shell.nix {
-        inherit pre-commit-hooks;
-        inherit contracts schema;
-      };
-    }));
+    };
 }
