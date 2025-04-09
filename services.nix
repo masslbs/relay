@@ -9,6 +9,20 @@
 }: let
   cfg = config.services;
   relay = pkgs.callPackage ./default.nix {};
+
+  check_ipfs_first = pkgs.writeShellScriptBin "check_ipfs_first" ''
+    # Check if IPFS is already running by querying the API
+    if curl -s -X POST "http://localhost:5001/api/v0/id" > /dev/null 2>&1; then
+      echo "Daemon is ready # IPFS is already running"
+      # Keep the process alive but do nothing
+      while true; do
+        sleep 60
+      done
+    else
+      echo "Starting IPFS daemon..."
+      exec ${pkgs.ipfs}/bin/ipfs daemon --init --offline
+    fi
+  '';
 in {
   options = {
     services.ipfs = {
@@ -22,7 +36,7 @@ in {
     settings.processes = {
       # TODO: conditional on present in system..?
       ipfs = {
-        command = "${pkgs.ipfs}/bin/ipfs daemon --init --offline";
+        command = check_ipfs_first;
         ready_log_line = "Daemon is ready";
       };
       relay = {
