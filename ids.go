@@ -24,21 +24,18 @@ type keyCardID uint64
 // ObjectIDArray is a fixed-size byte array representing an object ID
 type ObjectIDArray [8]byte
 
-// Array converts the ObjectId to an ObjectIDArray
-func (obj *ObjectId) Array() ObjectIDArray {
-	assert(len(obj.Raw) == 8)
-	return [8]byte(obj.Raw)
+var zeroObjectIDArr ObjectIDArray
+
+// NewObjectIDArray converts the ObjectId to an ObjectIDArray
+func NewObjectIDArray(obj uint64) ObjectIDArray {
+	var arr ObjectIDArray
+	binary.BigEndian.PutUint64(arr[:], obj)
+	return arr
 }
 
 // Uint64 converts the ObjectId to a uint64
-func (obj *ObjectId) Uint64() uint64 {
-	assert(len(obj.Raw) == 8)
-	return binary.BigEndian.Uint64(obj.Raw)
-}
-
-// Equal checks if two ObjectIds are equal
-func (obj *ObjectId) Equal(other *ObjectId) bool {
-	return bytes.Equal(obj.Raw, other.Raw)
+func (obj ObjectIDArray) Uint64() uint64 {
+	return binary.BigEndian.Uint64(obj[:])
 }
 
 // Equal checks if two ObjectIDArrays are equal
@@ -46,68 +43,43 @@ func (obj ObjectIDArray) Equal(other ObjectIDArray) bool {
 	return bytes.Equal(obj[:], other[:])
 }
 
-// newShopObjectID creates a new ShopObjectIDArray from shop and object IDs
-func newShopObjectID(shop, object ObjectIDArray) ShopObjectIDArray {
-	var so ShopObjectIDArray
-	copy(so[:8], shop[:])
-	copy(so[8:], object[:])
-	return so
-}
-
 // combinedID represents a listing ID with optional variations
 type combinedID struct {
-	listingID ObjectIDArray
+	listingID uint64
 
 	// uint64 ids delimited by :
 	// side-stepping the problem that you can't have a slice in a comparable struct
 	variations string
 }
 
+const variationDelimiter = ":"
+
 // newCombinedID creates a new combinedID from a listing ID and optional variations
-func newCombinedID(listingID *ObjectId, variations ...*ObjectId) combinedID {
+func newCombinedID(listingID uint64, variations ...string) combinedID {
 	cid := combinedID{
-		listingID: listingID.Array(),
+		listingID: listingID,
 	}
-	uints := make([]uint64, len(variations))
-	varStr := make([]string, len(variations))
-	for i, v := range variations {
-		uints[i] = v.Uint64()
-	}
-	slices.Sort(uints)
-	for i, v := range uints {
-		varStr[i] = strconv.FormatUint(v, 10)
-	}
-	cid.variations = strings.Join(varStr, ":")
+	slices.Sort(variations)
+	cid.variations = strings.Join(variations, variationDelimiter)
 	return cid
 }
 
 // Variations returns the variation IDs as an array of ObjectIDArray
-func (cid combinedID) Variations() []ObjectIDArray {
+func (cid combinedID) Variations() []string {
 	if cid.variations == "" {
 		return nil
 	}
-	var (
-		varStrs = strings.Split(cid.variations, ":")
-		vids    = make([]ObjectIDArray, len(varStrs))
-		err     error
-		num     uint64
-	)
-	for i, vidstr := range varStrs {
-		num, err = strconv.ParseUint(vidstr, 10, 64)
-		check(err)
-		binary.BigEndian.PutUint64(vids[i][:], num)
-	}
-	return vids
+	return strings.Split(cid.variations, variationDelimiter)
 }
 
 // Hash generates a Keccak256 hash of the combinedID
 func (cid combinedID) Hash() common.Hash {
 	hasher := sha3.NewLegacyKeccak256()
-	hasher.Write(cid.listingID[:])
+	binary.Write(hasher, binary.BigEndian, cid.listingID)
 
 	if cid.variations != "" {
 		var buf [8]byte
-		varStrs := strings.Split(cid.variations, ":")
+		varStrs := strings.Split(cid.variations, variationDelimiter)
 		for _, vidStr := range varStrs {
 			vid, err := strconv.ParseUint(vidStr, 10, 64)
 			check(err)
