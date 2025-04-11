@@ -23,20 +23,6 @@
       exec ${pkgs.ipfs}/bin/ipfs daemon --init --offline
     fi
   '';
-
-  probe_ipfs = {
-    host = "localhost";
-    port = 5001;
-    scheme = "http";
-    path = "/version";
-  };
-
-  probe_relay = {
-    host = "localhost";
-    port = 4444;
-    scheme = "http";
-    path = "/health";
-  };
 in {
   options = {
     services.ipfs = {
@@ -48,17 +34,26 @@ in {
   };
   config = {
     settings.processes = {
-      # TODO: conditional on present in system..?
       ipfs = {
         command = check_ipfs_first;
-        readiness_probe.http_get = probe_ipfs;
-        liveness_probe.http_get = probe_ipfs;
+        ready_log_line = "Daemon is ready";
+        liveness_probe.http_get = {
+          host = "localhost";
+          port = 5001;
+          scheme = "http";
+          path = "/version";
+        };
       };
       relay = {
         command = "${relay}/bin/relay server";
         log_location = "logs/relay.log";
-        readiness_probe.http_get = probe_relay;
-        liveness_probe.http_get = probe_relay;
+        ready_log_line = "relay.run";
+        liveness_probe.http_get = {
+          host = "localhost";
+          port = 4444;
+          scheme = "http";
+          path = "/health";
+        };
         environment = {
           MASS_ENV = "dev";
           LOG_MESSAGES = "false";
@@ -80,7 +75,7 @@ in {
         depends_on = {
           "anvil".condition = "process_log_ready";
           "psql-relay-test".condition = "process_healthy";
-          "ipfs".condition = "process_healthy";
+          "ipfs".condition = "process_log_ready";
         };
       };
     };
