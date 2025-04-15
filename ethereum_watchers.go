@@ -390,12 +390,14 @@ func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
 				continue
 			}
 
-			debug("watcher.processNewHeadForEther.dbRead took=%d orders=%d", took(start), len(orders))
+			debug("watcher.processNewHeadForEther.dbRead took=%d orders=%d newHeadHeight=%s", took(start), len(orders), newHead.Number)
 
 			// Process the new block for each order
 			for _, order := range orders {
 				addr := order.purchaseAddr
-				balance, err := rpc.BalanceAt(ctx, addr, newHead.Number)
+				// we are testing 2 blocks in the past to avoid reorgs
+				checkBlock := new(big.Int).Sub(newHead.Number, big.NewInt(2))
+				balance, err := rpc.BalanceAt(ctx, addr, checkBlock)
 				if err != nil {
 					err = fmt.Errorf("subscribeNewHeadsForEther.balanceAtFailed addr=%s block=%s err=%w", addr.Hex(), newHead.Number, err)
 					debug(err.Error())
