@@ -963,9 +963,9 @@ func (r *Relay) run() {
 	memoryStatsTimer := NewReusableTimer(memoryStatsInterval)
 	tickStatsTimer := NewReusableTimer(tickStatsInterval)
 
-	tickTypeToTooks := make(map[tickType]time.Duration, len(allTickTypes))
+	tickTypeToTookMap := make(map[tickType]time.Duration, len(allTickTypes))
 	for _, tt := range allTickTypes {
-		tickTypeToTooks[tt] = 0
+		tickTypeToTookMap[tt] = 0
 	}
 
 	for {
@@ -997,11 +997,11 @@ func (r *Relay) run() {
 
 		case <-tickStatsTimer.C:
 			tickType, tickSelected = timeTick(ttTickStats)
-			for tt, e := range tickTypeToTooks {
+			for tt, e := range tickTypeToTookMap {
 				if e.Milliseconds() > 0 {
 					r.metric.gaugeSet(fmt.Sprintf("relay_run_tick_%s_took", tt.String()), float64(e.Milliseconds()))
 				}
-				tickTypeToTooks[tt] = 0
+				tickTypeToTookMap[tt] = 0
 			}
 			tickStatsTimer.Rewind()
 		}
@@ -1010,11 +1010,11 @@ func (r *Relay) run() {
 		assert(!tickSelected.IsZero())
 		tickWait := tickSelected.Sub(tickStart)
 		tickTook := time.Since(tickSelected)
-		tickTypeToTooks[ttWait] += tickWait
-		e, ok := tickTypeToTooks[tickType]
+		tickTypeToTookMap[ttWait] += tickWait
+		e, ok := tickTypeToTookMap[tickType]
 		assert(ok)
 		e += tickTook
-		tickTypeToTooks[tickType] = e
+		tickTypeToTookMap[tickType] = e
 		if tickTook > tickBlockThreshold {
 			log("relay.run.tick.block type=%s took=%d", tickType, tickTook.Milliseconds())
 		}

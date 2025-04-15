@@ -29,7 +29,7 @@ import (
 // IPFS integration
 const ipfsMaxConnectTries = 3
 
-// getIpfsClient recursivly calls itself until it was able to connect or until ipfsMaxConnectTries is reached.
+// getIpfsClient recursively calls itself until it was able to connect or until ipfsMaxConnectTries is reached.
 func getIpfsClient(ctx context.Context, errCount int, lastErr error) (*ipfsRpc.HttpApi, error) {
 	if errCount >= ipfsMaxConnectTries {
 		return nil, fmt.Errorf("getIpfsClient: tried %d times.. last error: %w", errCount, lastErr)

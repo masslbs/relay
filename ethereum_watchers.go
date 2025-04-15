@@ -150,7 +150,7 @@ func (r *Relay) getPaymentWaiterForERC20Transfer(chainID uint64, purchaseAddr, t
 	query := `
 		SELECT shopId, orderId, paymentChosenAt, purchaseAddr, lastBlockNo, coinsTotal, erc20TokenAddr
 		FROM payments
-		WHERE payedAt IS NULL
+		WHERE paidAt IS NULL
 			AND erc20TokenAddr = $1
 			AND purchaseAddr = $2
 			AND paymentChosenAt >= NOW() - INTERVAL '1 day'
@@ -180,7 +180,7 @@ func (r *Relay) getPaymentWaiterForPaymentMade(chainID uint64, paymentIDHash com
 	const query = `SELECT shopId, orderId, paymentChosenAt
 	FROM payments
 	WHERE
-	payedAt IS NULL
+	paidAt IS NULL
 	AND paymentChosenAt >= NOW() - INTERVAL '1 day'
 	AND paymentID = $1
 	AND chainId = $2`
@@ -431,7 +431,7 @@ func (r *Relay) getOpenEtherPayments(ctx context.Context, chainID uint64) (map[c
 
 	openPaymentsQry := `SELECT shopId, orderId, paymentChosenAt, purchaseAddr, coinsTotal
 			FROM payments
-			WHERE payedAt IS NULL
+			WHERE paidAt IS NULL
 				AND erc20TokenAddr IS NULL
 				AND paymentChosenAt >= NOW() - INTERVAL '1 day'
 		        AND chainId = $1

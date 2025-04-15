@@ -100,12 +100,12 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 
 			// assuming the enrollment is directly on the relay
 			if msg.GetDomain() != refererURL.Host {
-				return http.StatusBadRequest, fmt.Errorf("referered domain did not match")
+				return http.StatusBadRequest, fmt.Errorf("referred domain did not match")
 			}
 
 			siweURI := msg.GetURI()
 			if siweURI.Host != refererURL.Host {
-				return http.StatusBadRequest, fmt.Errorf("refered URI did not match")
+				return http.StatusBadRequest, fmt.Errorf("referred URI did not match")
 			}
 
 			/* TODO: not sure how to scope this

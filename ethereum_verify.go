@@ -60,8 +60,8 @@ func ecrecoverEIP191AndCompare(message, signature, publicKey []byte) error {
 	return nil
 }
 
-func verifyChallengeResponse(publicKey, challange, signature []byte) error {
-	return ecrecoverEIP191AndCompare(challange, signature, publicKey)
+func verifyChallengeResponse(publicKey, challenge, signature []byte) error {
+	return ecrecoverEIP191AndCompare(challenge, signature, publicKey)
 }
 
 // VerifyPatchSetSignature verifies the signature of the event

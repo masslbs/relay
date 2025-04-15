@@ -12,7 +12,7 @@ create table shops (
 
 -- TODO: document why keyCards and relayKeyCards use the same sequence
 -- in short, we need unique values for events.createdByKeyCardId
--- alternativly we could might make keyCards polymorphic
+-- alternatively we could might make keyCards polymorphic
 
 CREATE SEQUENCE keyCardIdSeq START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
 
@@ -109,13 +109,13 @@ CREATE TABLE payments (
     chainId          integer,
     lastBlockNo      NUMERIC(80,0),
     coinsTotal       NUMERIC(80,0),
-    -- (optional) set if the order is payed with an erc20 token
+    -- (optional) set if the order is paid with an erc20 token
     erc20TokenAddr   bytea,
 
-    -- set once payed
-    payedAt     TIMESTAMP,
-    payedTx     bytea,
-    payedBlock  bytea,
+    -- set once paid
+    paidAt     TIMESTAMP,
+    paidTx     bytea,
+    paidBlock  bytea,
 
     -- set if for e.g. a clerk cancels it or a variation was removed
     canceledAt    TIMESTAMP
@@ -131,10 +131,10 @@ alter table payments add constraint paymentChosen check (paymentChosenAt is null
     lastBlockNo is NOT NULL OR
     coinsTotal  is NOT NULL
 ));
-alter table payments add constraint paidHash check (payedAt is null or (
-    payedTx is NOT NULL OR payedBlock is NOT NULL
+alter table payments add constraint paidHash check (paidAt is null or (
+    paidTx is NOT NULL OR paidBlock is NOT NULL
 ));
 
 CREATE UNIQUE INDEX paymentsOrderId ON payments (shopId, orderId);
 CREATE INDEX paymentsOrderFinalizedAt ON payments (paymentChosenAt);
-CREATE INDEX paymentsPayedAt ON payments (payedAt);
+CREATE INDEX paymentsPaidAt ON payments (paidAt);

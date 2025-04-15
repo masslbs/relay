@@ -41,7 +41,7 @@ func pinataPin(cid path.ImmutablePath, name string) (pinataPinResponse, error) {
 	url := fmt.Sprintf("https://%s/pinning/pinByHash", host)
 
 	// Create the request body
-	requestBody := map[string]interface{}{
+	requestBody := map[string]any{
 		"hashToPin": cid.RootCid().String(),
 		"pinataMetadata": map[string]string{
 			"name": name,

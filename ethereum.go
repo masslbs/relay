@@ -286,7 +286,7 @@ func (t erc20Metadata) validate() *pb.Error {
 	return nil
 }
 
-// CheckValidERC20Metadata validates the existance of the token contract
+// CheckValidERC20Metadata validates the existence of the token contract
 func (rpc *ethRPCService) CheckValidERC20Metadata(chainID uint64, tokenAddr common.Address) *pb.Error {
 	t, err := rpc.GetERC20Metadata(chainID, tokenAddr)
 	if err != nil {
@@ -603,7 +603,7 @@ func (lookup *paymentIDandAddressEthLookup) process(client *ethClient) {
 	// TODO: this is call is bit more involved, since we need the bytecode of the to be deployed contract
 	purchaseAddr, err := paymentsContract.GetPaymentAddress(callOpts, *lookup.paymentReq, lookup.fallback)
 	if err != nil {
-		lookup.closeWithError(fmt.Errorf("failed to retreive paymentAddr: %w", err))
+		lookup.closeWithError(fmt.Errorf("failed to retrieve paymentAddr: %w", err))
 		return
 	}
 	lookup.resultID = paymentID

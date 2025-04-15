@@ -675,7 +675,7 @@ func isListingVariationRemoved(p patch.Patch) bool {
 	return p.Op == patch.RemoveOp
 }
 
-// if we remove a variation from an unpayed order, we need to cancel open orders for it to avoid edge cases
+// if we remove a variation from an unpaid order, we need to cancel open orders for it to avoid edge cases
 func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []patch.Patch {
 	ctx := context.Background()
 	sessionState := r.sessionIDsToSessionStates.Get(sessionID)
@@ -706,7 +706,7 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 
 	otherOrderRows, err := r.connPool.Query(ctx, `select orderId from payments
 	where shopId = $1
-		and payedAt is null
+		and paidAt is null
 		and itemsLockedAt >= now() - interval '1 day'`, sessionState.shopID[:])
 	check(err)
 
@@ -829,7 +829,7 @@ func (r *Relay) processOrderItemsCommitment(sessionID sessionID, shop *objects.S
 	otherOrderRows, err := r.connPool.Query(ctx, `select orderId from payments
 where shopId = $1
 	  and orderId != $2
-	  and payedAt is null
+	  and paidAt is null
 	  and itemsLockedAt >= now() - interval '1 day'`,
 		sessionState.shopID[:],
 		orderDBID[:],
@@ -1649,12 +1649,12 @@ func (op *PaymentFoundInternalOp) process(r *Relay) {
 		copy(paid.TxHash[:], txHashBytes)
 	}
 
-	const markOrderAsPayedQuery = `UPDATE payments SET
-payedAt = NOW(),
-payedTx = $1,
-payedBlock = $2
+	const markOrderAsPaidQuery = `UPDATE payments SET
+paidAt = NOW(),
+paidTx = $1,
+paidBlock = $2
 WHERE shopID = $3 and orderId = $4;`
-	commandTag, err := r.connPool.Exec(context.Background(), markOrderAsPayedQuery, txHash, blockHash, op.shopID[:], op.orderID[:])
+	commandTag, err := r.connPool.Exec(context.Background(), markOrderAsPaidQuery, txHash, blockHash, op.shopID[:], op.orderID[:])
 	check(err)
 	// check that the command tag is 1 row affected
 	if commandTag.RowsAffected() != 1 {
