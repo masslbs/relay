@@ -74,6 +74,7 @@ in {
         };
         depends_on = {
           "anvil".condition = "process_log_ready";
+          "deploy".condition = "process_completed";
           "psql-relay-test".condition = "process_healthy";
           "ipfs".condition = "process_log_ready";
         };
