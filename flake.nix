@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2024 - 2025 Mass Labs
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
+
 {
   description = "Mass Market Relay";
 
@@ -87,7 +88,7 @@
               ];
             };
             anvil.enable = true;
-            deploy.enable = true;
+            deploy-contracts.enable = true;
           };
         in {
           # all but the relay
@@ -158,9 +159,9 @@
           shellHook = ''
                ${config.pre-commit.settings.installationScript}
                export $(egrep -v '^#' .env | xargs)
-            export MASS_CONTRACTS=${contracts_abi}
-            export MASS_SCHEMA=${schema}
-            export IPFS_PATH=$PWD/data/ipfs
+               export MASS_CONTRACTS=${contracts_abi}
+               export MASS_SCHEMA=${schema}
+               export IPFS_PATH=$PWD/data/ipfs
           '';
         };
 

@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2025 Mass Labs
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
+
 {
   config,
   lib,
@@ -74,7 +75,7 @@ in {
         };
         depends_on = {
           "anvil".condition = "process_log_ready";
-          "deploy".condition = "process_completed";
+          "deploy-contracts".condition = "process_completed";
           "psql-relay-test".condition = "process_healthy";
           "ipfs".condition = "process_log_ready";
         };

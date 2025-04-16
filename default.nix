@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: 2024 - 2025 Mass Labs
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
+
 {pkgs}: let
-  version = "0.1";
+  version = "4";
 in
   pkgs.buildGoModule {
     inherit version;
