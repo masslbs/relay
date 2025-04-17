@@ -131,8 +131,10 @@ func newEthRPCService(chains map[uint64][]string) *ethRPCService {
 		relayTokenID.SetBytes(buf)
 
 		nftOwner, err := relaysReg.OwnerOf(callOpts, relayTokenID)
-		check(err)
-		assertWithMessage(nftOwner.Cmp(wallet) == 0, fmt.Sprintf("passed NFT is owned by %s", nftOwner))
+		if err != nil {
+			check(fmt.Errorf("failed to get owner of relay token: %w", err))
+		}
+		assertWithMessage(nftOwner.Cmp(wallet) == 0, fmt.Sprintf("passed NFT is owned by %s not %s", nftOwner, wallet))
 
 	} else { // in testing, always create a new nft
 		gethc, err := c.getRPC(ctx)

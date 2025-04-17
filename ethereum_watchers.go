@@ -408,13 +408,20 @@ func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
 					continue
 				}
 
+				checkedBlock, err := rpc.BlockByNumber(ctx, checkBlock)
+				if err != nil {
+					err = fmt.Errorf("subscribeNewHeadsForEther.getBlockByNumberFailed block=%s err=%w", checkBlock, err)
+					debug(err.Error())
+					return repeat.HintTemporary(err)
+				}
+
 				debug("watcher.subscribeNewHeadsForEther.checkTx checkingBlock=%s to=%s", newHead.Hash().Hex(), addr.Hex())
 				orderID := order.orderID
 
 				op := PaymentFoundInternalOp{
 					shopID:    order.shopID,
 					orderID:   order.orderID,
-					blockHash: newHead.Hash(),
+					blockHash: checkedBlock.Hash(),
 					done:      make(chan struct{}),
 				}
 				r.opsInternal <- &op
