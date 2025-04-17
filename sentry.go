@@ -32,7 +32,7 @@ func init() {
 }
 
 // wraps the passed handler such that panics are reported and the reporter tool can be unboxed in handlers via http.Request.Context
-func sentrySetupHttpHandler(handler http.Handler) http.Handler {
+func sentrySetupHTTPHandler(handler http.Handler) http.Handler {
 	// middleware that attaches area=http to all thrown exceptions
 	addTags := func(handler http.Handler) http.HandlerFunc {
 		return func(rw http.ResponseWriter, r *http.Request) {
@@ -67,13 +67,13 @@ func sentryRecover() {
 // test handler that can be used to test sentry integration
 func sentryTestHandler() func(http.ResponseWriter, *http.Request) {
 	log("server.sentryTestHandler")
-	return func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, _ *http.Request) {
 		log("server.sentryTestHandler.start")
 
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "ok")
 		log("server.sentryTestHandler.panic")
-		err := errors.New("Bang!")
+		err := errors.New("Bang")
 		panic(err)
 	}
 }
