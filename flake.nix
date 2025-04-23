@@ -1,21 +1,15 @@
 # SPDX-FileCopyrightText: 2024 - 2025 Mass Labs
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
-
 {
   description = "Mass Market Relay";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-24.11";
     systems.url = "github:nix-systems/default";
-    flake-parts = {
-      url = "github:hercules-ci/flake-parts";
-    };
-    flake-root.url = "github:srid/flake-root";
+    flake-parts.url = "github:hercules-ci/flake-parts";
 
-    process-compose-flake = {
-      url = "github:Platonic-Systems/process-compose-flake";
-    };
+    process-compose-flake.url = "github:Platonic-Systems/process-compose-flake";
     services-flake.url = "github:juspay/services-flake";
 
     pre-commit-hooks = {
@@ -27,6 +21,11 @@
     foundry.follows = "contracts/foundry";
 
     schema.url = "github:masslbs/network-schema/v4";
+
+
+    pystoretest.url = "github:masslbs/pystoretest/network-v4";
+    # pystoretest.inputs.nixpkgs.follows = "nixpkgs"; # needs unstable nixpkgs
+    pystoretest.inputs.contracts.follows = "contracts";
   };
 
   outputs = inputs @ {
@@ -35,19 +34,17 @@
     foundry,
     contracts,
     schema,
+    pystoretest,
     ...
   }:
     flake-parts.lib.mkFlake {inherit inputs;} {
       systems = import systems;
       imports = [
-        inputs.flake-root.flakeModule
         inputs.pre-commit-hooks.flakeModule
         inputs.process-compose-flake.flakeModule
       ];
 
-      flake = {
-        processComposeModules.default = ./services.nix;
-      };
+      flake = {processComposeModules.default = ./services.nix;};
       perSystem = {
         pkgs,
         system,
@@ -60,9 +57,7 @@
       in {
         _module.args.pkgs = import inputs.nixpkgs {
           inherit system;
-          overlays = [
-            foundry.overlay
-          ];
+          overlays = [foundry.overlay];
         };
         process-compose = let
           cli = {
@@ -92,16 +87,10 @@
           };
         in {
           # all but the relay
-          local-testnet-dev = {
-            inherit services imports cli;
-          };
+          local-testnet-dev = {inherit services imports cli;};
           local-testnet = {
             inherit imports cli;
-            services =
-              services
-              // {
-                relay.enable = true;
-              };
+            services = services // {relay.enable = true;};
           };
         };
 
@@ -111,26 +100,26 @@
             src = ./.;
             hooks = {
               typos.enable = true;
-              gotest.enable = true;
               gofmt.enable = true;
+              alejandra.enable = true;
+              gotest.enable = true;
             };
           };
         };
 
         devShells.default = pkgs.mkShell {
-          # local devshell scripts need to come first.
           buildInputs =
             [
               self'.packages.local-testnet-dev
-              pkgs.typos-lsp # code spell checker
-              pkgs.nixd
+              pystoretest.packages.${pkgs.system}.default
             ]
             ++ config.pre-commit.settings.enabledPackages
             ++ (with pkgs; [
               # handy
-              nixpkgs-fmt
+              alejandra
               jq
               reuse
+              nixd
               typos-lsp
 
               # dev tools
@@ -157,11 +146,11 @@
             ]);
 
           shellHook = ''
-               ${config.pre-commit.settings.installationScript}
-               export $(egrep -v '^#' .env | xargs)
-               export MASS_CONTRACTS=${contracts_abi}
-               export MASS_SCHEMA=${schema}
-               export IPFS_PATH=$PWD/data/ipfs
+            ${config.pre-commit.settings.installationScript}
+            export $(egrep -v '^#' .env | xargs)
+            export MASS_CONTRACTS=${contracts_abi}
+            export MASS_SCHEMA=${schema}
+            export IPFS_PATH=$PWD/data/ipfs
           '';
         };
 
