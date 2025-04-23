@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Mass Labs
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
-
 {
   config,
   lib,
@@ -26,11 +25,15 @@
   '';
 in {
   options = {
-    services.ipfs = {
-      enable = lib.mkEnableOption "Start ipfs";
-    };
-    services.relay = {
-      enable = lib.mkEnableOption "Start relay";
+    services.ipfs = {enable = lib.mkEnableOption "Start ipfs";};
+    services.relay = {enable = lib.mkEnableOption "Start relay";};
+    services.relay_generate_shop = {
+      enable = lib.mkEnableOption "Start generate_shop";
+      command = lib.mkOption {
+        type = lib.types.str;
+        default = "/bin/false";
+        description = "Command to run for generate_shop service";
+      };
     };
   };
   config = {
@@ -80,6 +83,19 @@ in {
           "deploy-contracts".condition = "process_completed";
           "psql-relay-test".condition = "process_healthy";
           "ipfs".condition = "process_log_ready";
+        };
+      };
+      relay_generate_shop = {
+        command = cfg.relay_generate_shop.command;
+        environment = {
+          TEST_MAKE_HYDRATION_DATA = "/tmp/shopgen-metadata";
+          RELAY_PING = "0.2";
+          RELAY_HTTP_ADDRESS = "http://localhost:4444";
+          ETH_PRIVATE_KEY = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"; # anvil key 0
+          JS_SAFE = "1";
+        };
+        depends_on = {
+          "relay".condition = "process_log_ready";
         };
       };
     };
