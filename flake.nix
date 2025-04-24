@@ -54,6 +54,8 @@
         ...
       }: let
         contracts_abi = contracts.packages.${pkgs.system}.default;
+
+        relay = pkgs.callPackage ./default.nix {};
       in {
         _module.args.pkgs = import inputs.nixpkgs {
           inherit system;
@@ -154,10 +156,31 @@
           '';
         };
 
-        packages = rec {
-          relay = pkgs.callPackage ./default.nix {};
-          default = relay;
-        };
+        packages.default = relay.overrideAttrs (oldAttrs: {
+          doCheck = true;
+          checkPhase = ''
+            # Run original check phase first
+            ${oldAttrs.checkPhase or ""}
+
+            echo "Running custom check phase with local-testnet and pystoretest..."
+
+            # Start local-testnet
+            ${self'.packages.local-testnet-dev}/bin/local-testnet-dev up -D
+
+            # Wait for services to be ready
+            sleep 10
+
+            # Run pystoretest against the local testnet
+            export RELAY_HTTP_ADDRESS=http://localhost:4444
+            export RELAY_PING=0.1
+            export ETH_PRIVATE_KEY=ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+            export ETH_RPC_URL=http://localhost:8545
+            ${pystoretest.packages.${pkgs.system}.default}/bin/pystoretest --benchmark-skip -n auto
+
+            # Clean up
+            ${self'.packages.local-testnet-dev}/bin/local-testnet-dev down
+          '';
+        });
       };
     };
 }
