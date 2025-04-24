@@ -165,7 +165,13 @@
             echo "Running custom check phase with local-testnet and pystoretest..."
 
             # Start local-testnet
-            ${self'.packages.local-testnet-dev}/bin/local-testnet-dev up -D
+            tempDir=$(mktemp -d)
+            pushd $tempDir
+            mkdir -p data/ipfs
+            echo "IPFS_PATH=$tempDir/data/ipfs" >> .env
+            # TODO: -D once deploy-contracts is fixed
+            ${self'.packages.local-testnet}/bin/local-testnet --read-only -t=false up
+            popd
 
             # Wait for services to be ready
             sleep 10
@@ -178,7 +184,7 @@
             ${pystoretest.packages.${pkgs.system}.default}/bin/pystoretest --benchmark-skip -n auto
 
             # Clean up
-            ${self'.packages.local-testnet-dev}/bin/local-testnet-dev down
+            ${self'.packages.local-testnet}/bin/local-testnet --read-only down
           '';
         });
       };
