@@ -18,8 +18,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: relay
 
       # not needed on self-hosted but kept around if we want to use it on github-hosted
       #- name: Install Nix
@@ -29,33 +27,12 @@ jobs:
         with:
           flake-lock-path: relay/flake.lock
 
-      - name: Extract branches
-        shell: bash
-        run: |
-          echo "relay_pr=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
-        id: branches
-
       - name: build relay and deploy services (anvil, postgres, ipfs)
         run: nix develop -c local-testnet-dev -D -L logs/process-compose.log
-        working-directory: relay
-
-      - name: git clone pystoretest
-        uses: ./relay/.github/actions/checkout
-        with:
-          repository: masslbs/pystoretest
-          path: pystoretest
-          ref: ${{ steps.branches.outputs.relay_pr }}
-
-      - name: prepare env file for pystoretest
-        run: |
-          cp .env.sample .env
-          cat .env
-        working-directory: pystoretest
 
       # TODO: we should be able to move these to probes
       # but we still need a way to see if relay is running...
       - name: check services
-        working-directory: relay 
         run: |
           set -e
           curl http://localhost:8321/live
@@ -66,7 +43,7 @@ jobs:
             # check if relay is ready
             processStateFname=logs/processes-${timeout}.json
             curl http://localhost:8321/processes > $processStateFname
-            isReady=$(cat $processStateFname | jq -r '.data[] | select(.name == "relay") | .is_ready')
+            isReady=$(jq -r '.data[] | select(.name == "relay") | .is_ready' $processStateFname)
             if [ "$isReady" == "Ready" ]; then
               break
             fi
@@ -85,20 +62,27 @@ jobs:
           curl http://localhost:4444/health
           curl http://localhost:5001/api/v0/version -X POST
           curl http://localhost:8545/ -X POST -H 'content-type: application/json' --data-raw '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":0}'
-        
+
       # test VM has 6 cores so we spare one for the relay and docker services
       - name: Run tests
-        run: nix develop -c pytest -x -vv -n 5 --benchmark-skip
-        working-directory: pystoretest
+        env:
+          RELAY_HTTP_ADDRESS: http://localhost:4444
+          RELAY_PING: 0.250
+          ETH_PRIVATE_KEY: ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+          ETH_RPC_URL: http://localhost:8545
+        run: nix develop -c pytestoretest -- -x -vv -n 5 --benchmark-skip
 
       - name: Run benchmarks
         if: runner.name == 'ci-runner2'
-        run: nix develop -c pytest --benchmark-only --benchmark-json ../bench-output.json
-        working-directory: pystoretest
+        env:
+          RELAY_HTTP_ADDRESS: http://localhost:4444
+          RELAY_PING: 0.250
+          ETH_PRIVATE_KEY: ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+          ETH_RPC_URL: http://localhost:8545
+        run: nix develop -c pytestoretest --benchmark-only --benchmark-json ../bench-output.json
 
       - name: Shutdown services
         run: nix run '.#local-testnet-dev' -- down
-        working-directory: relay
 
       # TODO: compare against previous run
       - name: Post benchmark results
@@ -116,7 +100,6 @@ jobs:
           "- **Time:** \(.commit_info.time)\n"
           ' ../bench-output.json)
           echo "$BENCHMARK_SUMMARY" >> $GITHUB_STEP_SUMMARY
-        working-directory: relay
 
       - name: Upload service compose log on failure
         if: ${{ failure() }}
