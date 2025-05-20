@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"net/url"
@@ -471,6 +472,10 @@ type PatchSetInsert struct {
 	psetHeaderData []byte
 	pset           *patch.SignedPatchSet
 	proofs         [][]byte
+
+	cborData     []byte
+	jsonData     []byte
+	shopRootHash objects.Hash
 }
 
 func (r *Relay) queuePatchSet(cm CachedMetadata, pset *patch.SignedPatchSet, headerData []byte, proofs [][]byte) {
@@ -480,9 +485,9 @@ func (r *Relay) queuePatchSet(cm CachedMetadata, pset *patch.SignedPatchSet, hea
 	cm.serverSeq = nextServerSeq
 	r.lastUsedServerSeq = nextServerSeq
 
-	shopSeqPair := r.shopIDsToShopState.MustGet(cm.createdByShopID)
-	cm.shopSeq = shopSeqPair.lastUsedSeq + 1
-	shopSeqPair.lastUsedSeq = cm.shopSeq
+	shopState := r.shopIDsToShopState.MustGet(cm.createdByShopID)
+	cm.shopSeq = shopState.lastUsedSeq + 1
+	shopState.lastUsedSeq = cm.shopSeq
 
 	assert(len(proofs) == len(pset.Patches))
 	insert := &PatchSetInsert{
@@ -491,6 +496,13 @@ func (r *Relay) queuePatchSet(cm CachedMetadata, pset *patch.SignedPatchSet, hea
 		pset:           pset,
 		proofs:         proofs,
 	}
+	var err error
+	insert.cborData, err = cbor.Marshal(shopState.data)
+	check(err)
+	insert.jsonData, err = json.Marshal(shopState.data)
+	check(err)
+	insert.shopRootHash, err = shopState.data.Hash()
+	check(err)
 	r.queuedPatchSetInserts = append(r.queuedPatchSetInserts, insert)
 }
 
@@ -628,13 +640,26 @@ func formPatchInsert(p patch.Patch, patchIndex int, serverSeq uint64, proof []by
 	}
 }
 
+var dbShopStateInsertColumns = []string{"shopId", "shopSeq", "rootHash", "cborData", "jsonData"}
+
+func formShopStateInsert(ins *PatchSetInsert) []interface{} {
+	return []interface{}{
+		ins.createdByShopID.Uint64(),
+		ins.shopSeq,
+		ins.shopRootHash[:],
+		ins.cborData,
+		ins.jsonData,
+	}
+}
+
 func (r *Relay) flushPatchSets() {
 	if len(r.queuedPatchSetInserts) == 0 {
 		return
 	}
 	assert(r.writesEnabled)
 	log("relay.flushPatchSets.start entries=%d", len(r.queuedPatchSetInserts))
-	start := now()
+	total := now()
+	start := total
 
 	patchSetTuples := make([][]any, len(r.queuedPatchSetInserts))
 	relayEvents := make(map[keyCardID]uint64)
@@ -664,7 +689,8 @@ func (r *Relay) flushPatchSets() {
 		shopState.lastWrittenSeq = rowShopSeq
 	}
 	assert(r.lastWrittenServerSeq <= r.lastUsedServerSeq)
-	log("relay.flushPatchSets.patchSets insertedSets=%d", len(insertedPatchSets))
+	log("relay.flushPatchSets.patchSets insertedSets=%d took=%d", len(insertedPatchSets), took(start))
+	start = now()
 
 	ctx := context.Background()
 	if len(relayEvents) > 0 {
@@ -679,6 +705,8 @@ func (r *Relay) flushPatchSets() {
 			assertWithMessage(aff == 1, fmt.Sprintf("keyCards affected not 1 but %d", aff))
 		}
 	}
+	log("relay.flushPatchSets.relayEvents took=%d", took(start))
+	start = now()
 
 	// Insert the patches that belong to each patchSet
 	var patchTuples [][]any
@@ -688,9 +716,17 @@ func (r *Relay) flushPatchSets() {
 		}
 	}
 	insertedPatchRows := r.bulkInsert("patches", dbPatchInsertColumns, patchTuples)
-	log("relay.flushPatchSets.patches insertedPatches=%d", len(insertedPatchRows))
+	log("relay.flushPatchSets.patches insertedPatches=%d took=%d", len(insertedPatchRows), took(start))
+	start = now()
 
-	log("relay.flushPatchSets.finish took=%d", took(start))
+	shopStateTuples := make([][]any, len(r.queuedPatchSetInserts))
+	for i, ins := range r.queuedPatchSetInserts {
+		shopStateTuples[i] = formShopStateInsert(ins)
+	}
+	insertedShopStateRows := r.bulkInsert("shopStateData", dbShopStateInsertColumns, shopStateTuples)
+	log("relay.flushPatchSets.shopStates insertedShopStates=%d took=%d", len(insertedShopStateRows), took(start))
+
+	log("relay.flushPatchSets.finish tookTotal=%d", took(total))
 }
 
 // Database processing

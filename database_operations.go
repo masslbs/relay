@@ -654,8 +654,8 @@ func (op *PatchSetWriteOp) process(r *Relay) {
 	// all patches applied successfully, update shop state
 	shopState.data = proposal
 
-	// update shop
 	r.beginSyncTransaction()
+
 	meta := newMetadata(sessionState.keyCardID, sessionState.shopID, uint16(sessionState.version))
 	r.queuePatchSet(meta, op.decoded, op.headerData, op.proofs)
 
@@ -665,6 +665,8 @@ func (op *PatchSetWriteOp) process(r *Relay) {
 
 	setCount := len(r.queuedPatchSetInserts)
 
+	r.commitSyncTransaction()
+
 	// compute resulting hash
 	op.newShopHash, err = shopState.data.Hash()
 	if err != nil {
@@ -673,7 +675,6 @@ func (op *PatchSetWriteOp) process(r *Relay) {
 		r.sendSessionOp(sessionState, op)
 		return
 	}
-	r.commitSyncTransaction()
 
 	r.sendSessionOp(sessionState, op)
 	logSR("relay.patchSetWriteOp.finish new_events=%d took=%d", sessionID, requestID, setCount, took(start))

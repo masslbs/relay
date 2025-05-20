@@ -40,6 +40,19 @@ create table relayKeyCards (
     lastWrittenEventNonce bigint NOT NULL
 );
 
+create table shopStateData (
+    shopId bigint NOT NULL,
+    shopSeq bigint NOT NULL,
+    rootHash bytea NOT NULL,
+    cborData bytea NOT NULL,
+    jsonData jsonb NOT NULL
+);
+alter table shopStateData add constraint shopStateDataShopSeq check (shopSeq > 0);
+alter table shopStateData add constraint shopStateDataRootHash check (octet_length(rootHash) = 32);
+alter table shopStateData add constraint shopStateDataCborData check (octet_length(cborData) > 1);
+
+create unique index shopStateDataOnShopIdAndShopSeq on shopStateData(shopId,shopSeq);
+
 create table patchSets (
     serverSeq bigint NOT NULL primary key,
     keycardNonce bigint NOT NULL,
@@ -50,7 +63,7 @@ create table patchSets (
     createdByNetworkSchemaVersion bigint NOT NULL,
     receivedAt timestamptz NOT NULL,
     header bytea NOT NULL, -- CBOR encoded patchset header
-    signature bytea NOT NULL 
+    signature bytea NOT NULL
 );
 alter table patchSets add constraint patchSetsShopId check (octet_length(createdByShopId) = 8);
 alter table patchSets add constraint patchSetsSignature check (octet_length(signature) = 65);
