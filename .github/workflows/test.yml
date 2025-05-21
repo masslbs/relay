@@ -45,7 +45,6 @@ jobs:
           repository: masslbs/pystoretest
           path: pystoretest
           ref: ${{ steps.branches.outputs.relay_pr }}
-          fallback-branch: network-v4
 
       - name: prepare env file for pystoretest
         run: |

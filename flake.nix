@@ -26,7 +26,7 @@
     contracts.url = "github:masslbs/contracts";
     foundry.follows = "contracts/foundry";
 
-    schema.url = "github:masslbs/network-schema/v4.0";
+    schema.url = "github:masslbs/network-schema/v4";
   };
 
   outputs = inputs @ {

@@ -1086,8 +1086,8 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 	diff := new(big.Int)
 	logS(sessionID, "relay.orderPaymentChoiceOp.total beforeModifiers=%s", bigTotal)
 	for _, mod := range shippingRegion.PriceModifiers {
-		if mod.ModificationPrecents != nil {
-			perc := mod.ModificationPrecents
+		if mod.ModificationPercent != nil {
+			perc := mod.ModificationPercent
 			diff.Set(perc)
 			bigTotal.Mul(bigTotal, diff)
 			bigTotal.Div(bigTotal, big100)

@@ -474,16 +474,16 @@
         "utils": "utils"
       },
       "locked": {
-        "lastModified": 1747759732,
-        "narHash": "sha256-7Xc5ykbJZ4AA9Oyhmh922nUF28KqYia9nLZP8Xx/tm8=",
+        "lastModified": 1747848166,
+        "narHash": "sha256-CIDYJInIS5gop25Ddp0Js4Bj+IERAhOHDxcbrwTxLBY=",
         "owner": "masslbs",
         "repo": "network-schema",
-        "rev": "2c21a46444279c95b8cef0c36a1f5854a080a5b2",
+        "rev": "c71627e9a80aae9747cf75d702a78046d5ea0518",
         "type": "github"
       },
       "original": {
         "owner": "masslbs",
-        "ref": "v4.0",
+        "ref": "v4",
         "repo": "network-schema",
         "type": "github"
       }
