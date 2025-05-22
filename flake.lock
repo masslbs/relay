@@ -478,16 +478,15 @@
         "nixpkgs": "nixpkgs_3"
       },
       "locked": {
-        "lastModified": 1745827513,
-        "narHash": "sha256-hzf3yr+YOeBUiamWfsIXGEXQ1k+XQtOEHjSeTZM1lZk=",
+        "lastModified": 1747848481,
+        "narHash": "sha256-dN0WM3jCkyASgYTGivKigZhWsgq8E5YFp68hnOJfqkM=",
         "owner": "masslbs",
         "repo": "pystoretest",
-        "rev": "80ea3a0a4a83686bf9c2f05d7531e2fc7d53eb92",
+        "rev": "d702d4884a96d7387a6f6adbfc61c1bb2e869483",
         "type": "github"
       },
       "original": {
         "owner": "masslbs",
-        "ref": "network-v4",
         "repo": "pystoretest",
         "type": "github"
       }
