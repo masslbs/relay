@@ -25,7 +25,7 @@ jobs:
       #- uses: DeterminateSystems/magic-nix-cache-action@main
       - uses: DeterminateSystems/flake-checker-action@main
         with:
-          flake-lock-path: relay/flake.lock
+          flake-lock-path: flake.lock
 
       - name: build relay and deploy services (anvil, postgres, ipfs)
         run: nix develop -c local-testnet-dev -D -L logs/process-compose.log
@@ -106,4 +106,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: process-compose-log.txt
-          path: relay/logs/
+          path: logs/
