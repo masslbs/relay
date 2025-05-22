@@ -22,8 +22,7 @@
 
     schema.url = "github:masslbs/network-schema/v4";
 
-
-    pystoretest.url = "github:masslbs/pystoretest/network-v4";
+    pystoretest.url = "github:masslbs/pystoretest";
     # pystoretest.inputs.nixpkgs.follows = "nixpkgs"; # needs unstable nixpkgs
     pystoretest.inputs.contracts.follows = "contracts";
   };
