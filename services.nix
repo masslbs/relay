@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Mass Labs
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
-
 {
   config,
   lib,
@@ -26,12 +25,8 @@
   '';
 in {
   options = {
-    services.ipfs = {
-      enable = lib.mkEnableOption "Start ipfs";
-    };
-    services.relay = {
-      enable = lib.mkEnableOption "Start relay";
-    };
+    services.ipfs = {enable = lib.mkEnableOption "Start ipfs";};
+    services.relay = {enable = lib.mkEnableOption "Start relay";};
   };
   config = {
     settings.processes = {
