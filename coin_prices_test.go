@@ -38,9 +38,7 @@ func TestTestingConverter(t *testing.T) {
 	}
 
 	tcSetup := testingConverter{
-		ethereum: newEthRPCService(map[uint64][]string{
-			1337: {"http://localhost:8545"},
-		}),
+		ethereum: newEthRPCService(nil), // does not need network
 		decimals: map[objects.ChainAddress]uint8{
 			currA: 18,
 			currB: 2,
@@ -59,7 +57,7 @@ func TestTestingConverter(t *testing.T) {
 
 	expectedBtoAFactor100, _ := new(big.Int).SetString("100000000000000000000", 10) // For B(100 units) to A
 	expectedBtoCFactor2, _ := new(big.Int).SetString("20000000000", 10)             // For B(100 units) to C
-	expectedCtoAFactor3, _ := new(big.Int).SetString("3000000000000000000", 10)     // For C(1 unit) to A, new expected
+	expectedCtoAFactor3, _ := new(big.Int).SetString("3000000000000000000", 10)     // For C(1 unit) to A
 
 	testCases := []struct {
 		name     string
@@ -159,11 +157,21 @@ func TestTestingConverter(t *testing.T) {
 			expected: big.NewInt(5), // 5 A-units * 0.01 = 0.05 B-units = 5 B-smallest-units
 			comment:  "5 A-units (5*10^18) to B. Expected 5 B-smallest-units.",
 		},
+		{
+			name:     "real life example",
+			from:     currA,
+			to:       currB,
+			amount:   big.NewInt(2000000000000000),
+			factor:   big.NewInt(1500),
+			divisor:  big.NewInt(1),
+			expected: big.NewInt(300),
+		},
 	}
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
 			a := tassert.New(t)
+			t.Log(tt.comment)
 			// Make a copy of tcSetup to set factor and divisor for subtest
 			tc := tcSetup
 			tc.factor = tt.factor
@@ -171,9 +179,8 @@ func TestTestingConverter(t *testing.T) {
 
 			converted, err := tc.Convert(tt.from, tt.to, tt.amount)
 			a.NoError(err)
-			if converted.Cmp(tt.expected) != 0 {
-				a.Equal(tt.expected, converted, "Comment: %s", tt.comment) // Use Cmp for big.Int, but Equal for test output
-			}
+
+			a.Equal(converted.Cmp(tt.expected), 0, "Expected %s, got %s", tt.expected, converted)
 		})
 	}
 }
