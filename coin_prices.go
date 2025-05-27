@@ -61,19 +61,123 @@ func jsonToBigInt(r json.RawMessage) (*big.Int, error) {
 }
 
 // testingConverter is side-effect free for unit- and integration testing.
-//
-//   - does 1 usd is 0.5 coin
-//   - does 1 usd is 1 erc20
-type testingConverter struct{}
+type testingConverter struct {
+	factor, divisor *big.Int
+
+	ethereum *ethRPCService
+	// used as a fallback for unit testing
+	decimals map[objects.ChainAddress]uint8
+}
+
+var defaultDecimals = map[objects.ChainAddress]uint8{
+	{
+		ChainID: 1337,
+		EthereumAddress: objects.EthereumAddress{
+			Address: common.HexToAddress("0x0000000000000000000000000000000000000000"),
+		},
+	}: 18,
+	{
+		ChainID: 1337,
+		EthereumAddress: objects.EthereumAddress{
+			Address: common.HexToAddress("0x6D3A93d661c8439C7e7782E2B22cbaCB2d8CA05A"),
+		},
+	}: 2,
+}
+
+// if both are empty strings, it will use 1:1 conversion
+func newTestingConverter(factor, divisor string, ethereum *ethRPCService) (*testingConverter, error) {
+	if factor != "" && divisor != "" {
+		factorBig, ok := new(big.Int).SetString(factor, 10)
+		if !ok {
+			return nil, fmt.Errorf("TESTING_PRICE_CONVERTER_FACTOR is not a valid integer: %s", factor)
+		}
+		divisorBig, ok := new(big.Int).SetString(divisor, 10)
+		if !ok {
+			return nil, fmt.Errorf("TESTING_PRICE_CONVERTER_DIVISOR is not a valid integer: %s", divisor)
+		}
+		return &testingConverter{
+			factor:   factorBig,
+			divisor:  divisorBig,
+			decimals: defaultDecimals,
+			ethereum: ethereum,
+		}, nil
+	}
+	return &testingConverter{
+		factor:   big.NewInt(1),
+		divisor:  big.NewInt(1),
+		decimals: defaultDecimals,
+		ethereum: ethereum,
+	}, nil
+}
 
 var _ priceConverter = (*testingConverter)(nil)
 
-var bigTwo = big.NewInt(2)
+// var bigTwo = big.NewInt(2)
 
-// Convert is a testing price converter that returns a constant value
-func (tc testingConverter) Convert(_, _ objects.ChainAddress, amount *big.Int) (*big.Int, error) {
-	r := new(big.Int).Mul(amount, bigTwo)
-	return r, nil
+// Convert is a testing price converter that applies factor/divisor conversion with proper decimal normalization
+func (tc testingConverter) Convert(a, b objects.ChainAddress, amount *big.Int) (*big.Int, error) {
+	// Work with a copy to avoid mutating the input
+	result := new(big.Int).Set(amount)
+
+	if a.ChainID == b.ChainID && a.Address.Cmp(b.Address) == 0 {
+		return result, nil
+	}
+
+	// Get decimals for currency A
+	var decimalsA uint8
+	if a.Address.Cmp(ZeroAddress) == 0 {
+		// Native token - assume 18 decimals
+		decimalsA = 18
+	} else {
+		decimals, ok := tc.decimals[a]
+		if !ok {
+			meta, err := tc.ethereum.GetERC20Metadata(a.ChainID, common.Address(a.Address))
+			if err != nil {
+				return nil, fmt.Errorf("failed to get metadata for base currency %v: %w", a, err)
+			}
+			decimals = meta.decimals
+		}
+		decimalsA = decimals
+	}
+
+	// Get decimals for currency B
+	var decimalsB uint8
+	if b.Address.Cmp(ZeroAddress) == 0 {
+		// Native token - assume 18 decimals
+		decimalsB = 18
+	} else {
+		decimals, ok := tc.decimals[b]
+		if !ok {
+			meta, err := tc.ethereum.GetERC20Metadata(b.ChainID, common.Address(b.Address))
+			if err != nil {
+				return nil, fmt.Errorf("failed to get metadata for chosen currency %v: %w", b, err)
+			}
+			decimals = meta.decimals
+		}
+		decimalsB = decimals
+	}
+
+	// Step 1: Convert currency A to coinConversionDecimalBase (same as coinGecko approach)
+	correction := int64(coinConversionDecimalBase) - int64(decimalsA)
+	if correction > 0 {
+		result.Mul(result, new(big.Int).Exp(big.NewInt(10), big.NewInt(correction), nil))
+	} else if correction < 0 {
+		result.Div(result, new(big.Int).Exp(big.NewInt(10), big.NewInt(-correction), nil))
+	}
+
+	// Step 2: Apply the conversion factor (this is the actual price conversion)
+	result.Mul(result, tc.factor)
+	result.Div(result, tc.divisor)
+
+	// Step 3: Convert from coinConversionDecimalBase to currency B (same as coinGecko approach)
+	correction = int64(decimalsB) - int64(coinConversionDecimalBase)
+	if correction > 0 {
+		result.Mul(result, new(big.Int).Exp(big.NewInt(10), big.NewInt(correction), nil))
+	} else if correction < 0 {
+		result.Div(result, new(big.Int).Exp(big.NewInt(10), big.NewInt(-correction), nil))
+	}
+
+	return result, nil
 }
 
 var _ priceConverter = (*coinGecko)(nil)
