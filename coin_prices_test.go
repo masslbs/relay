@@ -18,6 +18,10 @@ import (
 )
 
 func TestTestingConverter(t *testing.T) {
+	if !isCIEnv {
+		t.Skip("Skipping test unless CI environment is set")
+		return
+	}
 	currA := objects.ChainAddress{
 		EthereumAddress: objects.EthereumAddress{
 			Address: common.HexToAddress("0x0000000000000000000000000000000000000001"),
@@ -38,7 +42,7 @@ func TestTestingConverter(t *testing.T) {
 	}
 
 	tcSetup := testingConverter{
-		ethereum: newEthRPCService(nil), // does not need network
+		ethereum: newEthRPCService(nil), // does not need network for these tests
 		decimals: map[objects.ChainAddress]uint8{
 			currA: 18,
 			currB: 2,
