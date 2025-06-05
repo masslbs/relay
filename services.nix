@@ -72,6 +72,8 @@ in {
           PINATA_API_HOST = "api.pinata.cloud";
           PING_INTERVAL = "2s";
           KICK_TIMEOUT = "7s";
+          TESTING_PRICE_CONVERTER_FACTOR = "1500";
+          TESTING_PRICE_CONVERTER_DIVISOR = "1";
         };
         depends_on = {
           "anvil".condition = "process_log_ready";

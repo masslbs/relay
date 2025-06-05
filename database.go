@@ -165,7 +165,10 @@ func newRelay(metric *Metric) *Relay {
 	if cgAPIKey := os.Getenv("COINGECKO_API_KEY"); cgAPIKey != "" {
 		r.prices = newCoinGecko(cgAPIKey, "usd", r.ethereum)
 	} else {
-		r.prices = testingConverter{}
+		factor := os.Getenv("TESTING_PRICE_CONVERTER_FACTOR")
+		divisor := os.Getenv("TESTING_PRICE_CONVERTER_DIVISOR")
+		r.prices, err = newTestingConverter(factor, divisor, r.ethereum)
+		check(err)
 	}
 
 	r.sessionIDsToSessionStates = NewMapInts[sessionID, *SessionState]()
