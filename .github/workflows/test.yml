@@ -63,14 +63,14 @@ jobs:
           curl http://localhost:5001/api/v0/version -X POST
           curl http://localhost:8545/ -X POST -H 'content-type: application/json' --data-raw '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":0}'
 
-      # test VM has 6 cores so we spare one for the relay and docker services
+      # test VM has 6 cores so we spare one for the relay and other testnet services
       - name: Run tests
         env:
           RELAY_HTTP_ADDRESS: http://localhost:4444
           RELAY_PING: 0.250
           ETH_PRIVATE_KEY: ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
           ETH_RPC_URL: http://localhost:8545
-        run: nix develop -c pytestoretest -- -x -vv -n 5 --benchmark-skip
+        run: nix develop -c pystoretest -- -x -vv -n 5 --benchmark-skip
 
       - name: Run benchmarks
         if: runner.name == 'ci-runner2'
@@ -79,7 +79,7 @@ jobs:
           RELAY_PING: 0.250
           ETH_PRIVATE_KEY: ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
           ETH_RPC_URL: http://localhost:8545
-        run: nix develop -c pytestoretest --benchmark-only --benchmark-json ../bench-output.json
+        run: nix develop -c pystoretest --benchmark-only --benchmark-json ../bench-output.json
 
       - name: Shutdown services
         run: nix run '.#local-testnet-dev' -- down
