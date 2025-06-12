@@ -92,6 +92,7 @@ in {
           RELAY_PING = "0.2";
           RELAY_HTTP_ADDRESS = "http://localhost:4444";
           ETH_PRIVATE_KEY = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"; # anvil key 0
+          JS_SAFE = "1";
         };
         depends_on = {
           "relay".condition = "process_log_ready";
