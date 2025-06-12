@@ -12,6 +12,6 @@ in
     src = ./.;
     go = pkgs.go_1_23;
     enableParallelBuilding = true;
-    vendorHash = "sha256-utrLuTj93AD56zTVN9R2wRy1siTNL8NeMFFR6j04e5A=";
+    vendorHash = "sha256-vOOWG0/VEvG9Cy1zOecxboC+HZrlWzgoG1KuWyNIZMc=";
     ldflags = ["-X main.release=${version}"];
   }
