@@ -390,8 +390,6 @@ func (op *AuthenticateOp) process(r *Relay) {
 	r.sessionIDsToSessionStates.All(func(otherSessionID sessionID, otherSessionState *SessionState) bool {
 		if otherSessionState.keyCardID > 0 && keyCardID == otherSessionState.keyCardID {
 			logS(op.sessionID, "relay.authenticateOp.alreadyConnected otherSessionId=%d", otherSessionID)
-			stopOp := &StopOp{sessionID: otherSessionID}
-			r.sendSessionOp(otherSessionState, stopOp)
 			op.err = alreadyConnectedError
 			r.sendSessionOp(sessionState, op)
 			halt = true
