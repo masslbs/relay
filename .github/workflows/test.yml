@@ -67,7 +67,7 @@ jobs:
       - name: Run tests
         env:
           RELAY_HTTP_ADDRESS: http://localhost:4444
-          RELAY_PING: 0.250
+          RELAY_PING: 0.5
           ETH_PRIVATE_KEY: ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
           ETH_RPC_URL: http://localhost:8545
         run: nix develop -c pystoretest -x -vv -n 5 --benchmark-skip
