@@ -76,8 +76,8 @@ var simulateErrorRate = 0
 var simulateIgnoreRate = 0
 
 var (
-	networkVersions            = []uint{4}
-	currentRelayVersion uint16 = 4
+	networkVersions            = []uint{5}
+	currentRelayVersion uint16 = 5
 )
 
 var initLoggingOnce sync.Once
