@@ -5,8 +5,6 @@
   description = "Mass Market Relay";
 
   inputs = {
-    # to get local-testnet the right addresses we use contracts' nixpkgs
-    # nixpkgs.url = "github:nixos/nixpkgs/nixos-25.05";
     systems.url = "github:nix-systems/default";
     flake-parts.url = "github:hercules-ci/flake-parts";
 
@@ -18,18 +16,18 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    contracts.url = "github:masslbs/contracts/stage1";
-    # see above
-    nixpkgs.follows = "contracts/nixpkgs";
-    foundry.follows = "contracts/foundry";
+    contracts.url = "github:masslbs/contracts";
+    # to reduce derivation size we use this nixpkgs for everything below
 
-    schema.url = "github:masslbs/network-schema";
-    # to align pythonPackages between the two
-    schema.inputs.nixpkgs.follows = "pystoretest/nixpkgs";
+    schema.url = "github:masslbs/network-schema/v5-dev";
+    nixpkgs.follows = "schema/nixpkgs";
 
-    pystoretest.url = "github:masslbs/pystoretest";
-    pystoretest.inputs.contracts.follows = "contracts";
-    pystoretest.inputs.network-schema.follows = "schema";
+    pystoretest.url = "github:masslbs/pystoretest/network-v5";
+    pystoretest.inputs = {
+      nixpkgs.follows = "nixpkgs";
+      contracts.follows = "contracts";
+      network-schema.follows = "schema";
+    };
   };
 
   outputs = inputs @ {
@@ -37,7 +35,6 @@
     contracts,
     schema,
     pystoretest,
-    foundry,
     ...
   }:
     inputs.flake-parts.lib.mkFlake {inherit inputs;} {
@@ -65,9 +62,6 @@
       in {
         _module.args.pkgs = import inputs.nixpkgs {
           inherit system;
-          overlays = [
-            foundry.overlay
-          ];
         };
         process-compose = let
           cli = {

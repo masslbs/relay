@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from abi/ShopReg.json - git at eab801d3b32d36cc484c22f56bff78b9a497a5a7
+// Generated from abi/ShopReg.json - git at 548ca6e00ffe3f8d841fa4aa985183f0ff3b4dc3
 
 // Code generated - DO NOT EDIT.
 // This file is a generated binding and any manual changes will be lost.
@@ -37,7 +37,7 @@ var (
 
 // RegShopMetaData contains all meta data concerning the RegShop contract.
 var RegShopMetaData = &bind.MetaData{
-	ABI: "[{\"type\":\"constructor\",\"inputs\":[{\"name\":\"r\",\"type\":\"address\",\"internalType\":\"contractRelayReg\"}],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"PERM_addPermission\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_addRelay\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_publishInviteVerifier\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_registerUser\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_removePermission\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_removeRelay\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_removeUser\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_replaceRelay\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_updateRootHash\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"_getTokenMessageHash\",\"inputs\":[{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"pure\"},{\"type\":\"function\",\"name\":\"addPermission\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"perm\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"addRelay\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"relayId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"allPermissionsGuard\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"perms\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"approve\",\"inputs\":[{\"name\":\"account\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"payable\"},{\"type\":\"function\",\"name\":\"balanceOf\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"result\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAllPermissions\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAllRelays\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256[]\",\"internalType\":\"uint256[]\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getApproved\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"result\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getRelayCount\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"hasEnoughPermissions\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"perms\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"hasPermission\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"perm\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"isApprovedForAll\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"operator\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"result\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"mint\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"name\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"pure\"},{\"type\":\"function\",\"name\":\"nonce\",\"inputs\":[{\"name\":\"shopid\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint64\",\"internalType\":\"uint64\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"ownerOf\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"result\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"permissionGuard\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"perm\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"permsToBitmap\",\"inputs\":[{\"name\":\"perms\",\"type\":\"uint8[]\",\"internalType\":\"uint8[]\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"pure\"},{\"type\":\"function\",\"name\":\"publishInviteVerifier\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"verifier\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"redeemInvite\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"v\",\"type\":\"uint8\",\"internalType\":\"uint8\"},{\"name\":\"r\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"s\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"registerUser\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"perms\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"relayReg\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"contractRelayReg\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"relays\",\"inputs\":[{\"name\":\"shopid\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"removePermission\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"perm\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"removeRelay\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"idx\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"removeUser\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"replaceRelay\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"idx\",\"type\":\"uint8\",\"internalType\":\"uint8\"},{\"name\":\"relayId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"rootHashes\",\"inputs\":[{\"name\":\"shopid\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"safeTransferFrom\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"payable\"},{\"type\":\"function\",\"name\":\"safeTransferFrom\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"data\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"payable\"},{\"type\":\"function\",\"name\":\"setApprovalForAll\",\"inputs\":[{\"name\":\"operator\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"isApproved\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"setTokenURI\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"newTokenURI\",\"type\":\"string\",\"internalType\":\"string\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"shopURIs\",\"inputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"supportsInterface\",\"inputs\":[{\"name\":\"interfaceId\",\"type\":\"bytes4\",\"internalType\":\"bytes4\"}],\"outputs\":[{\"name\":\"result\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"symbol\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"pure\"},{\"type\":\"function\",\"name\":\"tokenURI\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"transferFrom\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"payable\"},{\"type\":\"function\",\"name\":\"updateRootHash\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"hash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"_nonce\",\"type\":\"uint64\",\"internalType\":\"uint64\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"event\",\"name\":\"Approval\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"account\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"ApprovalForAll\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"operator\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"isApproved\",\"type\":\"bool\",\"indexed\":false,\"internalType\":\"bool\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"PermissionAdded\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"indexed\":false,\"internalType\":\"address\"},{\"name\":\"permission\",\"type\":\"uint8\",\"indexed\":false,\"internalType\":\"uint8\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"PermissionRemoved\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"indexed\":false,\"internalType\":\"address\"},{\"name\":\"permission\",\"type\":\"uint8\",\"indexed\":false,\"internalType\":\"uint8\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"Transfer\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"id\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"UserAdded\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"indexed\":false,\"internalType\":\"address\"},{\"name\":\"permissions\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"UserRemoved\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"users\",\"type\":\"address\",\"indexed\":false,\"internalType\":\"address\"}],\"anonymous\":false},{\"type\":\"error\",\"name\":\"AccountBalanceOverflow\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"BalanceQueryForZeroAddress\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"InvalidNonce\",\"inputs\":[{\"name\":\"cur\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"_nonce\",\"type\":\"uint64\",\"internalType\":\"uint64\"}]},{\"type\":\"error\",\"name\":\"NoVerifier\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"NotAuthorized\",\"inputs\":[{\"name\":\"permission\",\"type\":\"uint8\",\"internalType\":\"uint8\"}]},{\"type\":\"error\",\"name\":\"NotOwnerNorApproved\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"TokenAlreadyExists\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"TokenDoesNotExist\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"TransferFromIncorrectOwner\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"TransferToNonERC721ReceiverImplementer\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"TransferToZeroAddress\",\"inputs\":[]}]",
+	ABI: "[{\"type\":\"constructor\",\"inputs\":[{\"name\":\"r\",\"type\":\"address\",\"internalType\":\"contractRelayReg\"}],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"PERM_addPermission\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_addRelay\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_publishInviteVerifier\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_registerUser\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_removePermission\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_removeRelay\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_removeUser\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_replaceRelay\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PERM_updateRootHash\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"_getTokenMessageHash\",\"inputs\":[{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"pure\"},{\"type\":\"function\",\"name\":\"addPermission\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"perm\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"addRelay\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"relayId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"allPermissionsGuard\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"perms\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"approve\",\"inputs\":[{\"name\":\"to\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"tokenId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"balanceOf\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAllPermissions\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAllRelays\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256[]\",\"internalType\":\"uint256[]\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getApproved\",\"inputs\":[{\"name\":\"tokenId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getRelayCount\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"hasEnoughPermissions\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"perms\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"hasPermission\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"perm\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"isApprovedForAll\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"operator\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"mint\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"name\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"nonce\",\"inputs\":[{\"name\":\"shopid\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint64\",\"internalType\":\"uint64\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"ownerOf\",\"inputs\":[{\"name\":\"tokenId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"permissionGuard\",\"inputs\":[{\"name\":\"id\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"perm\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"permsToBitmap\",\"inputs\":[{\"name\":\"perms\",\"type\":\"uint8[]\",\"internalType\":\"uint8[]\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"pure\"},{\"type\":\"function\",\"name\":\"publishInviteVerifier\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"verifier\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"redeemInvite\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"v\",\"type\":\"uint8\",\"internalType\":\"uint8\"},{\"name\":\"r\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"s\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"registerUser\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"perms\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"relayReg\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"contractRelayReg\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"relays\",\"inputs\":[{\"name\":\"shopid\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"removePermission\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"perm\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"removeRelay\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"idx\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"removeUser\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"replaceRelay\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"idx\",\"type\":\"uint8\",\"internalType\":\"uint8\"},{\"name\":\"relayId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"rootHashes\",\"inputs\":[{\"name\":\"shopid\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"safeTransferFrom\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"tokenId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"safeTransferFrom\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"tokenId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"data\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"setApprovalForAll\",\"inputs\":[{\"name\":\"operator\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"approved\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"setTokenURI\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"newTokenURI\",\"type\":\"string\",\"internalType\":\"string\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"shopURIs\",\"inputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"supportsInterface\",\"inputs\":[{\"name\":\"interfaceId\",\"type\":\"bytes4\",\"internalType\":\"bytes4\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bool\",\"internalType\":\"bool\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"symbol\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"tokenByIndex\",\"inputs\":[{\"name\":\"index\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"tokenOfOwnerByIndex\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"index\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"tokenURI\",\"inputs\":[{\"name\":\"tokenId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"totalSupply\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"transferFrom\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"tokenId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"updateRootHash\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"hash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"_nonce\",\"type\":\"uint64\",\"internalType\":\"uint64\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"event\",\"name\":\"Approval\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"approved\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"tokenId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"ApprovalForAll\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"operator\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"approved\",\"type\":\"bool\",\"indexed\":false,\"internalType\":\"bool\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"BatchMetadataUpdate\",\"inputs\":[{\"name\":\"_fromTokenId\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"},{\"name\":\"_toTokenId\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"MetadataUpdate\",\"inputs\":[{\"name\":\"_tokenId\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"PermissionAdded\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"indexed\":false,\"internalType\":\"address\"},{\"name\":\"permission\",\"type\":\"uint8\",\"indexed\":false,\"internalType\":\"uint8\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"PermissionRemoved\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"indexed\":false,\"internalType\":\"address\"},{\"name\":\"permission\",\"type\":\"uint8\",\"indexed\":false,\"internalType\":\"uint8\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"Transfer\",\"inputs\":[{\"name\":\"from\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"to\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"tokenId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"UserAdded\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"user\",\"type\":\"address\",\"indexed\":false,\"internalType\":\"address\"},{\"name\":\"permissions\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"UserRemoved\",\"inputs\":[{\"name\":\"shopId\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"users\",\"type\":\"address\",\"indexed\":false,\"internalType\":\"address\"}],\"anonymous\":false},{\"type\":\"error\",\"name\":\"ERC721EnumerableForbiddenBatchMint\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"ERC721IncorrectOwner\",\"inputs\":[{\"name\":\"sender\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"tokenId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"}]},{\"type\":\"error\",\"name\":\"ERC721InsufficientApproval\",\"inputs\":[{\"name\":\"operator\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"tokenId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}]},{\"type\":\"error\",\"name\":\"ERC721InvalidApprover\",\"inputs\":[{\"name\":\"approver\",\"type\":\"address\",\"internalType\":\"address\"}]},{\"type\":\"error\",\"name\":\"ERC721InvalidOperator\",\"inputs\":[{\"name\":\"operator\",\"type\":\"address\",\"internalType\":\"address\"}]},{\"type\":\"error\",\"name\":\"ERC721InvalidOwner\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"}]},{\"type\":\"error\",\"name\":\"ERC721InvalidReceiver\",\"inputs\":[{\"name\":\"receiver\",\"type\":\"address\",\"internalType\":\"address\"}]},{\"type\":\"error\",\"name\":\"ERC721InvalidSender\",\"inputs\":[{\"name\":\"sender\",\"type\":\"address\",\"internalType\":\"address\"}]},{\"type\":\"error\",\"name\":\"ERC721NonexistentToken\",\"inputs\":[{\"name\":\"tokenId\",\"type\":\"uint256\",\"internalType\":\"uint256\"}]},{\"type\":\"error\",\"name\":\"ERC721OutOfBoundsIndex\",\"inputs\":[{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"index\",\"type\":\"uint256\",\"internalType\":\"uint256\"}]},{\"type\":\"error\",\"name\":\"InvalidNonce\",\"inputs\":[{\"name\":\"cur\",\"type\":\"uint64\",\"internalType\":\"uint64\"},{\"name\":\"_nonce\",\"type\":\"uint64\",\"internalType\":\"uint64\"}]},{\"type\":\"error\",\"name\":\"NoVerifier\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"NotAuthorized\",\"inputs\":[{\"name\":\"permission\",\"type\":\"uint8\",\"internalType\":\"uint8\"}]}]",
 }
 
 // RegShopABI is the input ABI used to generate the binding from.
@@ -527,7 +527,7 @@ func (_RegShop *RegShopCallerSession) AllPermissionsGuard(id *big.Int, perms *bi
 
 // BalanceOf is a free data retrieval call binding the contract method 0x70a08231.
 //
-// Solidity: function balanceOf(address owner) view returns(uint256 result)
+// Solidity: function balanceOf(address owner) view returns(uint256)
 func (_RegShop *RegShopCaller) BalanceOf(opts *bind.CallOpts, owner common.Address) (*big.Int, error) {
 	var out []interface{}
 	err := _RegShop.contract.Call(opts, &out, "balanceOf", owner)
@@ -544,14 +544,14 @@ func (_RegShop *RegShopCaller) BalanceOf(opts *bind.CallOpts, owner common.Addre
 
 // BalanceOf is a free data retrieval call binding the contract method 0x70a08231.
 //
-// Solidity: function balanceOf(address owner) view returns(uint256 result)
+// Solidity: function balanceOf(address owner) view returns(uint256)
 func (_RegShop *RegShopSession) BalanceOf(owner common.Address) (*big.Int, error) {
 	return _RegShop.Contract.BalanceOf(&_RegShop.CallOpts, owner)
 }
 
 // BalanceOf is a free data retrieval call binding the contract method 0x70a08231.
 //
-// Solidity: function balanceOf(address owner) view returns(uint256 result)
+// Solidity: function balanceOf(address owner) view returns(uint256)
 func (_RegShop *RegShopCallerSession) BalanceOf(owner common.Address) (*big.Int, error) {
 	return _RegShop.Contract.BalanceOf(&_RegShop.CallOpts, owner)
 }
@@ -620,10 +620,10 @@ func (_RegShop *RegShopCallerSession) GetAllRelays(shopId *big.Int) ([]*big.Int,
 
 // GetApproved is a free data retrieval call binding the contract method 0x081812fc.
 //
-// Solidity: function getApproved(uint256 id) view returns(address result)
-func (_RegShop *RegShopCaller) GetApproved(opts *bind.CallOpts, id *big.Int) (common.Address, error) {
+// Solidity: function getApproved(uint256 tokenId) view returns(address)
+func (_RegShop *RegShopCaller) GetApproved(opts *bind.CallOpts, tokenId *big.Int) (common.Address, error) {
 	var out []interface{}
-	err := _RegShop.contract.Call(opts, &out, "getApproved", id)
+	err := _RegShop.contract.Call(opts, &out, "getApproved", tokenId)
 
 	if err != nil {
 		return *new(common.Address), err
@@ -637,16 +637,16 @@ func (_RegShop *RegShopCaller) GetApproved(opts *bind.CallOpts, id *big.Int) (co
 
 // GetApproved is a free data retrieval call binding the contract method 0x081812fc.
 //
-// Solidity: function getApproved(uint256 id) view returns(address result)
-func (_RegShop *RegShopSession) GetApproved(id *big.Int) (common.Address, error) {
-	return _RegShop.Contract.GetApproved(&_RegShop.CallOpts, id)
+// Solidity: function getApproved(uint256 tokenId) view returns(address)
+func (_RegShop *RegShopSession) GetApproved(tokenId *big.Int) (common.Address, error) {
+	return _RegShop.Contract.GetApproved(&_RegShop.CallOpts, tokenId)
 }
 
 // GetApproved is a free data retrieval call binding the contract method 0x081812fc.
 //
-// Solidity: function getApproved(uint256 id) view returns(address result)
-func (_RegShop *RegShopCallerSession) GetApproved(id *big.Int) (common.Address, error) {
-	return _RegShop.Contract.GetApproved(&_RegShop.CallOpts, id)
+// Solidity: function getApproved(uint256 tokenId) view returns(address)
+func (_RegShop *RegShopCallerSession) GetApproved(tokenId *big.Int) (common.Address, error) {
+	return _RegShop.Contract.GetApproved(&_RegShop.CallOpts, tokenId)
 }
 
 // GetRelayCount is a free data retrieval call binding the contract method 0x61e11a5f.
@@ -744,7 +744,7 @@ func (_RegShop *RegShopCallerSession) HasPermission(id *big.Int, user common.Add
 
 // IsApprovedForAll is a free data retrieval call binding the contract method 0xe985e9c5.
 //
-// Solidity: function isApprovedForAll(address owner, address operator) view returns(bool result)
+// Solidity: function isApprovedForAll(address owner, address operator) view returns(bool)
 func (_RegShop *RegShopCaller) IsApprovedForAll(opts *bind.CallOpts, owner common.Address, operator common.Address) (bool, error) {
 	var out []interface{}
 	err := _RegShop.contract.Call(opts, &out, "isApprovedForAll", owner, operator)
@@ -761,21 +761,21 @@ func (_RegShop *RegShopCaller) IsApprovedForAll(opts *bind.CallOpts, owner commo
 
 // IsApprovedForAll is a free data retrieval call binding the contract method 0xe985e9c5.
 //
-// Solidity: function isApprovedForAll(address owner, address operator) view returns(bool result)
+// Solidity: function isApprovedForAll(address owner, address operator) view returns(bool)
 func (_RegShop *RegShopSession) IsApprovedForAll(owner common.Address, operator common.Address) (bool, error) {
 	return _RegShop.Contract.IsApprovedForAll(&_RegShop.CallOpts, owner, operator)
 }
 
 // IsApprovedForAll is a free data retrieval call binding the contract method 0xe985e9c5.
 //
-// Solidity: function isApprovedForAll(address owner, address operator) view returns(bool result)
+// Solidity: function isApprovedForAll(address owner, address operator) view returns(bool)
 func (_RegShop *RegShopCallerSession) IsApprovedForAll(owner common.Address, operator common.Address) (bool, error) {
 	return _RegShop.Contract.IsApprovedForAll(&_RegShop.CallOpts, owner, operator)
 }
 
 // Name is a free data retrieval call binding the contract method 0x06fdde03.
 //
-// Solidity: function name() pure returns(string)
+// Solidity: function name() view returns(string)
 func (_RegShop *RegShopCaller) Name(opts *bind.CallOpts) (string, error) {
 	var out []interface{}
 	err := _RegShop.contract.Call(opts, &out, "name")
@@ -792,14 +792,14 @@ func (_RegShop *RegShopCaller) Name(opts *bind.CallOpts) (string, error) {
 
 // Name is a free data retrieval call binding the contract method 0x06fdde03.
 //
-// Solidity: function name() pure returns(string)
+// Solidity: function name() view returns(string)
 func (_RegShop *RegShopSession) Name() (string, error) {
 	return _RegShop.Contract.Name(&_RegShop.CallOpts)
 }
 
 // Name is a free data retrieval call binding the contract method 0x06fdde03.
 //
-// Solidity: function name() pure returns(string)
+// Solidity: function name() view returns(string)
 func (_RegShop *RegShopCallerSession) Name() (string, error) {
 	return _RegShop.Contract.Name(&_RegShop.CallOpts)
 }
@@ -837,10 +837,10 @@ func (_RegShop *RegShopCallerSession) Nonce(shopid *big.Int) (uint64, error) {
 
 // OwnerOf is a free data retrieval call binding the contract method 0x6352211e.
 //
-// Solidity: function ownerOf(uint256 id) view returns(address result)
-func (_RegShop *RegShopCaller) OwnerOf(opts *bind.CallOpts, id *big.Int) (common.Address, error) {
+// Solidity: function ownerOf(uint256 tokenId) view returns(address)
+func (_RegShop *RegShopCaller) OwnerOf(opts *bind.CallOpts, tokenId *big.Int) (common.Address, error) {
 	var out []interface{}
-	err := _RegShop.contract.Call(opts, &out, "ownerOf", id)
+	err := _RegShop.contract.Call(opts, &out, "ownerOf", tokenId)
 
 	if err != nil {
 		return *new(common.Address), err
@@ -854,16 +854,16 @@ func (_RegShop *RegShopCaller) OwnerOf(opts *bind.CallOpts, id *big.Int) (common
 
 // OwnerOf is a free data retrieval call binding the contract method 0x6352211e.
 //
-// Solidity: function ownerOf(uint256 id) view returns(address result)
-func (_RegShop *RegShopSession) OwnerOf(id *big.Int) (common.Address, error) {
-	return _RegShop.Contract.OwnerOf(&_RegShop.CallOpts, id)
+// Solidity: function ownerOf(uint256 tokenId) view returns(address)
+func (_RegShop *RegShopSession) OwnerOf(tokenId *big.Int) (common.Address, error) {
+	return _RegShop.Contract.OwnerOf(&_RegShop.CallOpts, tokenId)
 }
 
 // OwnerOf is a free data retrieval call binding the contract method 0x6352211e.
 //
-// Solidity: function ownerOf(uint256 id) view returns(address result)
-func (_RegShop *RegShopCallerSession) OwnerOf(id *big.Int) (common.Address, error) {
-	return _RegShop.Contract.OwnerOf(&_RegShop.CallOpts, id)
+// Solidity: function ownerOf(uint256 tokenId) view returns(address)
+func (_RegShop *RegShopCallerSession) OwnerOf(tokenId *big.Int) (common.Address, error) {
+	return _RegShop.Contract.OwnerOf(&_RegShop.CallOpts, tokenId)
 }
 
 // PermissionGuard is a free data retrieval call binding the contract method 0xe87b17b4.
@@ -1052,7 +1052,7 @@ func (_RegShop *RegShopCallerSession) ShopURIs(arg0 *big.Int) (string, error) {
 
 // SupportsInterface is a free data retrieval call binding the contract method 0x01ffc9a7.
 //
-// Solidity: function supportsInterface(bytes4 interfaceId) view returns(bool result)
+// Solidity: function supportsInterface(bytes4 interfaceId) view returns(bool)
 func (_RegShop *RegShopCaller) SupportsInterface(opts *bind.CallOpts, interfaceId [4]byte) (bool, error) {
 	var out []interface{}
 	err := _RegShop.contract.Call(opts, &out, "supportsInterface", interfaceId)
@@ -1069,21 +1069,21 @@ func (_RegShop *RegShopCaller) SupportsInterface(opts *bind.CallOpts, interfaceI
 
 // SupportsInterface is a free data retrieval call binding the contract method 0x01ffc9a7.
 //
-// Solidity: function supportsInterface(bytes4 interfaceId) view returns(bool result)
+// Solidity: function supportsInterface(bytes4 interfaceId) view returns(bool)
 func (_RegShop *RegShopSession) SupportsInterface(interfaceId [4]byte) (bool, error) {
 	return _RegShop.Contract.SupportsInterface(&_RegShop.CallOpts, interfaceId)
 }
 
 // SupportsInterface is a free data retrieval call binding the contract method 0x01ffc9a7.
 //
-// Solidity: function supportsInterface(bytes4 interfaceId) view returns(bool result)
+// Solidity: function supportsInterface(bytes4 interfaceId) view returns(bool)
 func (_RegShop *RegShopCallerSession) SupportsInterface(interfaceId [4]byte) (bool, error) {
 	return _RegShop.Contract.SupportsInterface(&_RegShop.CallOpts, interfaceId)
 }
 
 // Symbol is a free data retrieval call binding the contract method 0x95d89b41.
 //
-// Solidity: function symbol() pure returns(string)
+// Solidity: function symbol() view returns(string)
 func (_RegShop *RegShopCaller) Symbol(opts *bind.CallOpts) (string, error) {
 	var out []interface{}
 	err := _RegShop.contract.Call(opts, &out, "symbol")
@@ -1100,24 +1100,86 @@ func (_RegShop *RegShopCaller) Symbol(opts *bind.CallOpts) (string, error) {
 
 // Symbol is a free data retrieval call binding the contract method 0x95d89b41.
 //
-// Solidity: function symbol() pure returns(string)
+// Solidity: function symbol() view returns(string)
 func (_RegShop *RegShopSession) Symbol() (string, error) {
 	return _RegShop.Contract.Symbol(&_RegShop.CallOpts)
 }
 
 // Symbol is a free data retrieval call binding the contract method 0x95d89b41.
 //
-// Solidity: function symbol() pure returns(string)
+// Solidity: function symbol() view returns(string)
 func (_RegShop *RegShopCallerSession) Symbol() (string, error) {
 	return _RegShop.Contract.Symbol(&_RegShop.CallOpts)
 }
 
+// TokenByIndex is a free data retrieval call binding the contract method 0x4f6ccce7.
+//
+// Solidity: function tokenByIndex(uint256 index) view returns(uint256)
+func (_RegShop *RegShopCaller) TokenByIndex(opts *bind.CallOpts, index *big.Int) (*big.Int, error) {
+	var out []interface{}
+	err := _RegShop.contract.Call(opts, &out, "tokenByIndex", index)
+
+	if err != nil {
+		return *new(*big.Int), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+
+	return out0, err
+
+}
+
+// TokenByIndex is a free data retrieval call binding the contract method 0x4f6ccce7.
+//
+// Solidity: function tokenByIndex(uint256 index) view returns(uint256)
+func (_RegShop *RegShopSession) TokenByIndex(index *big.Int) (*big.Int, error) {
+	return _RegShop.Contract.TokenByIndex(&_RegShop.CallOpts, index)
+}
+
+// TokenByIndex is a free data retrieval call binding the contract method 0x4f6ccce7.
+//
+// Solidity: function tokenByIndex(uint256 index) view returns(uint256)
+func (_RegShop *RegShopCallerSession) TokenByIndex(index *big.Int) (*big.Int, error) {
+	return _RegShop.Contract.TokenByIndex(&_RegShop.CallOpts, index)
+}
+
+// TokenOfOwnerByIndex is a free data retrieval call binding the contract method 0x2f745c59.
+//
+// Solidity: function tokenOfOwnerByIndex(address owner, uint256 index) view returns(uint256)
+func (_RegShop *RegShopCaller) TokenOfOwnerByIndex(opts *bind.CallOpts, owner common.Address, index *big.Int) (*big.Int, error) {
+	var out []interface{}
+	err := _RegShop.contract.Call(opts, &out, "tokenOfOwnerByIndex", owner, index)
+
+	if err != nil {
+		return *new(*big.Int), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+
+	return out0, err
+
+}
+
+// TokenOfOwnerByIndex is a free data retrieval call binding the contract method 0x2f745c59.
+//
+// Solidity: function tokenOfOwnerByIndex(address owner, uint256 index) view returns(uint256)
+func (_RegShop *RegShopSession) TokenOfOwnerByIndex(owner common.Address, index *big.Int) (*big.Int, error) {
+	return _RegShop.Contract.TokenOfOwnerByIndex(&_RegShop.CallOpts, owner, index)
+}
+
+// TokenOfOwnerByIndex is a free data retrieval call binding the contract method 0x2f745c59.
+//
+// Solidity: function tokenOfOwnerByIndex(address owner, uint256 index) view returns(uint256)
+func (_RegShop *RegShopCallerSession) TokenOfOwnerByIndex(owner common.Address, index *big.Int) (*big.Int, error) {
+	return _RegShop.Contract.TokenOfOwnerByIndex(&_RegShop.CallOpts, owner, index)
+}
+
 // TokenURI is a free data retrieval call binding the contract method 0xc87b56dd.
 //
-// Solidity: function tokenURI(uint256 id) view returns(string)
-func (_RegShop *RegShopCaller) TokenURI(opts *bind.CallOpts, id *big.Int) (string, error) {
+// Solidity: function tokenURI(uint256 tokenId) view returns(string)
+func (_RegShop *RegShopCaller) TokenURI(opts *bind.CallOpts, tokenId *big.Int) (string, error) {
 	var out []interface{}
-	err := _RegShop.contract.Call(opts, &out, "tokenURI", id)
+	err := _RegShop.contract.Call(opts, &out, "tokenURI", tokenId)
 
 	if err != nil {
 		return *new(string), err
@@ -1131,16 +1193,47 @@ func (_RegShop *RegShopCaller) TokenURI(opts *bind.CallOpts, id *big.Int) (strin
 
 // TokenURI is a free data retrieval call binding the contract method 0xc87b56dd.
 //
-// Solidity: function tokenURI(uint256 id) view returns(string)
-func (_RegShop *RegShopSession) TokenURI(id *big.Int) (string, error) {
-	return _RegShop.Contract.TokenURI(&_RegShop.CallOpts, id)
+// Solidity: function tokenURI(uint256 tokenId) view returns(string)
+func (_RegShop *RegShopSession) TokenURI(tokenId *big.Int) (string, error) {
+	return _RegShop.Contract.TokenURI(&_RegShop.CallOpts, tokenId)
 }
 
 // TokenURI is a free data retrieval call binding the contract method 0xc87b56dd.
 //
-// Solidity: function tokenURI(uint256 id) view returns(string)
-func (_RegShop *RegShopCallerSession) TokenURI(id *big.Int) (string, error) {
-	return _RegShop.Contract.TokenURI(&_RegShop.CallOpts, id)
+// Solidity: function tokenURI(uint256 tokenId) view returns(string)
+func (_RegShop *RegShopCallerSession) TokenURI(tokenId *big.Int) (string, error) {
+	return _RegShop.Contract.TokenURI(&_RegShop.CallOpts, tokenId)
+}
+
+// TotalSupply is a free data retrieval call binding the contract method 0x18160ddd.
+//
+// Solidity: function totalSupply() view returns(uint256)
+func (_RegShop *RegShopCaller) TotalSupply(opts *bind.CallOpts) (*big.Int, error) {
+	var out []interface{}
+	err := _RegShop.contract.Call(opts, &out, "totalSupply")
+
+	if err != nil {
+		return *new(*big.Int), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+
+	return out0, err
+
+}
+
+// TotalSupply is a free data retrieval call binding the contract method 0x18160ddd.
+//
+// Solidity: function totalSupply() view returns(uint256)
+func (_RegShop *RegShopSession) TotalSupply() (*big.Int, error) {
+	return _RegShop.Contract.TotalSupply(&_RegShop.CallOpts)
+}
+
+// TotalSupply is a free data retrieval call binding the contract method 0x18160ddd.
+//
+// Solidity: function totalSupply() view returns(uint256)
+func (_RegShop *RegShopCallerSession) TotalSupply() (*big.Int, error) {
+	return _RegShop.Contract.TotalSupply(&_RegShop.CallOpts)
 }
 
 // AddPermission is a paid mutator transaction binding the contract method 0x07c2bdd2.
@@ -1187,23 +1280,23 @@ func (_RegShop *RegShopTransactorSession) AddRelay(shopId *big.Int, relayId *big
 
 // Approve is a paid mutator transaction binding the contract method 0x095ea7b3.
 //
-// Solidity: function approve(address account, uint256 id) payable returns()
-func (_RegShop *RegShopTransactor) Approve(opts *bind.TransactOpts, account common.Address, id *big.Int) (*types.Transaction, error) {
-	return _RegShop.contract.Transact(opts, "approve", account, id)
+// Solidity: function approve(address to, uint256 tokenId) returns()
+func (_RegShop *RegShopTransactor) Approve(opts *bind.TransactOpts, to common.Address, tokenId *big.Int) (*types.Transaction, error) {
+	return _RegShop.contract.Transact(opts, "approve", to, tokenId)
 }
 
 // Approve is a paid mutator transaction binding the contract method 0x095ea7b3.
 //
-// Solidity: function approve(address account, uint256 id) payable returns()
-func (_RegShop *RegShopSession) Approve(account common.Address, id *big.Int) (*types.Transaction, error) {
-	return _RegShop.Contract.Approve(&_RegShop.TransactOpts, account, id)
+// Solidity: function approve(address to, uint256 tokenId) returns()
+func (_RegShop *RegShopSession) Approve(to common.Address, tokenId *big.Int) (*types.Transaction, error) {
+	return _RegShop.Contract.Approve(&_RegShop.TransactOpts, to, tokenId)
 }
 
 // Approve is a paid mutator transaction binding the contract method 0x095ea7b3.
 //
-// Solidity: function approve(address account, uint256 id) payable returns()
-func (_RegShop *RegShopTransactorSession) Approve(account common.Address, id *big.Int) (*types.Transaction, error) {
-	return _RegShop.Contract.Approve(&_RegShop.TransactOpts, account, id)
+// Solidity: function approve(address to, uint256 tokenId) returns()
+func (_RegShop *RegShopTransactorSession) Approve(to common.Address, tokenId *big.Int) (*types.Transaction, error) {
+	return _RegShop.Contract.Approve(&_RegShop.TransactOpts, to, tokenId)
 }
 
 // Mint is a paid mutator transaction binding the contract method 0x94bf804d.
@@ -1376,65 +1469,65 @@ func (_RegShop *RegShopTransactorSession) ReplaceRelay(shopId *big.Int, idx uint
 
 // SafeTransferFrom is a paid mutator transaction binding the contract method 0x42842e0e.
 //
-// Solidity: function safeTransferFrom(address from, address to, uint256 id) payable returns()
-func (_RegShop *RegShopTransactor) SafeTransferFrom(opts *bind.TransactOpts, from common.Address, to common.Address, id *big.Int) (*types.Transaction, error) {
-	return _RegShop.contract.Transact(opts, "safeTransferFrom", from, to, id)
+// Solidity: function safeTransferFrom(address from, address to, uint256 tokenId) returns()
+func (_RegShop *RegShopTransactor) SafeTransferFrom(opts *bind.TransactOpts, from common.Address, to common.Address, tokenId *big.Int) (*types.Transaction, error) {
+	return _RegShop.contract.Transact(opts, "safeTransferFrom", from, to, tokenId)
 }
 
 // SafeTransferFrom is a paid mutator transaction binding the contract method 0x42842e0e.
 //
-// Solidity: function safeTransferFrom(address from, address to, uint256 id) payable returns()
-func (_RegShop *RegShopSession) SafeTransferFrom(from common.Address, to common.Address, id *big.Int) (*types.Transaction, error) {
-	return _RegShop.Contract.SafeTransferFrom(&_RegShop.TransactOpts, from, to, id)
+// Solidity: function safeTransferFrom(address from, address to, uint256 tokenId) returns()
+func (_RegShop *RegShopSession) SafeTransferFrom(from common.Address, to common.Address, tokenId *big.Int) (*types.Transaction, error) {
+	return _RegShop.Contract.SafeTransferFrom(&_RegShop.TransactOpts, from, to, tokenId)
 }
 
 // SafeTransferFrom is a paid mutator transaction binding the contract method 0x42842e0e.
 //
-// Solidity: function safeTransferFrom(address from, address to, uint256 id) payable returns()
-func (_RegShop *RegShopTransactorSession) SafeTransferFrom(from common.Address, to common.Address, id *big.Int) (*types.Transaction, error) {
-	return _RegShop.Contract.SafeTransferFrom(&_RegShop.TransactOpts, from, to, id)
+// Solidity: function safeTransferFrom(address from, address to, uint256 tokenId) returns()
+func (_RegShop *RegShopTransactorSession) SafeTransferFrom(from common.Address, to common.Address, tokenId *big.Int) (*types.Transaction, error) {
+	return _RegShop.Contract.SafeTransferFrom(&_RegShop.TransactOpts, from, to, tokenId)
 }
 
 // SafeTransferFrom0 is a paid mutator transaction binding the contract method 0xb88d4fde.
 //
-// Solidity: function safeTransferFrom(address from, address to, uint256 id, bytes data) payable returns()
-func (_RegShop *RegShopTransactor) SafeTransferFrom0(opts *bind.TransactOpts, from common.Address, to common.Address, id *big.Int, data []byte) (*types.Transaction, error) {
-	return _RegShop.contract.Transact(opts, "safeTransferFrom0", from, to, id, data)
+// Solidity: function safeTransferFrom(address from, address to, uint256 tokenId, bytes data) returns()
+func (_RegShop *RegShopTransactor) SafeTransferFrom0(opts *bind.TransactOpts, from common.Address, to common.Address, tokenId *big.Int, data []byte) (*types.Transaction, error) {
+	return _RegShop.contract.Transact(opts, "safeTransferFrom0", from, to, tokenId, data)
 }
 
 // SafeTransferFrom0 is a paid mutator transaction binding the contract method 0xb88d4fde.
 //
-// Solidity: function safeTransferFrom(address from, address to, uint256 id, bytes data) payable returns()
-func (_RegShop *RegShopSession) SafeTransferFrom0(from common.Address, to common.Address, id *big.Int, data []byte) (*types.Transaction, error) {
-	return _RegShop.Contract.SafeTransferFrom0(&_RegShop.TransactOpts, from, to, id, data)
+// Solidity: function safeTransferFrom(address from, address to, uint256 tokenId, bytes data) returns()
+func (_RegShop *RegShopSession) SafeTransferFrom0(from common.Address, to common.Address, tokenId *big.Int, data []byte) (*types.Transaction, error) {
+	return _RegShop.Contract.SafeTransferFrom0(&_RegShop.TransactOpts, from, to, tokenId, data)
 }
 
 // SafeTransferFrom0 is a paid mutator transaction binding the contract method 0xb88d4fde.
 //
-// Solidity: function safeTransferFrom(address from, address to, uint256 id, bytes data) payable returns()
-func (_RegShop *RegShopTransactorSession) SafeTransferFrom0(from common.Address, to common.Address, id *big.Int, data []byte) (*types.Transaction, error) {
-	return _RegShop.Contract.SafeTransferFrom0(&_RegShop.TransactOpts, from, to, id, data)
+// Solidity: function safeTransferFrom(address from, address to, uint256 tokenId, bytes data) returns()
+func (_RegShop *RegShopTransactorSession) SafeTransferFrom0(from common.Address, to common.Address, tokenId *big.Int, data []byte) (*types.Transaction, error) {
+	return _RegShop.Contract.SafeTransferFrom0(&_RegShop.TransactOpts, from, to, tokenId, data)
 }
 
 // SetApprovalForAll is a paid mutator transaction binding the contract method 0xa22cb465.
 //
-// Solidity: function setApprovalForAll(address operator, bool isApproved) returns()
-func (_RegShop *RegShopTransactor) SetApprovalForAll(opts *bind.TransactOpts, operator common.Address, isApproved bool) (*types.Transaction, error) {
-	return _RegShop.contract.Transact(opts, "setApprovalForAll", operator, isApproved)
+// Solidity: function setApprovalForAll(address operator, bool approved) returns()
+func (_RegShop *RegShopTransactor) SetApprovalForAll(opts *bind.TransactOpts, operator common.Address, approved bool) (*types.Transaction, error) {
+	return _RegShop.contract.Transact(opts, "setApprovalForAll", operator, approved)
 }
 
 // SetApprovalForAll is a paid mutator transaction binding the contract method 0xa22cb465.
 //
-// Solidity: function setApprovalForAll(address operator, bool isApproved) returns()
-func (_RegShop *RegShopSession) SetApprovalForAll(operator common.Address, isApproved bool) (*types.Transaction, error) {
-	return _RegShop.Contract.SetApprovalForAll(&_RegShop.TransactOpts, operator, isApproved)
+// Solidity: function setApprovalForAll(address operator, bool approved) returns()
+func (_RegShop *RegShopSession) SetApprovalForAll(operator common.Address, approved bool) (*types.Transaction, error) {
+	return _RegShop.Contract.SetApprovalForAll(&_RegShop.TransactOpts, operator, approved)
 }
 
 // SetApprovalForAll is a paid mutator transaction binding the contract method 0xa22cb465.
 //
-// Solidity: function setApprovalForAll(address operator, bool isApproved) returns()
-func (_RegShop *RegShopTransactorSession) SetApprovalForAll(operator common.Address, isApproved bool) (*types.Transaction, error) {
-	return _RegShop.Contract.SetApprovalForAll(&_RegShop.TransactOpts, operator, isApproved)
+// Solidity: function setApprovalForAll(address operator, bool approved) returns()
+func (_RegShop *RegShopTransactorSession) SetApprovalForAll(operator common.Address, approved bool) (*types.Transaction, error) {
+	return _RegShop.Contract.SetApprovalForAll(&_RegShop.TransactOpts, operator, approved)
 }
 
 // SetTokenURI is a paid mutator transaction binding the contract method 0x162094c4.
@@ -1460,23 +1553,23 @@ func (_RegShop *RegShopTransactorSession) SetTokenURI(shopId *big.Int, newTokenU
 
 // TransferFrom is a paid mutator transaction binding the contract method 0x23b872dd.
 //
-// Solidity: function transferFrom(address from, address to, uint256 id) payable returns()
-func (_RegShop *RegShopTransactor) TransferFrom(opts *bind.TransactOpts, from common.Address, to common.Address, id *big.Int) (*types.Transaction, error) {
-	return _RegShop.contract.Transact(opts, "transferFrom", from, to, id)
+// Solidity: function transferFrom(address from, address to, uint256 tokenId) returns()
+func (_RegShop *RegShopTransactor) TransferFrom(opts *bind.TransactOpts, from common.Address, to common.Address, tokenId *big.Int) (*types.Transaction, error) {
+	return _RegShop.contract.Transact(opts, "transferFrom", from, to, tokenId)
 }
 
 // TransferFrom is a paid mutator transaction binding the contract method 0x23b872dd.
 //
-// Solidity: function transferFrom(address from, address to, uint256 id) payable returns()
-func (_RegShop *RegShopSession) TransferFrom(from common.Address, to common.Address, id *big.Int) (*types.Transaction, error) {
-	return _RegShop.Contract.TransferFrom(&_RegShop.TransactOpts, from, to, id)
+// Solidity: function transferFrom(address from, address to, uint256 tokenId) returns()
+func (_RegShop *RegShopSession) TransferFrom(from common.Address, to common.Address, tokenId *big.Int) (*types.Transaction, error) {
+	return _RegShop.Contract.TransferFrom(&_RegShop.TransactOpts, from, to, tokenId)
 }
 
 // TransferFrom is a paid mutator transaction binding the contract method 0x23b872dd.
 //
-// Solidity: function transferFrom(address from, address to, uint256 id) payable returns()
-func (_RegShop *RegShopTransactorSession) TransferFrom(from common.Address, to common.Address, id *big.Int) (*types.Transaction, error) {
-	return _RegShop.Contract.TransferFrom(&_RegShop.TransactOpts, from, to, id)
+// Solidity: function transferFrom(address from, address to, uint256 tokenId) returns()
+func (_RegShop *RegShopTransactorSession) TransferFrom(from common.Address, to common.Address, tokenId *big.Int) (*types.Transaction, error) {
+	return _RegShop.Contract.TransferFrom(&_RegShop.TransactOpts, from, to, tokenId)
 }
 
 // UpdateRootHash is a paid mutator transaction binding the contract method 0x175253f5.
@@ -1569,31 +1662,31 @@ func (it *RegShopApprovalIterator) Close() error {
 
 // RegShopApproval represents a Approval event raised by the RegShop contract.
 type RegShopApproval struct {
-	Owner   common.Address
-	Account common.Address
-	Id      *big.Int
-	Raw     types.Log // Blockchain specific contextual infos
+	Owner    common.Address
+	Approved common.Address
+	TokenId  *big.Int
+	Raw      types.Log // Blockchain specific contextual infos
 }
 
 // FilterApproval is a free log retrieval operation binding the contract event 0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925.
 //
-// Solidity: event Approval(address indexed owner, address indexed account, uint256 indexed id)
-func (_RegShop *RegShopFilterer) FilterApproval(opts *bind.FilterOpts, owner []common.Address, account []common.Address, id []*big.Int) (*RegShopApprovalIterator, error) {
+// Solidity: event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId)
+func (_RegShop *RegShopFilterer) FilterApproval(opts *bind.FilterOpts, owner []common.Address, approved []common.Address, tokenId []*big.Int) (*RegShopApprovalIterator, error) {
 
 	var ownerRule []interface{}
 	for _, ownerItem := range owner {
 		ownerRule = append(ownerRule, ownerItem)
 	}
-	var accountRule []interface{}
-	for _, accountItem := range account {
-		accountRule = append(accountRule, accountItem)
+	var approvedRule []interface{}
+	for _, approvedItem := range approved {
+		approvedRule = append(approvedRule, approvedItem)
 	}
-	var idRule []interface{}
-	for _, idItem := range id {
-		idRule = append(idRule, idItem)
+	var tokenIdRule []interface{}
+	for _, tokenIdItem := range tokenId {
+		tokenIdRule = append(tokenIdRule, tokenIdItem)
 	}
 
-	logs, sub, err := _RegShop.contract.FilterLogs(opts, "Approval", ownerRule, accountRule, idRule)
+	logs, sub, err := _RegShop.contract.FilterLogs(opts, "Approval", ownerRule, approvedRule, tokenIdRule)
 	if err != nil {
 		return nil, err
 	}
@@ -1602,23 +1695,23 @@ func (_RegShop *RegShopFilterer) FilterApproval(opts *bind.FilterOpts, owner []c
 
 // WatchApproval is a free log subscription operation binding the contract event 0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925.
 //
-// Solidity: event Approval(address indexed owner, address indexed account, uint256 indexed id)
-func (_RegShop *RegShopFilterer) WatchApproval(opts *bind.WatchOpts, sink chan<- *RegShopApproval, owner []common.Address, account []common.Address, id []*big.Int) (event.Subscription, error) {
+// Solidity: event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId)
+func (_RegShop *RegShopFilterer) WatchApproval(opts *bind.WatchOpts, sink chan<- *RegShopApproval, owner []common.Address, approved []common.Address, tokenId []*big.Int) (event.Subscription, error) {
 
 	var ownerRule []interface{}
 	for _, ownerItem := range owner {
 		ownerRule = append(ownerRule, ownerItem)
 	}
-	var accountRule []interface{}
-	for _, accountItem := range account {
-		accountRule = append(accountRule, accountItem)
+	var approvedRule []interface{}
+	for _, approvedItem := range approved {
+		approvedRule = append(approvedRule, approvedItem)
 	}
-	var idRule []interface{}
-	for _, idItem := range id {
-		idRule = append(idRule, idItem)
+	var tokenIdRule []interface{}
+	for _, tokenIdItem := range tokenId {
+		tokenIdRule = append(tokenIdRule, tokenIdItem)
 	}
 
-	logs, sub, err := _RegShop.contract.WatchLogs(opts, "Approval", ownerRule, accountRule, idRule)
+	logs, sub, err := _RegShop.contract.WatchLogs(opts, "Approval", ownerRule, approvedRule, tokenIdRule)
 	if err != nil {
 		return nil, err
 	}
@@ -1652,7 +1745,7 @@ func (_RegShop *RegShopFilterer) WatchApproval(opts *bind.WatchOpts, sink chan<-
 
 // ParseApproval is a log parse operation binding the contract event 0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925.
 //
-// Solidity: event Approval(address indexed owner, address indexed account, uint256 indexed id)
+// Solidity: event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId)
 func (_RegShop *RegShopFilterer) ParseApproval(log types.Log) (*RegShopApproval, error) {
 	event := new(RegShopApproval)
 	if err := _RegShop.contract.UnpackLog(event, "Approval", log); err != nil {
@@ -1731,15 +1824,15 @@ func (it *RegShopApprovalForAllIterator) Close() error {
 
 // RegShopApprovalForAll represents a ApprovalForAll event raised by the RegShop contract.
 type RegShopApprovalForAll struct {
-	Owner      common.Address
-	Operator   common.Address
-	IsApproved bool
-	Raw        types.Log // Blockchain specific contextual infos
+	Owner    common.Address
+	Operator common.Address
+	Approved bool
+	Raw      types.Log // Blockchain specific contextual infos
 }
 
 // FilterApprovalForAll is a free log retrieval operation binding the contract event 0x17307eab39ab6107e8899845ad3d59bd9653f200f220920489ca2b5937696c31.
 //
-// Solidity: event ApprovalForAll(address indexed owner, address indexed operator, bool isApproved)
+// Solidity: event ApprovalForAll(address indexed owner, address indexed operator, bool approved)
 func (_RegShop *RegShopFilterer) FilterApprovalForAll(opts *bind.FilterOpts, owner []common.Address, operator []common.Address) (*RegShopApprovalForAllIterator, error) {
 
 	var ownerRule []interface{}
@@ -1760,7 +1853,7 @@ func (_RegShop *RegShopFilterer) FilterApprovalForAll(opts *bind.FilterOpts, own
 
 // WatchApprovalForAll is a free log subscription operation binding the contract event 0x17307eab39ab6107e8899845ad3d59bd9653f200f220920489ca2b5937696c31.
 //
-// Solidity: event ApprovalForAll(address indexed owner, address indexed operator, bool isApproved)
+// Solidity: event ApprovalForAll(address indexed owner, address indexed operator, bool approved)
 func (_RegShop *RegShopFilterer) WatchApprovalForAll(opts *bind.WatchOpts, sink chan<- *RegShopApprovalForAll, owner []common.Address, operator []common.Address) (event.Subscription, error) {
 
 	var ownerRule []interface{}
@@ -1806,10 +1899,279 @@ func (_RegShop *RegShopFilterer) WatchApprovalForAll(opts *bind.WatchOpts, sink 
 
 // ParseApprovalForAll is a log parse operation binding the contract event 0x17307eab39ab6107e8899845ad3d59bd9653f200f220920489ca2b5937696c31.
 //
-// Solidity: event ApprovalForAll(address indexed owner, address indexed operator, bool isApproved)
+// Solidity: event ApprovalForAll(address indexed owner, address indexed operator, bool approved)
 func (_RegShop *RegShopFilterer) ParseApprovalForAll(log types.Log) (*RegShopApprovalForAll, error) {
 	event := new(RegShopApprovalForAll)
 	if err := _RegShop.contract.UnpackLog(event, "ApprovalForAll", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// RegShopBatchMetadataUpdateIterator is returned from FilterBatchMetadataUpdate and is used to iterate over the raw logs and unpacked data for BatchMetadataUpdate events raised by the RegShop contract.
+type RegShopBatchMetadataUpdateIterator struct {
+	Event *RegShopBatchMetadataUpdate // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *RegShopBatchMetadataUpdateIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(RegShopBatchMetadataUpdate)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(RegShopBatchMetadataUpdate)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *RegShopBatchMetadataUpdateIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *RegShopBatchMetadataUpdateIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// RegShopBatchMetadataUpdate represents a BatchMetadataUpdate event raised by the RegShop contract.
+type RegShopBatchMetadataUpdate struct {
+	FromTokenId *big.Int
+	ToTokenId   *big.Int
+	Raw         types.Log // Blockchain specific contextual infos
+}
+
+// FilterBatchMetadataUpdate is a free log retrieval operation binding the contract event 0x6bd5c950a8d8df17f772f5af37cb3655737899cbf903264b9795592da439661c.
+//
+// Solidity: event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId)
+func (_RegShop *RegShopFilterer) FilterBatchMetadataUpdate(opts *bind.FilterOpts) (*RegShopBatchMetadataUpdateIterator, error) {
+
+	logs, sub, err := _RegShop.contract.FilterLogs(opts, "BatchMetadataUpdate")
+	if err != nil {
+		return nil, err
+	}
+	return &RegShopBatchMetadataUpdateIterator{contract: _RegShop.contract, event: "BatchMetadataUpdate", logs: logs, sub: sub}, nil
+}
+
+// WatchBatchMetadataUpdate is a free log subscription operation binding the contract event 0x6bd5c950a8d8df17f772f5af37cb3655737899cbf903264b9795592da439661c.
+//
+// Solidity: event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId)
+func (_RegShop *RegShopFilterer) WatchBatchMetadataUpdate(opts *bind.WatchOpts, sink chan<- *RegShopBatchMetadataUpdate) (event.Subscription, error) {
+
+	logs, sub, err := _RegShop.contract.WatchLogs(opts, "BatchMetadataUpdate")
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(RegShopBatchMetadataUpdate)
+				if err := _RegShop.contract.UnpackLog(event, "BatchMetadataUpdate", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseBatchMetadataUpdate is a log parse operation binding the contract event 0x6bd5c950a8d8df17f772f5af37cb3655737899cbf903264b9795592da439661c.
+//
+// Solidity: event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId)
+func (_RegShop *RegShopFilterer) ParseBatchMetadataUpdate(log types.Log) (*RegShopBatchMetadataUpdate, error) {
+	event := new(RegShopBatchMetadataUpdate)
+	if err := _RegShop.contract.UnpackLog(event, "BatchMetadataUpdate", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
+
+// RegShopMetadataUpdateIterator is returned from FilterMetadataUpdate and is used to iterate over the raw logs and unpacked data for MetadataUpdate events raised by the RegShop contract.
+type RegShopMetadataUpdateIterator struct {
+	Event *RegShopMetadataUpdate // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *RegShopMetadataUpdateIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(RegShopMetadataUpdate)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(RegShopMetadataUpdate)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *RegShopMetadataUpdateIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *RegShopMetadataUpdateIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// RegShopMetadataUpdate represents a MetadataUpdate event raised by the RegShop contract.
+type RegShopMetadataUpdate struct {
+	TokenId *big.Int
+	Raw     types.Log // Blockchain specific contextual infos
+}
+
+// FilterMetadataUpdate is a free log retrieval operation binding the contract event 0xf8e1a15aba9398e019f0b49df1a4fde98ee17ae345cb5f6b5e2c27f5033e8ce7.
+//
+// Solidity: event MetadataUpdate(uint256 _tokenId)
+func (_RegShop *RegShopFilterer) FilterMetadataUpdate(opts *bind.FilterOpts) (*RegShopMetadataUpdateIterator, error) {
+
+	logs, sub, err := _RegShop.contract.FilterLogs(opts, "MetadataUpdate")
+	if err != nil {
+		return nil, err
+	}
+	return &RegShopMetadataUpdateIterator{contract: _RegShop.contract, event: "MetadataUpdate", logs: logs, sub: sub}, nil
+}
+
+// WatchMetadataUpdate is a free log subscription operation binding the contract event 0xf8e1a15aba9398e019f0b49df1a4fde98ee17ae345cb5f6b5e2c27f5033e8ce7.
+//
+// Solidity: event MetadataUpdate(uint256 _tokenId)
+func (_RegShop *RegShopFilterer) WatchMetadataUpdate(opts *bind.WatchOpts, sink chan<- *RegShopMetadataUpdate) (event.Subscription, error) {
+
+	logs, sub, err := _RegShop.contract.WatchLogs(opts, "MetadataUpdate")
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(RegShopMetadataUpdate)
+				if err := _RegShop.contract.UnpackLog(event, "MetadataUpdate", log); err != nil {
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseMetadataUpdate is a log parse operation binding the contract event 0xf8e1a15aba9398e019f0b49df1a4fde98ee17ae345cb5f6b5e2c27f5033e8ce7.
+//
+// Solidity: event MetadataUpdate(uint256 _tokenId)
+func (_RegShop *RegShopFilterer) ParseMetadataUpdate(log types.Log) (*RegShopMetadataUpdate, error) {
+	event := new(RegShopMetadataUpdate)
+	if err := _RegShop.contract.UnpackLog(event, "MetadataUpdate", log); err != nil {
 		return nil, err
 	}
 	event.Raw = log
@@ -2177,16 +2539,16 @@ func (it *RegShopTransferIterator) Close() error {
 
 // RegShopTransfer represents a Transfer event raised by the RegShop contract.
 type RegShopTransfer struct {
-	From common.Address
-	To   common.Address
-	Id   *big.Int
-	Raw  types.Log // Blockchain specific contextual infos
+	From    common.Address
+	To      common.Address
+	TokenId *big.Int
+	Raw     types.Log // Blockchain specific contextual infos
 }
 
 // FilterTransfer is a free log retrieval operation binding the contract event 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef.
 //
-// Solidity: event Transfer(address indexed from, address indexed to, uint256 indexed id)
-func (_RegShop *RegShopFilterer) FilterTransfer(opts *bind.FilterOpts, from []common.Address, to []common.Address, id []*big.Int) (*RegShopTransferIterator, error) {
+// Solidity: event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
+func (_RegShop *RegShopFilterer) FilterTransfer(opts *bind.FilterOpts, from []common.Address, to []common.Address, tokenId []*big.Int) (*RegShopTransferIterator, error) {
 
 	var fromRule []interface{}
 	for _, fromItem := range from {
@@ -2196,12 +2558,12 @@ func (_RegShop *RegShopFilterer) FilterTransfer(opts *bind.FilterOpts, from []co
 	for _, toItem := range to {
 		toRule = append(toRule, toItem)
 	}
-	var idRule []interface{}
-	for _, idItem := range id {
-		idRule = append(idRule, idItem)
+	var tokenIdRule []interface{}
+	for _, tokenIdItem := range tokenId {
+		tokenIdRule = append(tokenIdRule, tokenIdItem)
 	}
 
-	logs, sub, err := _RegShop.contract.FilterLogs(opts, "Transfer", fromRule, toRule, idRule)
+	logs, sub, err := _RegShop.contract.FilterLogs(opts, "Transfer", fromRule, toRule, tokenIdRule)
 	if err != nil {
 		return nil, err
 	}
@@ -2210,8 +2572,8 @@ func (_RegShop *RegShopFilterer) FilterTransfer(opts *bind.FilterOpts, from []co
 
 // WatchTransfer is a free log subscription operation binding the contract event 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef.
 //
-// Solidity: event Transfer(address indexed from, address indexed to, uint256 indexed id)
-func (_RegShop *RegShopFilterer) WatchTransfer(opts *bind.WatchOpts, sink chan<- *RegShopTransfer, from []common.Address, to []common.Address, id []*big.Int) (event.Subscription, error) {
+// Solidity: event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
+func (_RegShop *RegShopFilterer) WatchTransfer(opts *bind.WatchOpts, sink chan<- *RegShopTransfer, from []common.Address, to []common.Address, tokenId []*big.Int) (event.Subscription, error) {
 
 	var fromRule []interface{}
 	for _, fromItem := range from {
@@ -2221,12 +2583,12 @@ func (_RegShop *RegShopFilterer) WatchTransfer(opts *bind.WatchOpts, sink chan<-
 	for _, toItem := range to {
 		toRule = append(toRule, toItem)
 	}
-	var idRule []interface{}
-	for _, idItem := range id {
-		idRule = append(idRule, idItem)
+	var tokenIdRule []interface{}
+	for _, tokenIdItem := range tokenId {
+		tokenIdRule = append(tokenIdRule, tokenIdItem)
 	}
 
-	logs, sub, err := _RegShop.contract.WatchLogs(opts, "Transfer", fromRule, toRule, idRule)
+	logs, sub, err := _RegShop.contract.WatchLogs(opts, "Transfer", fromRule, toRule, tokenIdRule)
 	if err != nil {
 		return nil, err
 	}
@@ -2260,7 +2622,7 @@ func (_RegShop *RegShopFilterer) WatchTransfer(opts *bind.WatchOpts, sink chan<-
 
 // ParseTransfer is a log parse operation binding the contract event 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef.
 //
-// Solidity: event Transfer(address indexed from, address indexed to, uint256 indexed id)
+// Solidity: event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
 func (_RegShop *RegShopFilterer) ParseTransfer(log types.Log) (*RegShopTransfer, error) {
 	event := new(RegShopTransfer)
 	if err := _RegShop.contract.UnpackLog(event, "Transfer", log); err != nil {
