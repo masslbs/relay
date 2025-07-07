@@ -47,7 +47,10 @@
         inputs.process-compose-flake.flakeModule
       ];
 
-      flake = {processComposeModules.default = ./services.nix;};
+      flake = {
+        processComposeModules.default = ./services.nix;
+        nixosModules.default = ./nixosModule.nix;
+      };
       perSystem = {
         pkgs,
         system,
