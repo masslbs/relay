@@ -5,7 +5,8 @@
   description = "Mass Market Relay";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    # to get local-testnet the right addresses we use contracts' nixpkgs
+    # nixpkgs.url = "github:nixos/nixpkgs/nixos-25.05";
     systems.url = "github:nix-systems/default";
     flake-parts.url = "github:hercules-ci/flake-parts";
 
@@ -17,27 +18,29 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    contracts.url = "github:masslbs/contracts";
-    contracts.inputs.nixpkgs.follows = "nixpkgs"; # sync foundry version
+    contracts.url = "github:masslbs/contracts/stage1";
+    # see above
+    nixpkgs.follows = "contracts/nixpkgs";
+    foundry.follows = "contracts/foundry";
 
     schema.url = "github:masslbs/network-schema";
-    schema.inputs.nixpkgs.follows = "nixpkgs";
+    # to align pythonPackages between the two
+    schema.inputs.nixpkgs.follows = "pystoretest/nixpkgs";
 
     pystoretest.url = "github:masslbs/pystoretest";
-    pystoretest.inputs.nixpkgs.follows = "nixpkgs";
     pystoretest.inputs.contracts.follows = "contracts";
     pystoretest.inputs.network-schema.follows = "schema";
   };
 
   outputs = inputs @ {
-    flake-parts,
     systems,
     contracts,
     schema,
     pystoretest,
+    foundry,
     ...
   }:
-    flake-parts.lib.mkFlake {inherit inputs;} {
+    inputs.flake-parts.lib.mkFlake {inherit inputs;} {
       systems = import systems;
       imports = [
         inputs.pre-commit-hooks.flakeModule
@@ -59,6 +62,9 @@
       in {
         _module.args.pkgs = import inputs.nixpkgs {
           inherit system;
+          overlays = [
+            foundry.overlay
+          ];
         };
         process-compose = let
           cli = {
