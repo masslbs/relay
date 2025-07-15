@@ -278,7 +278,7 @@ func (im *getBlobUploadURLRequestHandler) validate(version uint) *masspb.Error {
 	if version < 4 {
 		return minimumVersionError
 	}
-	return nil // req id is checked seperatly
+	return nil // req id is checked separately
 }
 
 func (im *getBlobUploadURLRequestHandler) handle(sess *Session, reqID *masspb.RequestId) {
@@ -450,7 +450,7 @@ func isRequest(e *masspb.Envelope, v *validator.Validate) (networkRequest, bool)
 		return &subscriptionCancelRequestHandler{tv.SubscriptionCancelRequest}, true
 
 	default:
-		panic(fmt.Sprintf("Envelope.isRequest: unhandeled type: %T", tv))
+		panic(fmt.Sprintf("Envelope.isRequest: unhandled type: %T", tv))
 	}
 }
 
