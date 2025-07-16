@@ -11,7 +11,7 @@ in
     src = ./.;
     go = pkgs.go_1_23;
     enableParallelBuilding = true;
-    vendorHash = "sha256-1LpORU5MLGs/kdZornQoE2Bb301vUU4FdyY566On178=";
+    vendorHash = "sha256-aYCwKM1iXqmCGGm0gatxITM7ODkRUa/G90Z6UwCJQ2g=";
     ldflags = ["-X main.release=${version}"];
     # # TODO: we build the package twice (once again in serviecs, i think)
     # # Let's not run the tests twice, too at least. The linking time is excruciatingly long.
