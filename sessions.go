@@ -18,10 +18,10 @@ import (
 	"github.com/gobwas/ws/wsutil"
 	"google.golang.org/protobuf/proto"
 
-	masscbor "github.com/masslbs/network-schema/go/cbor"
-	"github.com/masslbs/network-schema/go/objects"
-	"github.com/masslbs/network-schema/go/patch"
-	masspb "github.com/masslbs/network-schema/go/pb"
+	masscbor "github.com/masslbs/network-schema/v5/go/cbor"
+	"github.com/masslbs/network-schema/v5/go/objects"
+	"github.com/masslbs/network-schema/v5/go/patch"
+	masspb "github.com/masslbs/network-schema/v5/go/pb"
 )
 
 // Session represents a connection to a client

@@ -14,8 +14,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/masslbs/network-schema/go/objects"
-	pb "github.com/masslbs/network-schema/go/pb"
+	"github.com/masslbs/network-schema/v5/go/objects"
+	pb "github.com/masslbs/network-schema/v5/go/pb"
 )
 
 var (
@@ -61,7 +61,7 @@ func assert(testing bool) {
 
 func assertWithMessage(testing bool, message string) {
 	if !testing {
-		panic(fmt.Errorf(message))
+		panic(fmt.Errorf("%q", message))
 	}
 }
 
