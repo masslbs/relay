@@ -13,7 +13,7 @@ import (
 	"encoding/json"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/masslbs/network-schema/go/objects"
+	"github.com/masslbs/network-schema/v5/go/objects"
 	tassert "github.com/stretchr/testify/assert"
 )
 

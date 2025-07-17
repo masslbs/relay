@@ -23,9 +23,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/time/rate"
 
-	cbor "github.com/masslbs/network-schema/go/cbor"
-	"github.com/masslbs/network-schema/go/objects"
-	"github.com/masslbs/network-schema/go/patch"
+	cbor "github.com/masslbs/network-schema/v5/go/cbor"
+	"github.com/masslbs/network-schema/v5/go/objects"
+	"github.com/masslbs/network-schema/v5/go/patch"
 )
 
 // PushStates represents the state of an event in the database.

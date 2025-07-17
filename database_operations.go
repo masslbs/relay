@@ -23,10 +23,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	cbor "github.com/masslbs/network-schema/go/cbor"
-	"github.com/masslbs/network-schema/go/objects"
-	"github.com/masslbs/network-schema/go/patch"
-	pb "github.com/masslbs/network-schema/go/pb"
+	cbor "github.com/masslbs/network-schema/v5/go/cbor"
+	"github.com/masslbs/network-schema/v5/go/objects"
+	"github.com/masslbs/network-schema/v5/go/patch"
+	pb "github.com/masslbs/network-schema/v5/go/pb"
 	contractsabi "github.com/masslbs/relay/internal/contractabis"
 )
 
@@ -554,7 +554,7 @@ func (op *PatchSetWriteOp) process(r *Relay) {
 		if sessionState.keyCardOfAGuest {
 			if p.Path.Type != patch.ObjectTypeOrder {
 				logSR("relay.patchSetWriteOp.guestKeycardWriteNotAllowed path=%+v", sessionID, requestID, p.Path)
-				op.err = &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: "not allowed"}
+				op.err = &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: "write not allowed"}
 				r.sendSessionOp(sessionState, op)
 				return
 			}
@@ -772,7 +772,7 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 	var patches []patch.Patch
 	cborCanceledAt, err := cbor.Marshal(canceledAt)
 	check(err)
-	cborCanceledState, err := cbor.Marshal(objects.OrderStateCanceled)
+	cborCanceledState, err := cbor.Marshal(objects.OrderPaymentStateCanceled)
 	check(err)
 	for _, orderID := range orderIDslice {
 		patches = append(patches,
@@ -789,7 +789,7 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 				Path: patch.Path{
 					Type:     patch.ObjectTypeOrder,
 					ObjectID: &orderID,
-					Fields:   []any{"State"},
+					Fields:   []any{"PaymentState"},
 				},
 				Op:    patch.ReplaceOp,
 				Value: cborCanceledState,
@@ -804,7 +804,7 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 func isOrderStateCommitted(p patch.Patch) bool {
 	if !(p.Path.Type == patch.ObjectTypeOrder &&
 		len(p.Path.Fields) == 1 &&
-		p.Path.Fields[0] == "State") {
+		p.Path.Fields[0] == "PaymentState") {
 		return false
 	}
 	if p.Op != patch.ReplaceOp {
@@ -813,11 +813,11 @@ func isOrderStateCommitted(p patch.Patch) bool {
 	if p.Value == nil {
 		return false
 	}
-	var orderState objects.OrderState
-	if err := cbor.Unmarshal(p.Value, &orderState); err != nil {
+	var paymentState objects.OrderPaymentState
+	if err := cbor.Unmarshal(p.Value, &paymentState); err != nil {
 		return false
 	}
-	return orderState == objects.OrderStateCommitted
+	return paymentState == objects.OrderPaymentStateCommitted
 }
 
 func (r *Relay) processOrderItemsCommitment(sessionID sessionID, shop *objects.Shop, p patch.Patch) *pb.Error {
@@ -947,7 +947,7 @@ where shopId = $1
 func isOrderStatePaymentChosen(p patch.Patch) bool {
 	if !(p.Path.Type == patch.ObjectTypeOrder &&
 		len(p.Path.Fields) == 1 &&
-		p.Path.Fields[0] == "State") {
+		p.Path.Fields[0] == "PaymentState") {
 		return false
 	}
 	if p.Op != patch.ReplaceOp {
@@ -956,11 +956,11 @@ func isOrderStatePaymentChosen(p patch.Patch) bool {
 	if p.Value == nil {
 		return false
 	}
-	var orderState objects.OrderState
-	if err := cbor.Unmarshal(p.Value, &orderState); err != nil {
+	var state objects.OrderPaymentState
+	if err := cbor.Unmarshal(p.Value, &state); err != nil {
 		return false
 	}
-	return orderState == objects.OrderStatePaymentChosen
+	return state == objects.OrderPaymentStatePaymentChosen
 }
 
 var big100 = new(big.Int).SetInt64(100)
@@ -1182,7 +1182,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 	check(err)
 
 	// TODO: once
-	unpaidBytes, err := cbor.Marshal(objects.OrderStateUnpaid)
+	unpaidBytes, err := cbor.Marshal(objects.OrderPaymentStateUnpaid)
 	check(err)
 
 	var detailsOp patch.OpString = patch.AddOp
@@ -1204,7 +1204,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 			Path: patch.Path{
 				Type:     patch.ObjectTypeOrder,
 				ObjectID: &orderID,
-				Fields:   []any{"State"},
+				Fields:   []any{"PaymentState"},
 			},
 			Op:    patch.ReplaceOp,
 			Value: unpaidBytes,
@@ -1263,6 +1263,7 @@ var publicDefaultFilters = []*pb.SubscriptionRequest_Filter{
 	{ObjectType: pb.ObjectType_OBJECT_TYPE_ACCOUNT},
 	{ObjectType: pb.ObjectType_OBJECT_TYPE_TAG},
 	{ObjectType: pb.ObjectType_OBJECT_TYPE_LISTING},
+	{ObjectType: pb.ObjectType_OBJECT_TYPE_INVENTORY},
 }
 
 func (op *SubscriptionRequestOp) process(r *Relay) {
@@ -1325,8 +1326,7 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 	for _, filter := range op.im.Filters {
 		// Ensure that non-authenticated sessions can only access public content
 		if !subscription.shopID.Equal(session.shopID) &&
-			(filter.ObjectType == pb.ObjectType_OBJECT_TYPE_INVENTORY ||
-				filter.ObjectType == pb.ObjectType_OBJECT_TYPE_ORDER) {
+			(filter.ObjectType == pb.ObjectType_OBJECT_TYPE_ORDER) {
 			logSR("relay.subscriptionRequestOp.notAllowed why=\"other shop\" filter=%s",
 				sessionID, requestID, filter.ObjectType.String())
 			op.err = notAllowedError
@@ -1342,12 +1342,6 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 				if id := filter.GetObjectId(); id != nil {
 					verifyOrderIDs = append(verifyOrderIDs, id.Raw)
 				}
-			case pb.ObjectType_OBJECT_TYPE_INVENTORY:
-				logSR("relay.subscriptionRequestOp.notAllowed filter=%s",
-					sessionID, requestID, filter.ObjectType.String())
-				op.err = notAllowedError
-				r.sendSessionOp(session, op)
-				return
 			}
 		}
 
@@ -1561,6 +1555,7 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 			PricingCurrency: objects.ChainAddress{
 				ChainID: r.ethereum.registryChainID,
 			},
+			OrderPaymentTimeout: time.Hour,
 		}
 		manifestBytes, err := cbor.Marshal(manifest)
 		check(err)
@@ -1739,13 +1734,13 @@ WHERE shopID = $3 and orderId = $4;`
 		})
 	}
 
-	orderID := objects.ObjectID(ordeDBID.Uint64())
+	orderID := ordeDBID.Uint64()
 
 	paidBytes, err := cbor.Marshal(paid)
 	check(err)
 
 	// TODO: only once
-	orderStateBytes, err := cbor.Marshal(objects.OrderStatePaid)
+	orderStateBytes, err := cbor.Marshal(objects.OrderPaymentStatePaid)
 	check(err)
 
 	inventoryPatches = append(inventoryPatches,
@@ -1763,7 +1758,7 @@ WHERE shopID = $3 and orderId = $4;`
 			Path: patch.Path{
 				Type:     patch.ObjectTypeOrder,
 				ObjectID: &orderID,
-				Fields:   []any{"State"},
+				Fields:   []any{"PaymentState"},
 			},
 			Value: orderStateBytes,
 		})
