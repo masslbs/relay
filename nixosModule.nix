@@ -181,7 +181,7 @@ in {
           [
             4001 # ipfs swarm
           ]
-          ++ lib.mkIf cfg.https-termination [80 443];
+          ++ optionals cfg.https-termination [80 443];
         firewall.allowedUDPPorts = [4001];
       };
       services = {
