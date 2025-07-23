@@ -83,6 +83,25 @@ in {
         description = mdDoc "The API endpoint for IPFS";
       };
 
+      # issue#55: remove me
+      pinata = {
+        enable = mkOption {
+          type = types.bool;
+          default = cfg.prod-env;
+        };
+        hostname = mkOption {
+          type = types.str;
+          default = "api.pinata.cloud";
+        };
+        key-file = mkOption {
+          type = types.nullOr types.path;
+          default =
+            if (config.age or null) != null && (config.age.secrets or null) != null && (config.age.secrets.pinata-jwt or null) != null
+            then config.age.secrets.pinata-jwt.path
+            else null;
+        };
+      };
+
       relay-base-url = mkOption {
         type = types.str;
         description = mdDoc "The public-facing address for the relay http server";
@@ -107,6 +126,22 @@ in {
       };
 
       eth = {
+        private-key-file = mkOption {
+          type = types.nullOr types.path;
+          default =
+            if (config.age or null) != null && (config.age.secrets or null) != null && (config.age.secrets.ethereum-private-key or null) != null
+            then config.age.secrets.ethereum-private-key.path
+            else null;
+          defaultText = literalExpression "config.age.secrets.ethereum-private-key.path";
+          description = mdDoc "The private key file the relay should read to get the key data for its blockchain writes";
+        };
+
+        private-key = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = mdDoc "The private key data the relay should use for its blockchain writes (overrides key-file if set)";
+        };
+
         registries-chain-id = mkOption {
           type = types.number;
           description = mdDoc "The chain id that the main registry contracts are deployed on";
@@ -178,6 +213,14 @@ in {
   config =
     mkIf cfg.enable
     {
+      # Assertion to ensure at least one key method is provided
+      assertions = [
+        {
+          assertion = cfg.eth.private-key-file != null || cfg.eth.private-key != null;
+          message = "Either services.mm-relay.eth.private-key-file or services.mm-relay.eth.private-key must be set";
+        }
+      ];
+
       # IPFS (Kubo) configuration
       networking = {
         firewall.allowedTCPPorts =
@@ -234,7 +277,6 @@ in {
             DATABASE_URL = cfg.database-url;
             BANG_SECRET = "g31thjPxrsJV2aXAx4zcwtiIbjxOnhBtmksnd0z2p8CWYpJxl33ltg9Ktrwte3Kf";
             ETH_STORE_REGISTRY_CHAIN_ID = builtins.toString cfg.eth.registries-chain-id;
-            ETH_PRIVATE_KEY_FILE = config.age.secrets.ethereum-private.path;
             IPFS_API_PATH = cfg.ipfs-api-path;
             COINGECKO_API_KEY =
               if cfg.coingecko.enable
@@ -248,12 +290,19 @@ in {
               if cfg.fixedConversion.enable
               then builtins.toString cfg.fixedConversion.divisor
               else "";
-            PINATA_API_HOST = "api.pinata.cloud";
-            PINATA_JWT_FILE = config.age.secrets.pinata-jwt.path;
             SENTRY_DSN = optionalString (cfg.sentry.enable or false) cfg.sentry.dsn;
             SENTRY_ENVIRONMENT = optionalString (cfg.sentry.enable or false) cfg.sentry.environment;
             KICK_TIMEOUT = cfg.kick-timeout;
             PING_INTERVAL = cfg.ping-interval;
+          }
+          // (
+            if cfg.eth.private-key != null
+            then {ETH_PRIVATE_KEY = cfg.eth.private-key;}
+            else {ETH_PRIVATE_KEY_FILE = cfg.eth.private-key-file;}
+          )
+          // optionalAttrs (cfg.pinata.enable == true) {
+            PINATA_API_HOST = cfg.pinata.hostname;
+            PINATA_JWT_FILE = cfg.pinata.key-file;
           }
           // envChains;
         serviceConfig = {
