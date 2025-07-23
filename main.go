@@ -220,7 +220,7 @@ func (m *Metric) connect() {
 
 func (m *Metric) gaugeSet(name string, value float64) {
 	if logMetrics {
-		log("metric.emit name=%s value=%d", name, value)
+		log("metric.emit name=%s value=%f", name, value)
 	}
 
 	m.mu.Lock()

@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -118,11 +119,17 @@ func enrollKeyCardHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.R
 		} else {
 			// assuming the enrollment is directly on the relay, without a website involved
 			if msg.GetDomain() != r.baseURL.Host {
+				fmt.Fprintf(os.Stderr, "msg domain: %s\n", msg.GetDomain())
+				fmt.Fprintf(os.Stderr, "url host:   %s\n", r.baseURL.Host)
+
 				return http.StatusBadRequest, fmt.Errorf("domain did not match")
 			}
 
 			siweURI := msg.GetURI()
 			if siweURI.Host != r.baseURL.Host {
+				fmt.Fprintf(os.Stderr, "siwe URI: %s\n", siweURI.Host)
+				fmt.Fprintf(os.Stderr, "url host: %s\n", r.baseURL.Host)
+
 				return http.StatusBadRequest, fmt.Errorf("domain did not match")
 			}
 
