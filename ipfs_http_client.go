@@ -13,6 +13,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -49,9 +50,17 @@ func parseMultiaddr(multiaddr string) (string, error) {
 
 // NewIPFSHTTPClient creates a new lightweight IPFS HTTP client
 func NewIPFSHTTPClient(apiAddr string) (*IPFSHTTPClient, error) {
-	baseURL, err := parseMultiaddr(apiAddr)
-	if err != nil {
-		return nil, fmt.Errorf("NewIPFSHTTPClient: failed to parse %q: %w", apiAddr, err)
+	var baseURL string
+	var err error
+	_, err = url.Parse(apiAddr)
+	if err == nil {
+		baseURL = apiAddr
+	} else {
+		// try multiaddr format
+		baseURL, err = parseMultiaddr(apiAddr)
+		if err != nil {
+			return nil, fmt.Errorf("NewIPFSHTTPClient: failed to parse %q: %w", apiAddr, err)
+		}
 	}
 
 	return &IPFSHTTPClient{
