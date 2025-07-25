@@ -62,7 +62,7 @@ func NewIPFSHTTPClient(apiAddr string) (*IPFSHTTPClient, error) {
 			return nil, fmt.Errorf("NewIPFSHTTPClient: failed to parse %q: %w", apiAddr, err)
 		}
 	}
-
+	log("NewIPFSHTTPClient address=%s", baseURL)
 	return &IPFSHTTPClient{
 		baseURL: baseURL,
 		httpClient: &http.Client{
