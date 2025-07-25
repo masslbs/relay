@@ -8,10 +8,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -21,11 +23,36 @@ type IPFSHTTPClient struct {
 	httpClient *http.Client
 }
 
+func parseMultiaddr(multiaddr string) (string, error) {
+	parts := strings.Split(multiaddr, "/")
+	var ip, port string
+
+	for i, part := range parts {
+		if part == "ip4" && i < len(parts)-1 {
+			ip = parts[i+1]
+		}
+		if part == "tcp" && i < len(parts)-1 {
+			port = parts[i+1]
+		}
+	}
+
+	if ip == "" {
+		return "", errors.New("multiaddr: no IP found")
+	}
+
+	if port == "" {
+		return "", errors.New("multiaddr: no port found")
+	}
+
+	return fmt.Sprintf("http://%s:%s", ip, port), nil
+}
+
 // NewIPFSHTTPClient creates a new lightweight IPFS HTTP client
 func NewIPFSHTTPClient(apiAddr string) (*IPFSHTTPClient, error) {
-	// Parse the API address (e.g., "/ip4/127.0.0.1/tcp/5001")
-	// For now, assume it's always localhost:5001
-	baseURL := "http://127.0.0.1:5001"
+	baseURL, err := parseMultiaddr(apiAddr)
+	if err != nil {
+		return nil, fmt.Errorf("NewIPFSHTTPClient: failed to parse %q: %w", apiAddr, err)
+	}
 
 	return &IPFSHTTPClient{
 		baseURL: baseURL,

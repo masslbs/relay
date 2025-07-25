@@ -37,9 +37,6 @@ func getIpfsClient(ctx context.Context, errCount int, lastErr error) (*Lightweig
 
 	// Use environment variable or default to localhost
 	apiAddr := mustGetEnvString("IPFS_API_PATH")
-	if apiAddr == "" {
-		apiAddr = "/ip4/127.0.0.1/tcp/5001"
-	}
 
 	ipfsClient, err := NewLightweightIPFSClient(apiAddr)
 	if err != nil {

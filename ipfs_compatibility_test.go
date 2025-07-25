@@ -18,6 +18,61 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestParseMultiAddr(t *testing.T) {
+	tassert := tassert.New(t)
+
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr string
+	}{
+		{
+			name:  "valid IPv4 and port",
+			input: "/ip4/127.0.0.1/tcp/5001",
+			want:  "http://127.0.0.1:5001",
+		},
+		{
+			name:  "different IP and port",
+			input: "/ip4/192.168.1.10/tcp/8080",
+			want:  "http://192.168.1.10:8080",
+		},
+		{
+			name:    "missing ip4",
+			input:   "/tcp/5001",
+			wantErr: "multiaddr: no IP found",
+		},
+		{
+			name:    "missing tcp",
+			input:   "/ip4/127.0.0.1",
+			wantErr: "multiaddr: no port found",
+		},
+		{
+			name:    "empty",
+			input:   "",
+			wantErr: "multiaddr: no IP found",
+		},
+		{
+			name:    "malformed",
+			input:   "/ip4/127.0.0.1/tcp",
+			wantErr: "multiaddr: no port found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseMultiaddr(tt.input)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				tassert.Equal(tt.wantErr, err.Error())
+			} else {
+				require.NoError(t, err)
+				tassert.Equal(tt.want, got)
+			}
+		})
+	}
+}
+
 // Mock IPFS HTTP API server for testing
 func setupMockIPFSServer() *httptest.Server {
 	mux := http.NewServeMux()
