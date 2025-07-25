@@ -13,8 +13,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-
-	"github.com/ipfs/boxo/path"
 )
 
 var pinataJWT string
@@ -34,7 +32,7 @@ type pinataPinResponse struct {
 	Name   string `json:"name"`
 }
 
-func pinataPin(cid path.ImmutablePath, name string) (pinataPinResponse, error) {
+func pinataPin(cid string, name string) (pinataPinResponse, error) {
 	pinataReadTokenOnce.Do(pinataReadToken)
 
 	host := mustGetEnvString("PINATA_API_HOST")
@@ -42,7 +40,7 @@ func pinataPin(cid path.ImmutablePath, name string) (pinataPinResponse, error) {
 
 	// Create the request body
 	requestBody := map[string]any{
-		"hashToPin": cid.RootCid().String(),
+		"hashToPin": cid,
 		"pinataMetadata": map[string]string{
 			"name": name,
 		},

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2025 Mass Labs
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
 {
   config,
   pkgs,
@@ -23,7 +26,7 @@ with lib; let
 in {
   options = {
     services.mm-relay = {
-      enable = mkEnableOption (lib.mdDoc "mm-relay");
+      enable = mkEnableOption (mdDoc "mm-relay");
 
       user = mkOption {
         type = types.str;
@@ -35,13 +38,13 @@ in {
         type = types.package;
         default = pkgs.relay;
         defaultText = literalExpression "pkgs.mm-relay";
-        description = lib.mdDoc "The Relay package to use.";
+        description = mdDoc "The Relay package to use.";
       };
 
       port = mkOption {
         type = types.port;
         default = 2222;
-        description = lib.mdDoc "The port the the relay is listening on";
+        description = mdDoc "The port the the relay is listening on";
       };
 
       https-termination = mkOption {
@@ -54,7 +57,7 @@ in {
         type = types.port;
         default = 6666;
         defaultText = literalExpression "pkgs.mm-relay";
-        description = lib.mdDoc "The profiling port";
+        description = mdDoc "The profiling port";
       };
 
       hostname = mkOption {
@@ -71,42 +74,77 @@ in {
       database-url = mkOption {
         type = types.str;
         default = "postgres://mm-relay@/mm-relay?host=/run/postgresql/";
-        description = lib.mdDoc "The database URL";
+        description = mdDoc "The database URL";
       };
 
       ipfs-api-path = mkOption {
         type = types.str;
         default = "/ip4/127.0.0.1/tcp/5001";
-        description = lib.mdDoc "The API endpoint for IPFS";
+        description = mdDoc "The API endpoint for IPFS";
+      };
+
+      # issue#55: remove me
+      pinata = {
+        enable = mkOption {
+          type = types.bool;
+          default = cfg.prod-env;
+        };
+        hostname = mkOption {
+          type = types.str;
+          default = "api.pinata.cloud";
+        };
+        key-file = mkOption {
+          type = types.nullOr types.path;
+          default =
+            if (config.age or null) != null && (config.age.secrets or null) != null && (config.age.secrets.pinata-jwt or null) != null
+            then config.age.secrets.pinata-jwt.path
+            else null;
+        };
       };
 
       relay-base-url = mkOption {
         type = types.str;
-        description = lib.mdDoc "The public-facing address for the relay http server";
+        description = mdDoc "The public-facing address for the relay http server";
       };
 
       nft-id = mkOption {
         type = types.str;
         default = "";
-        description = lib.mdDoc "The NFT of the Relay. Minted from RelayReg.";
+        description = mdDoc "The NFT of the Relay. Minted from RelayReg.";
       };
 
       ping-interval = mkOption {
         type = types.str;
         default = "10s";
-        description = lib.mdDoc "The interval at which the relay pings the database to keep the connection alive";
+        description = mdDoc "The interval at which the relay pings the database to keep the connection alive";
       };
 
       kick-timeout = mkOption {
         type = types.str;
         default = "30s";
-        description = lib.mdDoc "The timeout after which the relay will consider the database connection dead and reconnect";
+        description = mdDoc "The timeout after which the relay will consider the database connection dead and reconnect";
       };
 
       eth = {
+        private-key-file = mkOption {
+          type = types.nullOr types.path;
+          default =
+            if (config.age or null) != null && (config.age.secrets or null) != null && (config.age.secrets.ethereum-private-key or null) != null
+            then config.age.secrets.ethereum-private-key.path
+            else null;
+          defaultText = literalExpression "config.age.secrets.ethereum-private-key.path";
+          description = mdDoc "The private key file the relay should read to get the key data for its blockchain writes";
+        };
+
+        private-key = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = mdDoc "The private key data the relay should use for its blockchain writes (overrides key-file if set)";
+        };
+
         registries-chain-id = mkOption {
           type = types.number;
-          description = lib.mdDoc "The chain id that the main registry contracts are deployed on";
+          description = mdDoc "The chain id that the main registry contracts are deployed on";
         };
 
         chains = mkOption {
@@ -116,57 +154,57 @@ in {
       };
 
       fixedConversion = {
-        enable = mkEnableOption (lib.mdDoc "fixedConversion");
+        enable = mkEnableOption (mdDoc "fixedConversion");
 
         factor = mkOption {
           type = types.number;
-          description = lib.mdDoc "The factor to use for the fixed conversion";
+          description = mdDoc "The factor to use for the fixed conversion";
           default = 1;
         };
 
         divisor = mkOption {
           type = types.number;
-          description = lib.mdDoc "The divisor to use for the fixed conversion";
+          description = mdDoc "The divisor to use for the fixed conversion";
           default = 1;
         };
       };
 
       coingecko = {
-        enable = mkEnableOption (lib.mdDoc "coingecko");
+        enable = mkEnableOption (mdDoc "coingecko");
 
         api-key = mkOption {
           type = types.str;
-          description = lib.mdDoc "The API key for CoinGecko";
+          description = mdDoc "The API key for CoinGecko";
         };
       };
 
       metrics = {
-        enable = mkEnableOption (lib.mdDoc "metrics");
+        enable = mkEnableOption (mdDoc "metrics");
 
         port = mkOption {
           type = types.port;
           default = 4444;
-          description = lib.mdDoc "The metrics port";
+          description = mdDoc "The metrics port";
         };
 
         host = mkOption {
           type = types.str;
           default = "localhost";
-          description = lib.mdDoc "The mertrics host";
+          description = mdDoc "The mertrics host";
         };
       };
 
       sentry = {
-        enable = mkEnableOption (lib.mdDoc "sentry");
+        enable = mkEnableOption (mdDoc "sentry");
 
         dsn = mkOption {
           type = types.str;
-          description = lib.mdDoc "The Sentry/Glitchtip DSN";
+          description = mdDoc "The Sentry/Glitchtip DSN";
         };
 
         environment = mkOption {
           type = types.str;
-          description = lib.mdDoc "The Sentry environment";
+          description = mdDoc "The Sentry environment";
         };
       };
     };
@@ -175,6 +213,14 @@ in {
   config =
     mkIf cfg.enable
     {
+      # Assertion to ensure at least one key method is provided
+      assertions = [
+        {
+          assertion = cfg.eth.private-key-file != null || cfg.eth.private-key != null;
+          message = "Either services.mm-relay.eth.private-key-file or services.mm-relay.eth.private-key must be set";
+        }
+      ];
+
       # IPFS (Kubo) configuration
       networking = {
         firewall.allowedTCPPorts =
@@ -231,7 +277,6 @@ in {
             DATABASE_URL = cfg.database-url;
             BANG_SECRET = "g31thjPxrsJV2aXAx4zcwtiIbjxOnhBtmksnd0z2p8CWYpJxl33ltg9Ktrwte3Kf";
             ETH_STORE_REGISTRY_CHAIN_ID = builtins.toString cfg.eth.registries-chain-id;
-            ETH_PRIVATE_KEY_FILE = config.age.secrets.ethereum-private.path;
             IPFS_API_PATH = cfg.ipfs-api-path;
             COINGECKO_API_KEY =
               if cfg.coingecko.enable
@@ -245,12 +290,19 @@ in {
               if cfg.fixedConversion.enable
               then builtins.toString cfg.fixedConversion.divisor
               else "";
-            PINATA_API_HOST = "api.pinata.cloud";
-            PINATA_JWT_FILE = config.age.secrets.pinata-jwt.path;
-            SENTRY_DSN = lib.optionalString (cfg.sentry.enable or false) cfg.sentry.dsn;
-            SENTRY_ENVIRONMENT = lib.optionalString (cfg.sentry.enable or false) cfg.sentry.environment;
+            SENTRY_DSN = optionalString (cfg.sentry.enable or false) cfg.sentry.dsn;
+            SENTRY_ENVIRONMENT = optionalString (cfg.sentry.enable or false) cfg.sentry.environment;
             KICK_TIMEOUT = cfg.kick-timeout;
             PING_INTERVAL = cfg.ping-interval;
+          }
+          // (
+            if cfg.eth.private-key != null
+            then {ETH_PRIVATE_KEY = cfg.eth.private-key;}
+            else {ETH_PRIVATE_KEY_FILE = cfg.eth.private-key-file;}
+          )
+          // optionalAttrs (cfg.pinata.enable == true) {
+            PINATA_API_HOST = cfg.pinata.hostname;
+            PINATA_JWT_FILE = cfg.pinata.key-file;
           }
           // envChains;
         serviceConfig = {
@@ -282,8 +334,8 @@ in {
           compression = "zstd";
         };
       };
-      services.caddy = lib.mkIf cfg.https-termination {
-        enable = lib.mkDefault true;
+      services.caddy = mkIf cfg.https-termination {
+        enable = mkDefault true;
         virtualHosts."${cfg.hostname}".extraConfig = ''
           reverse_proxy http://localhost:${builtins.toString cfg.port}
         '';
