@@ -13,6 +13,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -157,6 +158,42 @@ func (c *IPFSHTTPClient) Cat(ctx context.Context, cid string) (io.ReadCloser, er
 	}
 
 	return resp.Body, nil
+}
+
+// CatWithSize retrieves data from IPFS by CID and attempts to get size from Content-Length header
+func (c *IPFSHTTPClient) CatWithSize(ctx context.Context, cid string) (io.ReadCloser, int64, error) {
+	// Create request
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v0/cat", nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add CID as query parameter
+	q := req.URL.Query()
+	q.Add("arg", cid)
+	req.URL.RawQuery = q.Encode()
+
+	// Execute request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute request: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, 0, fmt.Errorf("IPFS cat failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Try to get size from Content-Length header
+	var size int64 = -1 // -1 indicates unknown size
+	if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
+		if parsedSize, err := strconv.ParseInt(contentLength, 10, 64); err == nil {
+			size = parsedSize
+		}
+	}
+
+	return resp.Body, size, nil
 }
 
 // SwarmPeersResponse represents a peer in the swarm
@@ -308,11 +345,11 @@ func (n *IPFSNode) Close() error {
 
 // Get retrieves a file from IPFS
 func (u *UnixfsAPI) Get(ctx context.Context, path *IPFSPath) (*IPFSNode, error) {
-	reader, err := u.client.Cat(ctx, path.cid)
+	reader, size, err := u.client.CatWithSize(ctx, path.cid)
 	if err != nil {
 		return nil, err
 	}
-	return &IPFSNode{reader: reader}, nil
+	return &IPFSNode{reader: reader, size: size}, nil
 }
 
 // SwarmAPI provides swarm operations

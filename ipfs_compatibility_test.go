@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestParseMultiAddr(t *testing.T) {
+func TestIPFSParseMultiAddr(t *testing.T) {
 	tassert := tassert.New(t)
 
 	tests := []struct {
@@ -75,6 +76,9 @@ func TestParseMultiAddr(t *testing.T) {
 
 // Mock IPFS HTTP API server for testing
 func setupMockIPFSServer() *httptest.Server {
+	// Content store to maintain uploaded files
+	contentStore := make(map[string][]byte)
+
 	mux := http.NewServeMux()
 
 	// Mock /api/v0/add endpoint
@@ -111,6 +115,9 @@ func setupMockIPFSServer() *httptest.Server {
 			mockCID = mockCID[:46]
 		}
 
+		// Store content for later retrieval
+		contentStore[mockCID] = content
+
 		// Return IPFS add response format
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"Name":"","Hash":"%s","Size":"%d"}`, mockCID, len(content))
@@ -129,13 +136,13 @@ func setupMockIPFSServer() *httptest.Server {
 			return
 		}
 
-		// Return mock content based on CID
-		if strings.HasPrefix(cid, "Qm") {
-			// Extract original content from mock CID (simplified)
+		// Return stored content based on CID
+		if content, exists := contentStore[cid]; exists {
 			w.Header().Set("Content-Type", "application/octet-stream")
-			fmt.Fprintf(w, "mock-content-for-%s", cid)
+			w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+			w.Write(content)
 		} else {
-			http.Error(w, "Invalid CID", http.StatusBadRequest)
+			http.Error(w, "Content not found", http.StatusNotFound)
 		}
 	})
 
@@ -153,7 +160,7 @@ func setupMockIPFSServer() *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-func TestIPFSClientCompatibility(t *testing.T) {
+func TestIPFSHTTPClientCompatibility(t *testing.T) {
 	// Setup mock IPFS server
 	server := setupMockIPFSServer()
 	defer server.Close()
@@ -178,15 +185,21 @@ func TestIPFSClientCompatibility(t *testing.T) {
 	})
 
 	t.Run("Cat operation retrieves content", func(t *testing.T) {
-		testCID := "QmTestCID12345"
+		// First upload content to get a valid CID
+		testData := []byte("test data for cat operation")
+		reader := bytes.NewReader(testData)
 
-		reader, err := client.Cat(ctx, testCID)
+		uploadedCID, err := client.Add(ctx, reader)
 		require.NoError(t, err)
-		defer reader.Close()
 
-		content, err := io.ReadAll(reader)
+		// Now retrieve it with Cat
+		catReader, err := client.Cat(ctx, uploadedCID)
 		require.NoError(t, err)
-		tassert.Contains(t, string(content), testCID)
+		defer catReader.Close()
+
+		content, err := io.ReadAll(catReader)
+		require.NoError(t, err)
+		tassert.Equal(t, testData, content, "Cat should return original content")
 	})
 
 	t.Run("SwarmPeers returns peer list", func(t *testing.T) {
@@ -198,7 +211,7 @@ func TestIPFSClientCompatibility(t *testing.T) {
 	})
 }
 
-func TestLightweightClientCompatibility(t *testing.T) {
+func TestIPFSLightweightClientCompatibility(t *testing.T) {
 	// Setup mock IPFS server
 	server := setupMockIPFSServer()
 	defer server.Close()
@@ -223,18 +236,21 @@ func TestLightweightClientCompatibility(t *testing.T) {
 	})
 
 	t.Run("Get with IPFSPath returns IPFSNode", func(t *testing.T) {
-		testCID := "QmTestCID67890"
-		path, err := NewIPFSPath(testCID)
+		// First upload content to get a valid CID
+		testData := []byte("test data for get operation")
+		uploadFile := NewIPFSFileFromBytes(testData)
+		uploadedPath, err := client.Unixfs().Add(ctx, uploadFile)
 		require.NoError(t, err)
 
-		node, err := client.Unixfs().Get(ctx, path)
+		// Now retrieve it
+		node, err := client.Unixfs().Get(ctx, uploadedPath)
 		require.NoError(t, err)
 		defer node.Close()
 
 		var buf bytes.Buffer
 		_, err = buf.ReadFrom(node)
 		require.NoError(t, err)
-		tassert.Contains(t, buf.String(), testCID)
+		tassert.Equal(t, testData, buf.Bytes(), "Retrieved content should match uploaded content")
 	})
 
 	t.Run("Swarm peers returns string slice", func(t *testing.T) {
@@ -245,7 +261,7 @@ func TestLightweightClientCompatibility(t *testing.T) {
 	})
 }
 
-func TestBlobUploadResponseFormat(t *testing.T) {
+func TestIPFSBlobUploadResponseFormat(t *testing.T) {
 	// This test verifies the blob upload response format matches expectations
 	// Based on the test failure: expected '/ipfs/CID' but got 'CID'
 
@@ -329,7 +345,7 @@ func TestIPFSFileOperations(t *testing.T) {
 }
 
 // Benchmark tests to ensure performance is acceptable
-func BenchmarkIPFSClientAdd(b *testing.B) {
+func BenchmarkIPFSHTTPClientAdd(b *testing.B) {
 	server := setupMockIPFSServer()
 	defer server.Close()
 
@@ -348,7 +364,7 @@ func BenchmarkIPFSClientAdd(b *testing.B) {
 	}
 }
 
-func BenchmarkLightweightClientAdd(b *testing.B) {
+func BenchmarkIPFSLightweightClientAdd(b *testing.B) {
 	server := setupMockIPFSServer()
 	defer server.Close()
 

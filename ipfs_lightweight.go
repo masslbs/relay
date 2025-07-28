@@ -152,14 +152,9 @@ func uploadBlobHandleFunc(_ uint, r *Relay) func(http.ResponseWriter, *http.Requ
 	}
 }
 
-func ipfsCatHandleFunc() func(http.ResponseWriter, *http.Request) {
+func ipfsCatHandlerWithClient(client *LightweightIPFSClient) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
 		ctx := req.Context()
-		client, err := getIpfsClient(ctx, 0, nil)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
 
 		ipfsPath, err := NewIPFSPath(req.URL.Path)
 		if err != nil {
@@ -184,11 +179,28 @@ func ipfsCatHandleFunc() func(http.ResponseWriter, *http.Request) {
 		}
 
 		headers := w.Header()
-		headers.Set("Content-Length", strconv.Itoa(int(sz)))
+		// Only set Content-Length if size is known (>= 0)
+		if sz >= 0 {
+			headers.Set("Content-Length", strconv.Itoa(int(sz)))
+		}
 		// ipfs blobs never change
 		headers.Set("Cache-Control", "public, max-age=29030400, immutable")
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.Copy(w, node)
+	}
+}
+
+func ipfsCatHandleFunc() func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, req *http.Request) {
+		ctx := req.Context()
+		client, err := getIpfsClient(ctx, 0, nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		handler := ipfsCatHandlerWithClient(client)
+		handler(w, req)
 	}
 }
 
