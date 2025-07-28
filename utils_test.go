@@ -7,7 +7,7 @@ package main
 import (
 	"testing"
 
-	"github.com/masslbs/network-schema/go/objects"
+	"github.com/masslbs/network-schema/v5/go/objects"
 	"github.com/stretchr/testify/require"
 )
 

@@ -5,8 +5,6 @@
   description = "Mass Market Relay";
 
   inputs = {
-    # to get local-testnet the right addresses we use contracts' nixpkgs
-    # nixpkgs.url = "github:nixos/nixpkgs/nixos-25.05";
     systems.url = "github:nix-systems/default";
     flake-parts.url = "github:hercules-ci/flake-parts";
 
@@ -18,18 +16,18 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    contracts.url = "github:masslbs/contracts/stage1";
-    # see above
-    nixpkgs.follows = "contracts/nixpkgs";
-    foundry.follows = "contracts/foundry";
+    contracts.url = "github:masslbs/contracts";
+    # to reduce derivation size we use this nixpkgs for everything below
 
-    schema.url = "github:masslbs/network-schema";
-    # to align pythonPackages between the two
-    schema.inputs.nixpkgs.follows = "pystoretest/nixpkgs";
+    schema.url = "github:masslbs/network-schema/v5-dev";
+    nixpkgs.follows = "schema/nixpkgs";
 
-    pystoretest.url = "github:masslbs/pystoretest";
-    pystoretest.inputs.contracts.follows = "contracts";
-    pystoretest.inputs.network-schema.follows = "schema";
+    pystoretest.url = "github:masslbs/pystoretest/network-v5";
+    pystoretest.inputs = {
+      nixpkgs.follows = "nixpkgs";
+      contracts.follows = "contracts";
+      network-schema.follows = "schema";
+    };
   };
 
   outputs = inputs @ {
@@ -37,7 +35,6 @@
     contracts,
     schema,
     pystoretest,
-    foundry,
     ...
   }:
     inputs.flake-parts.lib.mkFlake {inherit inputs;} {
@@ -65,9 +62,6 @@
       in {
         _module.args.pkgs = import inputs.nixpkgs {
           inherit system;
-          overlays = [
-            foundry.overlay
-          ];
         };
         process-compose = let
           cli = {
@@ -118,7 +112,6 @@
               typos.enable = true;
               gofmt.enable = true;
               alejandra.enable = true;
-              gotest.enable = true;
             };
           };
         };
@@ -171,38 +164,108 @@
         };
 
         packages.default = relay;
-        # TODO: this approach to run the pystoretest suite might be flawed because of the sandboxing of nix
-        # packages.default = relay.overrideAttrs (oldAttrs: {
-        #   doCheck = true;
-        #   checkPhase = ''
-        #     # Run original check phase first
-        #     ${oldAttrs.checkPhase or ""}
 
-        #     echo "Running custom check phase with local-testnet and pystoretest..."
+        checks.pystoretest = pkgs.nixosTest {
+          name = "pystoretest-integration";
 
-        #     # Start local-testnet
-        #     tempDir=$(mktemp -d)
-        #     pushd $tempDir
-        #     mkdir -p data/ipfs
-        #     echo "IPFS_PATH=$tempDir/data/ipfs" >> .env
-        #     # TODO: -D once deploy-contracts is fixed
-        #     ${self'.packages.local-testnet}/bin/local-testnet --read-only -t=false up
-        #     popd
+          nodes.machine = {
+            virtualisation = {
+              cores = 6;
+              memorySize = 4096;
+              diskSize = 4096;
+            };
 
-        #     # Wait for services to be ready
-        #     sleep 10
+            users.users.testnet = {
+              isNormalUser = true;
+              description = "User for running local-testnet";
+              group = "testnet";
+            };
 
-        #     # Run pystoretest against the local testnet
-        #     export RELAY_HTTP_ADDRESS=http://localhost:4444
-        #     export RELAY_PING=0.1
-        #     export ETH_PRIVATE_KEY=ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-        #     export ETH_RPC_URL=http://localhost:8545
-        #     ${pystoretest.packages.${pkgs.system}.default}/bin/pystoretest --benchmark-skip -n auto
+            users.users.tester = {
+              isNormalUser = true;
+              description = "User for running pystoretest";
+              group = "tester";
+            };
 
-        #     # Clean up
-        #     ${self'.packages.local-testnet}/bin/local-testnet --read-only down
-        #   '';
-        # });
+            users.groups.testnet = {};
+            users.groups.tester = {};
+
+            environment.systemPackages = [
+              self'.packages.local-testnet
+              pystoretest.packages.${pkgs.system}.pystoretest
+              pkgs.curl
+              pkgs.jq
+              pkgs.sudo
+            ];
+          };
+
+          testScript = ''
+            machine.start()
+            machine.wait_for_unit("multi-user.target")
+
+            # Set up environment for testnet user
+            machine.execute("sudo -u testnet mkdir -p /home/testnet/test-env/data/ipfs")
+            machine.execute("sudo -u testnet sh -c 'cd /home/testnet/test-env && echo \"IPFS_PATH=/home/testnet/test-env/data/ipfs\" >> .env'")
+            machine.execute("chown -R testnet:testnet /home/testnet/test-env")
+
+            # Start local-testnet in daemon mode as testnet user
+            machine.execute("sudo -u testnet sh -c 'cd /home/testnet/test-env && local-testnet -D -L logs/process-compose.log'")
+
+            # Wait for services to be ready (following CI pattern)
+            machine.execute("""
+              timeout=10
+              while [ $timeout -gt 0 ]; do
+                if curl --retry 5 --retry-all-errors http://localhost:8321/live 2>/dev/null; then
+                  break
+                fi
+                echo "Waiting for process-compose to be ready..."
+                timeout=$((timeout - 1))
+                sleep 5
+              done
+            """, timeout=120)
+
+            # Check if relay is ready
+            machine.execute("""
+              timeout=10
+              while [ $timeout -gt 0 ]; do
+                isReady=$(curl -s http://localhost:8321/processes | jq -r '.data[] | select(.name == "relay") | .is_ready' 2>/dev/null || echo "")
+                if [ "$isReady" == "Ready" ]; then
+                  break
+                fi
+                echo "Relay is not ready, waiting for $timeout seconds"
+                timeout=$((timeout - 1))
+                sleep 5
+              done
+
+              if [ "$isReady" != "Ready" ]; then
+                echo "Relay is not ready"
+                exit 1
+              fi
+            """, timeout=120)
+
+            # Verify services are accessible
+            machine.execute("curl http://localhost:4444/health")
+            machine.execute("curl http://localhost:5001/api/v0/version -X POST")
+            machine.execute("curl http://localhost:8545/ -X POST -H 'content-type: application/json' --data-raw '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":0}'")
+
+            # Set up test environment for tester user
+            machine.execute("sudo -u tester mkdir -p /home/tester/test-run")
+            machine.execute("chown -R tester:tester /home/tester/test-run")
+
+            # Run pystoretest against the local testnet as tester user
+            machine.execute("""
+              sudo -u tester sh -c 'cd /home/tester/test-run && \
+              export RELAY_HTTP_ADDRESS=http://localhost:4444 && \
+              export RELAY_PING=0.1 && \
+              export ETH_PRIVATE_KEY=ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 && \
+              export ETH_RPC_URL=http://localhost:8545 && \
+              pystoretest --benchmark-skip -n auto'
+            """, timeout=300)
+
+            # Clean up
+            machine.execute("sudo -u testnet sh -c 'cd /home/testnet/test-env && ${self'.packages.local-testnet}/bin/local-testnet down'")
+          '';
+        };
       };
     };
 }
