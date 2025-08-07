@@ -817,7 +817,7 @@ func isOrderStateCommitted(p patch.Patch) bool {
 	if err := cbor.Unmarshal(p.Value, &paymentState); err != nil {
 		return false
 	}
-	return paymentState == objects.OrderPaymentStateCommitted
+	return paymentState == objects.OrderPaymentStateLocked
 }
 
 func (r *Relay) processOrderItemsCommitment(sessionID sessionID, shop *objects.Shop, p patch.Patch) *pb.Error {
@@ -909,7 +909,7 @@ where shopId = $1
 		}
 		combinedID := newCombinedID(item.ListingID, item.VariationIDs...)
 		usedInOtherOrders := otherOrderItemQuantities.Get(combinedID)
-		if stockItems < 0 || uint32(stockItems)-usedInOtherOrders < item.Quantity {
+		if uint32(stockItems)-usedInOtherOrders < item.Quantity {
 			invalidErr = notEnoughStockError
 			invalidErr.AdditionalInfo = &pb.Error_AdditionalInfo{
 				ObjectId: item.ListingID,
