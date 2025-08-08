@@ -630,12 +630,27 @@ func (op *PatchSetWriteOp) process(r *Relay) {
 			patches := r.processRemoveVariation(sessionID, p)
 			relayPatches = append(relayPatches, patches...)
 		}
-		if isOrderStateCommitted(p) {
-			err := r.processOrderItemsCommitment(sessionID, proposal, p)
+		if isOrderPaymentStateLocked(p) {
+			err := r.processLockItemsToOrder(sessionID, proposal, p)
 			if err != nil {
 				op.err = err
 				r.sendSessionOp(sessionState, op)
 				return
+			}
+		}
+		// Check for order unlock (transition from locked to open)
+		if p.Path.Type == patch.ObjectTypeOrder && len(p.Path.Fields) == 1 && p.Path.Fields[0] == "PaymentState" {
+			orderID := *p.Path.ObjectID
+			if order, has := shopState.data.Orders.Get(orderID); has {
+				currentState := order.PaymentState
+				if isOrderPaymentStateUnlock(p, currentState) {
+					err := r.processOrderUnlock(sessionID, p)
+					if err != nil {
+						op.err = err
+						r.sendSessionOp(sessionState, op)
+						return
+					}
+				}
 			}
 		}
 		if isOrderStatePaymentChosen(p) {
@@ -801,7 +816,7 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 	return patches
 }
 
-func isOrderStateCommitted(p patch.Patch) bool {
+func isOrderPaymentStateLocked(p patch.Patch) bool {
 	if !(p.Path.Type == patch.ObjectTypeOrder &&
 		len(p.Path.Fields) == 1 &&
 		p.Path.Fields[0] == "PaymentState") {
@@ -820,7 +835,7 @@ func isOrderStateCommitted(p patch.Patch) bool {
 	return paymentState == objects.OrderPaymentStateLocked
 }
 
-func (r *Relay) processOrderItemsCommitment(sessionID sessionID, shop *objects.Shop, p patch.Patch) *pb.Error {
+func (r *Relay) processLockItemsToOrder(sessionID sessionID, shop *objects.Shop, p patch.Patch) *pb.Error {
 	start := now()
 	ctx := context.Background()
 	sessionState := r.sessionIDsToSessionStates.MustGet(sessionID)
@@ -941,6 +956,64 @@ where shopId = $1
 	}
 
 	logS(sessionID, "relay.orderCommitItemsOp.finish took=%d", took(start))
+	return nil
+}
+
+// was the state locked before and is now open again?
+func isOrderPaymentStateUnlock(p patch.Patch, currentState objects.OrderPaymentState) bool {
+	if !(p.Path.Type == patch.ObjectTypeOrder &&
+		len(p.Path.Fields) == 1 &&
+		p.Path.Fields[0] == "PaymentState") {
+		return false
+	}
+	if p.Op != patch.ReplaceOp {
+		return false
+	}
+	if p.Value == nil {
+		return false
+	}
+	var newState objects.OrderPaymentState
+	if err := cbor.Unmarshal(p.Value, &newState); err != nil {
+		return false
+	}
+	if currentState != objects.OrderPaymentStateLocked {
+		return false
+	}
+	return newState == objects.OrderPaymentStateOpen
+}
+
+func (r *Relay) processOrderUnlock(sessionID sessionID, p patch.Patch) *pb.Error {
+	start := now()
+	ctx := context.Background()
+	sessionState := r.sessionIDsToSessionStates.MustGet(sessionID)
+
+	orderID := *p.Path.ObjectID
+	logS(sessionID, "relay.orderUnlockOp.process order=%d", orderID)
+
+	// Convert orderID to bytes for database query
+	var orderDBID ObjectIDArray
+	binary.BigEndian.PutUint64(orderDBID[:], orderID)
+
+	// Delete the payment record to unlock the order
+	const deletePaymentQuery = `DELETE FROM payments
+		WHERE shopId = $1 AND orderId = $2`
+
+	commandTag, err := r.connPool.Exec(ctx, deletePaymentQuery,
+		sessionState.shopID[:],
+		orderDBID[:],
+	)
+	if err != nil {
+		logS(sessionID, "relay.orderUnlockOp.deleteFailed err=%s", err)
+		return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to unlock order"}
+	}
+
+	// Check that exactly one row was deleted
+	if commandTag.RowsAffected() != 1 {
+		logS(sessionID, "relay.orderUnlockOp.noRowsAffected affected=%d", commandTag.RowsAffected())
+		return &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: "order not found or already unlocked"}
+	}
+
+	logS(sessionID, "relay.orderUnlockOp.finish took=%d", took(start))
 	return nil
 }
 

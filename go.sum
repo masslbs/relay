@@ -257,10 +257,8 @@ github.com/libp2p/go-libp2p v0.42.0 h1:A8foZk+ZEhZTv0Jb++7xUFlrFhBDv4j2Vh/uq4YX+
 github.com/libp2p/go-libp2p v0.42.0/go.mod h1:4NGcjbD9OIvFiSRb0XueCO19zJ4kSPK5vkyyOUYmMro=
 github.com/libp2p/go-libp2p-pubsub v0.12.0 h1:PENNZjSfk8KYxANRlpipdS7+BfLmOl3L2E/6vSNjbdI=
 github.com/libp2p/go-libp2p-pubsub v0.12.0/go.mod h1:Oi0zw9aw8/Y5GC99zt+Ef2gYAl+0nZlwdJonDyOz/sE=
-github.com/masslbs/network-schema/v5 v5.0.0-20250715113637-d871509aea92 h1:dYt0aGD8u93t650IB18mpCnIwPXI8rpVLongxuiXuYM=
-github.com/masslbs/network-schema/v5 v5.0.0-20250715113637-d871509aea92/go.mod h1:DXnUFF9alqMvXa3PQVSspv7sVH8fczuXRqiIs0hmOqE=
-github.com/masslbs/network-schema/v5 v5.0.0-20250807081105-c5847951cf3f h1:aZ5PEB1oicXPFUgNiLq/OqDuWVnAW1PHXpxZu91WrY0=
-github.com/masslbs/network-schema/v5 v5.0.0-20250807081105-c5847951cf3f/go.mod h1:DXnUFF9alqMvXa3PQVSspv7sVH8fczuXRqiIs0hmOqE=
+github.com/masslbs/network-schema/v5 v5.0.0-20250807165427-513dd4160e98 h1:HdXEebz5hfh9+5rRRwAzkO45bV1Y7nC9QTBF6/bn5GU=
+github.com/masslbs/network-schema/v5 v5.0.0-20250807165427-513dd4160e98/go.mod h1:DXnUFF9alqMvXa3PQVSspv7sVH8fczuXRqiIs0hmOqE=
 github.com/mattn/go-colorable v0.1.14 h1:9A9LHSqF/7dyVVX6g0U9cwm9pG3kP9gSzcuIPHPsaIE=
 github.com/mattn/go-colorable v0.1.14/go.mod h1:6LmQG8QLFO4G5z1gPvYEzlUgJ2wF+stgPZH1UqBm1s8=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
