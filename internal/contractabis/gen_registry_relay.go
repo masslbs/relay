@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Generated from abi/RelayReg.json - git at 548ca6e00ffe3f8d841fa4aa985183f0ff3b4dc3
+// Generated from abi/RelayReg.json - git at f63b17d8e1cd94dad81589183326739febe3f9c9
 
 // Code generated - DO NOT EDIT.
 // This file is a generated binding and any manual changes will be lost.

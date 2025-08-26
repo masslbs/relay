@@ -31,9 +31,7 @@ type PaymentWaiter struct {
 	paymentChosenAt time.Time
 	chainID         uint64
 	purchaseAddr    common.Address
-	lastBlockNo     SQLStringBigInt
 	coinsTotal      SQLStringBigInt
-	paymentID       []byte
 
 	// (optional) contract of the erc20 that we are looking for
 	erc20TokenAddr *common.Address
@@ -157,7 +155,7 @@ func (r *Relay) getPaymentWaiterForERC20Transfer(chainID uint64, purchaseAddr, t
 	var sid, oid []byte
 
 	query := `
-		SELECT shopId, orderId, purchaseAddr, lastBlockNo, coinsTotal, erc20TokenAddr
+		SELECT shopId, orderId, purchaseAddr, coinsTotal, erc20TokenAddr
 		FROM payments
 		WHERE
             paidAt IS NULL AND canceledAt IS NULL
@@ -170,7 +168,7 @@ func (r *Relay) getPaymentWaiterForERC20Transfer(chainID uint64, purchaseAddr, t
 
 	err := r.connPool.QueryRow(context.Background(), query, tokenAddr, purchaseAddr, chainID).Scan(
 		&sid, &oid, &order.purchaseAddr,
-		&order.lastBlockNo, &order.coinsTotal, &order.erc20TokenAddr,
+		&order.coinsTotal, &order.erc20TokenAddr,
 	)
 
 	if err != nil {
@@ -227,7 +225,7 @@ func (r *Relay) subscribeFilterLogsPaymentsMade(geth *ethClient) error {
 	qry := ethereum.FilterQuery{
 		FromBlock: lastBlock,
 		Addresses: []common.Address{
-			geth.contractAddresses.Payments,
+			geth.contractAddresses.OrderPaymentsFactory,
 		},
 		Topics: [][]common.Hash{
 			{eventSignaturePaymentMade},

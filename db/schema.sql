@@ -104,7 +104,6 @@ CREATE TABLE payments (
 
     -- set once payment method was chosen
     paymentChosenAt  TIMESTAMP,
-    paymentId        bytea, -- uint256
     purchaseAddr     bytea,
     chainId          integer,
     lastBlockNo      NUMERIC(80,0),
@@ -125,7 +124,6 @@ alter table payments add constraint orderIdLength check (octet_length(orderId) =
 alter table payments add constraint paymentIdLength check (octet_length(paymentId) = 32);
 alter table payments add constraint erc20TokenAddrCheck check (erc20TokenAddr is null OR octet_length(erc20TokenAddr) = 20);
 alter table payments add constraint paymentChosen check (paymentChosenAt is null OR (
-    paymentId is NOT NULL OR
     purchaseAddr is NOT NULL OR
     chainId is NOT NULL OR
     lastBlockNo is NOT NULL OR

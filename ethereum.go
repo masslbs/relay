@@ -558,24 +558,23 @@ func (rpc *ethRPCService) GetBlockByNumber(chainID uint64, blockNum *big.Int) (*
 	return lookup.result, nil
 }
 
-type paymentIDandAddressEthLookup struct {
-	chainID    uint64
-	paymentReq *contractsabi.PaymentRequest
-	fallback   common.Address
+type paymentAddressEthLookup struct {
+	chainID        uint64
+	paymentBinding *contractsabi.OrderPaymentBinding
+	fallback       common.Address
 
-	resultID   []byte
 	resultAddr common.Address
 
 	errCh chan<- error
 }
 
-func (lookup *paymentIDandAddressEthLookup) getChainID() uint64 { return lookup.chainID }
-func (lookup *paymentIDandAddressEthLookup) closeWithError(err error) {
+func (lookup *paymentAddressEthLookup) getChainID() uint64 { return lookup.chainID }
+func (lookup *paymentAddressEthLookup) closeWithError(err error) {
 	lookup.errCh <- err
 	close(lookup.errCh)
 }
 
-func (lookup *paymentIDandAddressEthLookup) process(client *ethClient) {
+func (lookup *paymentAddressEthLookup) process(client *ethClient) {
 	rpc, err := client.getRPC(context.TODO())
 	if err != nil {
 		err = fmt.Errorf("failed to estrablish RPC client: %w", err)
@@ -589,36 +588,27 @@ func (lookup *paymentIDandAddressEthLookup) process(client *ethClient) {
 		Context: ctx,
 	}
 
-	// get paymentId and create fallback address
-	paymentsContract, err := contractsabi.NewPaymentsByAddressCaller(client.contractAddresses.Payments, rpc)
+	// get payment address
+	paymentsContract, err := contractsabi.NewOrderPaymentsFactoryCaller(client.contractAddresses.OrderPaymentsFactory, rpc)
 	if err != nil {
 		lookup.closeWithError(fmt.Errorf("failed to instantiate contract helper: %w", err))
 		return
 	}
 
-	paymentID, err := GetPaymentID(*lookup.paymentReq)
-	if err != nil {
-		lookup.closeWithError(fmt.Errorf("failed to get paymentID: %w", err))
-		return
-	}
-
-	// TODO: this is call is bit more involved, since we need the bytecode of the to be deployed contract
-	purchaseAddr, err := paymentsContract.GetPaymentAddress(callOpts, *lookup.paymentReq, lookup.fallback)
+	purchaseAddr, err := paymentsContract.GetOrderPaymentAddress(callOpts, *lookup.paymentBinding)
 	if err != nil {
 		lookup.closeWithError(fmt.Errorf("failed to retrieve paymentAddr: %w", err))
 		return
 	}
-	lookup.resultID = paymentID
 	lookup.resultAddr = purchaseAddr
 	close(lookup.errCh)
 
 }
 
-func (rpc *ethRPCService) GetPaymentIDAndAddress(chainID uint64, pr *contractsabi.PaymentRequest, fallback common.Address) ([]byte, common.Address, error) {
-	lookup := &paymentIDandAddressEthLookup{
-		chainID:    chainID,
-		paymentReq: pr,
-		fallback:   fallback,
+func (rpc *ethRPCService) GetPaymentAddress(chainID uint64, payment *contractsabi.OrderPaymentBinding) (common.Address, error) {
+	lookup := &paymentAddressEthLookup{
+		chainID:        chainID,
+		paymentBinding: payment,
 	}
 	errCh := make(chan error)
 	lookup.errCh = errCh
@@ -626,10 +616,9 @@ func (rpc *ethRPCService) GetPaymentIDAndAddress(chainID uint64, pr *contractsab
 	rpc.ops <- lookup
 
 	if err := <-errCh; err != nil {
-		return nil, common.Address{}, err
+		return common.Address{}, err
 	}
-	assert(len(lookup.resultID) == 32)
-	return lookup.resultID, lookup.resultAddr, nil
+	return lookup.resultAddr, nil
 }
 
 // single jsonrpc client instance
@@ -650,9 +639,9 @@ type ethClient struct {
 	shopRegContractABI abi.ABI
 
 	contractAddresses struct {
-		Payments      common.Address `json:"Payments"`
-		ShopRegistry  common.Address `json:"ShopReg"`
-		RelayRegistry common.Address `json:"RelayReg"`
+		OrderPaymentsFactory common.Address `json:"OrderPaymentsFactory"`
+		ShopRegistry         common.Address `json:"ShopReg"`
+		RelayRegistry        common.Address `json:"RelayReg"`
 	}
 
 	keyPair *ethKeyPair
@@ -706,7 +695,7 @@ func newEthClient(kp *ethKeyPair, chainID uint64, rpcURLs []string) *ethClient {
 
 	log("ethClient.newEthClient shopRegAddr=%s", c.contractAddresses.ShopRegistry.Hex())
 	log("ethClient.newEthClient relayRegAddr=%s", c.contractAddresses.RelayRegistry.Hex())
-	log("ethClient.newEthClient paymentsAddr=%s", c.contractAddresses.Payments.Hex())
+	log("ethClient.newEthClient paymentsAddr=%s", c.contractAddresses.OrderPaymentsFactory.Hex())
 
 	c.erc20ContractABI, err = abi.JSON(strings.NewReader(contractsabi.ERC20MetaData.ABI))
 	check(err)

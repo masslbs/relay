@@ -19,7 +19,7 @@ require (
 	github.com/huandu/go-clone/generic v1.7.3
 	github.com/jackc/pgerrcode v0.0.0-20240316143900-6e2875d9b438
 	github.com/jackc/pgx/v5 v5.7.5
-	github.com/masslbs/network-schema/v5 v5.0.0-20250829103435-fc4405743242
+	github.com/masslbs/network-schema/v5 v5.0.0-20250901132300-e2d6d2c7e28f
 	github.com/miolini/datacounter v1.0.3
 	github.com/prometheus/client_golang v1.22.0
 	github.com/rs/cors v1.11.1

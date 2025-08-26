@@ -19,11 +19,13 @@ pushd internal/contractabis
 abigen --pkg contractsabi --type ERC20 --out gen_erc20.go --abi $MASS_CONTRACTS/abi/ERC20.json
 abigen --pkg contractsabi --type RegRelay --out gen_registry_relay.go --abi $MASS_CONTRACTS/abi/RelayReg.json
 abigen --pkg contractsabi --type RegShop --out gen_registry_shop.go --abi  $MASS_CONTRACTS/abi/ShopReg.json
-abigen --pkg contractsabi --type PaymentsByAddress --out gen_payments_by_address.go --abi $MASS_CONTRACTS/abi/PaymentsByAddress.json
+abigen --pkg contractsabi --type OrderPayment --out gen_order_payment.go --abi $MASS_CONTRACTS/abi/OrderPayment.json
+abigen --pkg contractsabi --type OrderPaymentsFactory --out gen_order_payments_factory.go --abi $MASS_CONTRACTS/abi/OrderPaymentsFactory.json
 sed -i "1i // Generated from abi/ERC20.json - git at $CONTRACTS_COMMIT_HASH\n" gen_erc20.go
 sed -i "1i // Generated from abi/RelayReg.json - git at $CONTRACTS_COMMIT_HASH\n" gen_registry_relay.go
 sed -i "1i // Generated from abi/ShopReg.json - git at $CONTRACTS_COMMIT_HASH\n" gen_registry_shop.go
-sed -i "1i // Generated from abi/PaymentsByAddress.json - git at $CONTRACTS_COMMIT_HASH\n" gen_payments_by_address.go
+sed -i "1i // Generated from abi/OrderPayment.json - git at $CONTRACTS_COMMIT_HASH\n" gen_order_payment.go
+sed -i "1i // Generated from abi/OrderPaymentsFactory.json - git at $CONTRACTS_COMMIT_HASH\n" gen_order_payments_factory.go
 
 cp $MASS_CONTRACTS/deploymentAddresses.json gen_contract_addresses.json
 popd

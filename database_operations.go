@@ -5,7 +5,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	crand "crypto/rand"
 	"encoding/base64"
@@ -1128,7 +1127,6 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 	// determain total price and create snapshot of items
 	var (
 		bigSubtotal = new(big.Int)
-		orderHash   [32]byte
 		done        = make(chan struct{})
 	)
 
@@ -1254,56 +1252,30 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to get shop owner"}
 	}
 
-	// ttl
-	blockNo, err := r.ethereum.GetCurrentBlockNumber(chosenCurrency.ChainID)
-	if err != nil {
-		logS(sessionID, "relay.orderPaymentChoiceOp.blockNumberFailed err=%s", err)
-		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to get current block number"}
-	}
-	bigBlockNo := new(big.Int).SetInt64(int64(blockNo))
-
-	block, err := r.ethereum.GetBlockByNumber(chosenCurrency.ChainID, bigBlockNo)
-	if err != nil {
-		logS(sessionID, "relay.orderPaymentChoiceOp.blockByNumberFailed block=%d err=%s", blockNo, err)
-		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to get block by number"}
-	}
-
 	// construct payment request for ID and pay-by-address
-	var pr = contractsabi.PaymentRequest{}
-	pr.ChainId = new(big.Int).SetUint64(chosenCurrency.ChainID)
-	// TODO: use timeout from manifest
-	pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
-	//binary.BigEndian.PutUint64(orderHash[:], orderID)
-	pr.Order = orderHash
-	commonChosenCurrency := common.Address(chosenCurrency.Address)
-	pr.Currency = commonChosenCurrency
-	pr.Amount = bigTotal
-	pr.PayeeAddress = common.Address(ownerAddr)
-	pr.IsPaymentEndpoint = false
-	pr.ShopId = &shop.Manifest.ShopID
-	// TODO: calculate signature
-	pr.ShopSignature = bytes.Repeat([]byte{0}, 64)
+	var paymentBinding contractsabi.OrderPaymentBinding
+	paymentBinding.OrderId = new(big.Int).SetUint64(orderID)
+	paymentBinding.ChainId = new(big.Int).SetUint64(chosenCurrency.ChainID)
+	paymentBinding.ReceivingAddress = common.Address(ownerAddr)
+	paymentBinding.ShopId = &shop.Manifest.ShopID
 
-	paymentID, paymentAddr, err := r.ethereum.GetPaymentIDAndAddress(chosenCurrency.ChainID, &pr, ownerAddr)
+	paymentAddr, err := r.ethereum.GetPaymentAddress(chosenCurrency.ChainID, &paymentBinding)
 	if err != nil {
-		logS(sessionID, "relay.orderPaymentChoiceOp.paymentIDandAddrFailed order=%x err=%s", orderID, err)
-		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to get paymentID"}
+		logS(sessionID, "relay.orderPaymentChoiceOp.paymentAddrFailed order=%x err=%s", orderID, err)
+		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to get payment address"}
 	}
 
-	logS(sessionID, "relay.orderPaymentChoiceOp.paymentRequest id=%x addr=%x total=%s currentBlock=%d order_hash=%x", paymentID, paymentAddr, bigTotal.String(), blockNo, orderHash)
+	logS(sessionID, "relay.orderPaymentChoiceOp.paymentRequest addr=%x total=%s", paymentAddr, bigTotal.String())
 
 	// mark order as finalized by creating the event and updating payments table
 	var details objects.PaymentDetails
-	copy(details.PaymentID[:], paymentID)
-	details.TTL = pr.Ttl.Uint64()
-
-	details.ListingHashes = make([][]byte, len(items))
-	for i, it := range items {
-		details.ListingHashes[i] = it.cborHash[:]
-	}
-
 	details.Total = objects.Uint256(*bigTotal)
-	copy(details.ShopSignature[:], pr.ShopSignature)
+	details.PaymentAddress = objects.ChainAddress{
+		ChainID: chosenCurrency.ChainID,
+		EthereumAddress: objects.EthereumAddress{
+			Address: paymentAddr,
+		},
+	}
 
 	finBytes, err := cbor.Marshal(details)
 	check(err)
@@ -1346,24 +1318,20 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 	waiter.paymentChosenAt = now()
 	waiter.purchaseAddr = paymentAddr
 	waiter.chainID = chosenCurrency.ChainID
-	waiter.lastBlockNo.SetInt64(int64(blockNo))
 	waiter.coinsTotal.Set(bigTotal)
-	waiter.paymentID = paymentID
 
+	commonChosenCurrency := common.Address(chosenCurrency.Address)
 	var chosenIsErc20 = ZeroAddress.Cmp(commonChosenCurrency) != 0
 	if chosenIsErc20 {
 		waiter.erc20TokenAddr = &commonChosenCurrency
 	}
 
 	const insertPaymentWaiterQuery = `update payments set
-
 paymentChosenAt = $3,
 purchaseAddr = $4,
-lastBlockNo = $5,
-coinsTotal = $6,
-erc20TokenAddr = $7,
-paymentID = $8,
-chainId = $9
+coinsTotal = $5,
+erc20TokenAddr = $6,
+chainId = $7
 WHERE shopId = $1
 AND orderId = $2`
 
@@ -1374,10 +1342,8 @@ AND orderId = $2`
 		// set
 		waiter.paymentChosenAt,
 		waiter.purchaseAddr.Bytes(),
-		waiter.lastBlockNo,
 		waiter.coinsTotal,
 		waiter.erc20TokenAddr,
-		waiter.paymentID,
 		waiter.chainID)
 	check(err)
 

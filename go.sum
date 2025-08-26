@@ -259,6 +259,8 @@ github.com/libp2p/go-libp2p-pubsub v0.12.0 h1:PENNZjSfk8KYxANRlpipdS7+BfLmOl3L2E
 github.com/libp2p/go-libp2p-pubsub v0.12.0/go.mod h1:Oi0zw9aw8/Y5GC99zt+Ef2gYAl+0nZlwdJonDyOz/sE=
 github.com/masslbs/network-schema/v5 v5.0.0-20250829103435-fc4405743242 h1:xHtBhWdqVQd7vGOmpgC90R/AhgbOiK6PYXvKDp4jXeI=
 github.com/masslbs/network-schema/v5 v5.0.0-20250829103435-fc4405743242/go.mod h1:DXnUFF9alqMvXa3PQVSspv7sVH8fczuXRqiIs0hmOqE=
+github.com/masslbs/network-schema/v5 v5.0.0-20250901132300-e2d6d2c7e28f h1:bauAr4TiN29QcYFkyH1As6Iw7QxHp8GN6owl6w/vl4s=
+github.com/masslbs/network-schema/v5 v5.0.0-20250901132300-e2d6d2c7e28f/go.mod h1:DXnUFF9alqMvXa3PQVSspv7sVH8fczuXRqiIs0hmOqE=
 github.com/mattn/go-colorable v0.1.14 h1:9A9LHSqF/7dyVVX6g0U9cwm9pG3kP9gSzcuIPHPsaIE=
 github.com/mattn/go-colorable v0.1.14/go.mod h1:6LmQG8QLFO4G5z1gPvYEzlUgJ2wF+stgPZH1UqBm1s8=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=

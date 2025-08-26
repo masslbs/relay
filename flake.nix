@@ -16,13 +16,12 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    contracts.url = "github:masslbs/contracts/548ca6e00ffe3f8d841fa4aa985183f0ff3b4dc3";
-    # to reduce derivation size we use this nixpkgs for everything below
+    contracts.url = "github:masslbs/contracts/Order-Payments";
 
-    schema.url = "github:masslbs/network-schema/v5-dev";
+    schema.url = "github:masslbs/network-schema/new-payment-binding";
     nixpkgs.follows = "schema/nixpkgs";
 
-    pystoretest.url = "github:masslbs/pystoretest/network-v5";
+    pystoretest.url = "github:masslbs/pystoretest/order-payments";
     pystoretest.inputs = {
       nixpkgs.follows = "nixpkgs";
       contracts.follows = "contracts";
