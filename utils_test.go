@@ -7,7 +7,9 @@ package main
 import (
 	"testing"
 
+	"github.com/masslbs/network-schema/v5/go/cbor"
 	"github.com/masslbs/network-schema/v5/go/objects"
+	"github.com/masslbs/network-schema/v5/go/patch"
 	"github.com/stretchr/testify/require"
 )
 
@@ -105,4 +107,38 @@ func TestScoreRegions_EdgeCase_SameCityDifferentPC(t *testing.T) {
 	found, err := ScoreRegions(configured, one)
 	r.NoError(err)
 	r.Equal(found, "B")
+}
+
+func TestOrderProcessingHelpers(t *testing.T) {
+	r := require.New(t)
+
+	stateOpen, err := cbor.Marshal(objects.OrderPaymentStateOpen)
+	r.NoError(err)
+	stateCanceled, err := cbor.Marshal(objects.OrderPaymentStateOpen)
+	r.NoError(err)
+	stateUnpaid, err := cbor.Marshal(objects.OrderPaymentStateUnpaid)
+	r.NoError(err)
+
+	var patch = patch.Patch{
+		Path: patch.Path{
+			Type:   patch.ObjectTypeOrder,
+			Fields: []any{"PaymentState"},
+		},
+		Op:    patch.ReplaceOp,
+		Value: stateOpen,
+	}
+
+	current := objects.OrderPaymentStateLocked
+
+	yes := isOrderPaymentStateUnlock(patch, current)
+	r.Equal(true, yes)
+
+	patch.Value = stateCanceled
+	yes = isOrderPaymentStateUnlock(patch, current)
+	r.Equal(true, yes)
+
+	patch.Value = stateUnpaid
+	yes = isOrderPaymentStateUnlock(patch, current)
+	r.Equal(false, yes)
+
 }
