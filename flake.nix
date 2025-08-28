@@ -26,7 +26,7 @@
     pystoretest.inputs = {
       nixpkgs.follows = "nixpkgs";
       contracts.follows = "contracts";
-      #network-schema.follows = "schema";
+      network-schema.follows = "schema";
     };
   };
 
