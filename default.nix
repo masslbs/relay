@@ -10,7 +10,7 @@ in
     pwd = ./.;
     src = ./.;
     enableParallelBuilding = true;
-    vendorHash = "sha256-YQdZfEEjyQFXTf21bgoo8Up4NFgcvawHq/AYeQoueGs=";
+    vendorHash = "sha256-rcU0eJFzj0GV0C+68ybC+NTT4/mrhcjs9oUBPgxR4HM=";
     ldflags = ["-X main.release=${version}"];
     # # TODO: we build the package twice (once again in serviecs, i think)
     # # Let's not run the tests twice, too at least. The linking time is excruciatingly long.

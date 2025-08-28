@@ -47,12 +47,13 @@ const (
 	sessionBufferSizeRefill       = limitMaxOutRequests * limitMaxOutBatchSize
 	sessionBufferSizeMax          = limitMaxOutRequests * limitMaxOutBatchSize * 2
 
-	watcherTimeout           = 5 * time.Second
-	databaseDebounceInterval = 100 * time.Millisecond
-	tickStatsInterval        = 1 * time.Second
-	tickBlockThreshold       = 50 * time.Millisecond
-	memoryStatsInterval      = 5 * time.Second
-	emitUptimeInterval       = 10 * time.Second
+	watcherTimeout            = 5 * time.Second
+	databaseDebounceInterval  = 100 * time.Millisecond
+	orderExpiredCheckInterval = 10 * time.Second
+	tickStatsInterval         = 1 * time.Second
+	tickBlockThreshold        = 50 * time.Millisecond
+	memoryStatsInterval       = 5 * time.Second
+	emitUptimeInterval        = 10 * time.Second
 
 	databaseOpsChanSize           = 64 * 1024
 	databasePropagationEventLimit = 5000

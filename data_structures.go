@@ -195,6 +195,10 @@ func (m *MapInts[K, V]) Keys() []K {
 	return keys
 }
 
+func (m *MapInts[K, V]) KeySet() *SetInts[K] {
+	return NewSetInts[K](m.Keys()...)
+}
+
 // All calls the given function for each requestID and value in the map.
 // returning true halts the iteration
 func (m *MapInts[K, V]) All(f func(K, V) bool) {

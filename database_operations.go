@@ -630,29 +630,48 @@ func (op *PatchSetWriteOp) process(r *Relay) {
 			patches := r.processRemoveVariation(sessionID, p)
 			relayPatches = append(relayPatches, patches...)
 		}
-		if isOrderPaymentStateLocked(p) {
-			patches, err := r.processLockItemsToOrder(sessionID, proposal, p)
-			if err != nil {
-				op.err = err
-				r.sendSessionOp(sessionState, op)
-				return
-			}
-			relayPatches = append(relayPatches, patches...)
-		}
-		if p.Path.Type == patch.ObjectTypeOrder && len(p.Path.Fields) == 1 && p.Path.Fields[0] == "PaymentState" {
+		if p.Path.Type == patch.ObjectTypeOrder &&
+			len(p.Path.Fields) == 1 &&
+			p.Path.Fields[0] == "PaymentState" {
+
+			// check this order existed before this patchSet
 			orderID := *p.Path.ObjectID
-			if order, has := shopState.data.Orders.Get(orderID); has {
-				currentState := order.PaymentState
-				// Check for order unlock (transition from locked to open, or locked to cancelled)
-				if isOrderPaymentStateUnlock(p, currentState) {
-					patches, err := r.processOrderUnlock(sessionID, proposal, p)
+			if currentOrder, has := shopState.data.Orders.Get(orderID); has {
+				currentState := currentOrder.PaymentState
+
+				tx, preProcessErr := r.connPool.Begin(ctx)
+				// should never fail since this inside the event loop and before committing the patchsets
+				check(preProcessErr)
+
+				// Did this order get locked?
+				if isOrderPaymentStateLocked(p, currentState) {
+					// if so, process it's items and lock up the inventory
+					patches, err := r.processLockItemsToOrder(sessionState.shopID, proposal, p, tx, shopState.lastUsedSeq)
 					if err != nil {
 						op.err = err
 						r.sendSessionOp(sessionState, op)
+						preProcessErr = tx.Rollback(ctx)
+						check(preProcessErr)
 						return
 					}
 					relayPatches = append(relayPatches, patches...)
 				}
+
+				// Check for order unlock (transition from locked to open, or locked to cancelled)
+				if isOrderPaymentStateUnlock(p, currentState) {
+					patches, err := r.processOrderUnlock(sessionState.shopID, proposal, p, tx)
+					if err != nil {
+						op.err = err
+						r.sendSessionOp(sessionState, op)
+						preProcessErr = tx.Rollback(ctx)
+						check(preProcessErr)
+						return
+					}
+					relayPatches = append(relayPatches, patches...)
+				}
+
+				preProcessErr = tx.Commit(ctx)
+				check(preProcessErr)
 			}
 		}
 		if isOrderStatePaymentChosen(p) {
@@ -736,7 +755,7 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 	otherOrderRows, err := r.connPool.Query(ctx, `select orderId from payments
 	where shopId = $1
 		and paidAt is null
-		and itemsLockedAt >= now() - interval '1 day'`, sessionState.shopID[:])
+		and orderExpiresAt < now()`, sessionState.shopID[:])
 	check(err)
 
 	otherOrderIDs := NewMapInts[uint64, objects.Order]()
@@ -818,7 +837,7 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 	return patches
 }
 
-func isOrderPaymentStateLocked(p patch.Patch) bool {
+func isOrderPaymentStateLocked(p patch.Patch, currentState objects.OrderPaymentState) bool {
 	if !(p.Path.Type == patch.ObjectTypeOrder &&
 		len(p.Path.Fields) == 1 &&
 		p.Path.Fields[0] == "PaymentState") {
@@ -834,16 +853,18 @@ func isOrderPaymentStateLocked(p patch.Patch) bool {
 	if err := cbor.Unmarshal(p.Value, &paymentState); err != nil {
 		return false
 	}
+	if currentState == objects.OrderPaymentStateLocked {
+		return false
+	}
 	return paymentState == objects.OrderPaymentStateLocked
 }
 
-func (r *Relay) processLockItemsToOrder(sessionID sessionID, shop *objects.Shop, p patch.Patch) ([]patch.Patch, *pb.Error) {
+func (r *Relay) processLockItemsToOrder(shopID ObjectIDArray, shop *objects.Shop, p patch.Patch, tx pgx.Tx, lastUsedSeqNo uint64) ([]patch.Patch, *pb.Error) {
 	start := now()
 	ctx := context.Background()
-	sessionState := r.sessionIDsToSessionStates.MustGet(sessionID)
 
 	orderID := *p.Path.ObjectID
-	logS(sessionID, "relay.orderLockItemsToOrderOp.process order=%d", orderID)
+	log("relay.orderLockItemsToOrderOp.process shop=%d order=%d", shopID.Uint64(), orderID)
 
 	// load related data
 	// this shop state is the prior state to the patch
@@ -890,7 +911,7 @@ func (r *Relay) processLockItemsToOrder(sessionID sessionID, shop *objects.Shop,
 			break
 		}
 
-		logS(sessionID, "relay.orderLockItemsToOrderOp.decrementing order=%d item=%d stock=%d in_order=%d", orderID, item.ListingID, stockItems, item.Quantity)
+		log("relay.orderLockItemsToOrderOp.decrementing shop=%d order=%d item=%d stock=%d in_order=%d", orderID, item.ListingID, stockItems, item.Quantity)
 
 		// prepare inventory decrement patches for each item
 		// Create a patch to decrement inventory for each item
@@ -922,26 +943,50 @@ func (r *Relay) processLockItemsToOrder(sessionID sessionID, shop *objects.Shop,
 
 	var orderDBID ObjectIDArray
 	binary.BigEndian.PutUint64(orderDBID[:], orderID)
-	shopState := r.shopIDsToShopState.MustGet(sessionState.shopID)
-	const insertPaymentQuery = `insert into payments (shopSeqNo, shopId, orderId, itemsLockedAt)
-		VALUES ($1, $2, $3, now())`
-	_, err := r.connPool.Exec(ctx, insertPaymentQuery,
-		shopState.lastUsedSeq,
-		sessionState.shopID[:],
+
+	orderExpiresAt := time.Now().UTC().Add(shop.Manifest.OrderPaymentTimeout.Duration())
+
+	const orderAlreadyExistsQuery = `SELECT count(*) FROM payments
+WHERE shopId = $1 and orderId = $2`
+	var rowCount uint
+	err := tx.QueryRow(ctx, orderAlreadyExistsQuery,
+		shopID[:],
 		orderDBID[:],
-	)
-	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) {
-			// fmt.Fprintf(os.Stderr, "relay.keyCardEnrolledOp.debug pgErr.Code=%s pgErr.ConstraintName=%s\n", pgErr.Code, pgErr.ConstraintName)
-			if pgErr.Code == pgerrcode.UniqueViolation && pgErr.ConstraintName == "paymentsorderid" {
-				return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "order already committed"}
-			}
-		}
+	).Scan(&rowCount)
+	check(err)
+
+	switch rowCount {
+	case 0: // new order, lock it for the first time
+		const insertPaymentQuery = `insert into payments (shopSeqNo, shopId, orderId, orderExpiresAt)
+		VALUES ($1, $2, $3, $4)`
+		_, err = tx.Exec(ctx, insertPaymentQuery,
+			lastUsedSeqNo,
+			shopID[:],
+			orderDBID[:],
+			orderExpiresAt,
+		)
 		check(err)
+	case 1: // order already exists -> re-lock the order
+		const relockOrderQuery = `UPDATE payments set
+canceledAt=null, shopSeqNo=$3, orderExpiresAt=$4
+where shopId=$1 and orderId=$2`
+		result, err := tx.Exec(ctx, relockOrderQuery,
+			shopID[:],
+			orderDBID[:],
+			lastUsedSeqNo,
+			orderExpiresAt,
+		)
+		check(err)
+		if n := result.RowsAffected(); n != 1 {
+			// this should never happen
+			check(fmt.Errorf("expected 1 affected row but had %d", n))
+		}
+
+	default:
+		check(fmt.Errorf("rowCount > 1? %d", rowCount))
 	}
 
-	logS(sessionID, "relay.orderLockItemsToOrderOp.finish took=%d patches=%d", took(start), len(inventoryPatches))
+	log("relay.orderLockItemsToOrderOp.finish took=%d patches=%d", took(start), len(inventoryPatches))
 	return inventoryPatches, nil
 }
 
@@ -968,36 +1013,31 @@ func isOrderPaymentStateUnlock(p patch.Patch, currentState objects.OrderPaymentS
 	return newState == objects.OrderPaymentStateOpen || newState == objects.OrderPaymentStateCanceled
 }
 
-func (r *Relay) processOrderUnlock(sessionID sessionID, shop *objects.Shop, p patch.Patch) ([]patch.Patch, *pb.Error) {
+func (r *Relay) processOrderUnlock(shopDatabaseID ObjectIDArray, shop *objects.Shop, p patch.Patch, sqlConn pgx.Tx) ([]patch.Patch, *pb.Error) {
 	start := now()
 	ctx := context.Background()
-	sessionState := r.sessionIDsToSessionStates.MustGet(sessionID)
 
 	orderID := *p.Path.ObjectID
 	order, has := shop.Orders.Get(orderID)
 	assertWithMessage(has, "should have checked order is present in state")
-	logS(sessionID, "relay.orderUnlockOp.process order=%d", orderID)
+	log("relay.orderUnlockOp.process order=%d", orderID)
 
 	// Convert orderID to bytes for database query
 	var orderDBID ObjectIDArray
 	binary.BigEndian.PutUint64(orderDBID[:], orderID)
 
-	// Delete the payment record to unlock the order
-	const deletePaymentQuery = `DELETE FROM payments
+	// Update record to unlock the order
+	const qry = `UPDATE payments set canceledAt = now()
 		WHERE shopId = $1 AND orderId = $2`
-
-	commandTag, err := r.connPool.Exec(ctx, deletePaymentQuery,
-		sessionState.shopID[:],
-		orderDBID[:],
-	)
+	commandTag, err := sqlConn.Exec(ctx, qry, shopDatabaseID[:], orderDBID[:])
 	if err != nil {
-		logS(sessionID, "relay.orderUnlockOp.deleteFailed err=%s", err)
+		log("relay.orderUnlockOp.deleteFailed err=%s", err)
 		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to unlock order"}
 	}
 
 	// Check that exactly one row was deleted
 	if commandTag.RowsAffected() != 1 {
-		logS(sessionID, "relay.orderUnlockOp.noRowsAffected affected=%d", commandTag.RowsAffected())
+		log("relay.orderUnlockOp.noRowsAffected affected=%d", commandTag.RowsAffected())
 		return nil, &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: "order not found or already unlocked"}
 	}
 
@@ -1025,7 +1065,7 @@ func (r *Relay) processOrderUnlock(sessionID sessionID, shop *objects.Shop, p pa
 			Value: quantityBytes,
 		})
 	}
-	logS(sessionID, "relay.orderUnlockOp.finish took=%d patches=%d", took(start), len(inventoryPatches))
+	log("relay.orderUnlockOp.finish took=%d patches=%d", took(start), len(inventoryPatches))
 	return inventoryPatches, nil
 }
 
@@ -1233,7 +1273,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 	pr.ChainId = new(big.Int).SetUint64(chosenCurrency.ChainID)
 	// TODO: use timeout from manifest
 	pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
-	binary.BigEndian.PutUint64(orderHash[:], orderID)
+	//binary.BigEndian.PutUint64(orderHash[:], orderID)
 	pr.Order = orderHash
 	commonChosenCurrency := common.Address(chosenCurrency.Address)
 	pr.Currency = commonChosenCurrency
@@ -1642,7 +1682,7 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 			PricingCurrency: objects.ChainAddress{
 				ChainID: r.ethereum.registryChainID,
 			},
-			OrderPaymentTimeout: time.Hour,
+			OrderPaymentTimeout: objects.OrderPaymentTimeoutUnit(time.Hour.Seconds()),
 		}
 		manifestBytes, err := cbor.Marshal(manifest)
 		check(err)
@@ -1793,7 +1833,7 @@ WHERE shopID = $3 and orderId = $4;`
 
 	shopState := r.shopIDsToShopState.MustGet(shopID).data
 
-	_, has := shopState.Orders.Get(ordeDBID.Uint64())
+	currentOrderState, has := shopState.Orders.Get(ordeDBID.Uint64())
 	assertWithMessage(has, fmt.Sprintf("order not found for orderId=%x", ordeDBID))
 
 	orderID := ordeDBID.Uint64()
@@ -1801,8 +1841,14 @@ WHERE shopID = $3 and orderId = $4;`
 	paidBytes, err := cbor.Marshal(paid)
 	check(err)
 
-	// TODO: make this a const / only marshal it once
-	orderStateBytes, err := cbor.Marshal(objects.OrderPaymentStatePaid)
+	var nextOrderState objects.OrderPaymentState
+	if currentOrderState.PaymentState == objects.OrderPaymentStateCanceled {
+		nextOrderState = objects.OrderPaymentStatePaidLate
+	} else {
+		nextOrderState = objects.OrderPaymentStatePaid
+	}
+	// TODO: make this a const / only marshal these bytes once
+	orderStateBytes, err := cbor.Marshal(nextOrderState)
 	check(err)
 
 	orderPatches := []patch.Patch{

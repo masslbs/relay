@@ -502,7 +502,7 @@ func (r *Relay) createRelayPatchSet(shopID ObjectIDArray, patches ...patch.Patch
 	header := &patch.SetHeader{
 		KeyCardNonce: shopState.nextRelayEventNonce(),
 		ShopID:       shopState.shopTokenID,
-		Timestamp:    time.Now(),
+		Timestamp:    time.Now().UTC(),
 	}
 
 	var err error
@@ -888,6 +888,111 @@ func (r *Relay) pushOutShopLog(sessionID sessionID, session *SessionState, subID
 	// logS(sessionID, "relay.debounce.cursors lastWrittenSeq=%d lastStatusedshopSeq=%d lastBufferedshopSeq=%d lastPushedshopSeq=%d lastAckedSeq=%d", userState.lastWrittenSeq, sessionState.lastStatusedshopSeq, sessionState.lastBufferedshopSeq, sessionState.lastPushedshopSeq, sessionState.lastAckedSeq)
 }
 
+func (r *Relay) processExpiredOrders() {
+	log("relay.processExpiredOrders.start")
+	ctx := context.Background()
+
+	start := now()
+	firstStart := start
+
+	r.beginSyncTransaction()
+
+	// fetch orders from payment table that have expired
+	const qry = `SELECT shopId, orderId from payments
+WHERE orderExpiresAt < now()
+AND paidAt is NULL and canceledAt is NULL`
+	rows, err := r.syncTx.Query(ctx, qry)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			r.rollbackSyncTransaction()
+			log("relay.processExpiredOrders.noRows")
+			return
+		} else {
+			check(err)
+		}
+	}
+
+	// maps from shopID to their expired orders
+	var expiredOrders = NewMapInts[ObjectIDArray, []ObjectIDArray]()
+	var orderCount uint
+	for rows.Next() {
+		var shopID, orderID []byte
+		err = rows.Scan(&shopID, &orderID)
+		check(err)
+
+		sid := ObjectIDArray(shopID)
+
+		orders, has := expiredOrders.GetHas(sid)
+		if !has {
+			orders = []ObjectIDArray{}
+		}
+		orders = append(orders, ObjectIDArray(orderID))
+		expiredOrders.Set(sid, orders)
+		orderCount++
+	}
+
+	err = rows.Err()
+	check(err)
+	rows.Close()
+
+	if orderCount == 0 {
+		r.rollbackSyncTransaction()
+		log("relay.processExpiredOrders.noOrders took=%d", took(start))
+		return
+	}
+
+	log("relay.processExpiredOrders.queried expiredOrders=%d took=%d", orderCount, took(start))
+
+	start = now()
+	r.hydrateShops(expiredOrders.KeySet())
+	log("relay.processExpiredOrders.hydrateShops shops=%d took=%d", expiredOrders.Size(), took(start))
+
+	// create state=canceled patches for each order and roll back inventory
+	start = now()
+	var totalPatches uint
+	expiredOrders.All(func(shopID ObjectIDArray, orderIDs []ObjectIDArray) bool {
+		var patches []patch.Patch
+		for _, orderID := range orderIDs {
+			// need to make a copy we can dereference
+			var oidInt objects.ObjectID = orderID.Uint64()
+
+			// cancel patch for this order
+			var statePatch patch.Patch
+			statePatch.Op = patch.ReplaceOp
+			statePatch.Path.Type = patch.ObjectTypeOrder
+			statePatch.Path.ObjectID = &oidInt
+			statePatch.Path.Fields = []any{"PaymentState"}
+			statePatch.Value, err = cbor.Marshal(objects.OrderPaymentStateCanceled)
+			check(err)
+
+			var whenPatch patch.Patch
+			whenPatch.Op = patch.AddOp
+			whenPatch.Path.Type = patch.ObjectTypeOrder
+			whenPatch.Path.ObjectID = &oidInt
+			whenPatch.Path.Fields = []any{"CanceledAt"}
+			whenPatch.Value, err = cbor.Marshal(time.Now().UTC())
+			check(err)
+
+			patches = append(patches, whenPatch, statePatch)
+
+			shopState := r.shopIDsToShopState.MustGet(shopID)
+			inventoryPatches, netErr := r.processOrderUnlock(shopID, shopState.data, statePatch, r.syncTx)
+			if netErr != nil {
+				err := fmt.Errorf("processExpiredOrders: failed to unlock order on shop %d (order id:%d: %s", shopID.Uint64(), oidInt, netErr.Message)
+				panic(err)
+			}
+			patches = append(patches, inventoryPatches...)
+		}
+		totalPatches += uint(len(patches))
+		r.createRelayPatchSet(shopID, patches...)
+		return true
+	})
+
+	r.commitSyncTransaction()
+	log("relay.processExpiredOrders.finish patches=%d tookTotal=%d", totalPatches, took(firstStart))
+
+}
+
 func (r *Relay) memoryStats() {
 	start := now()
 	debug("relay.memoryStats.start")
@@ -940,7 +1045,7 @@ const (
 	ttOp
 	ttOpInternal
 	ttDebounceSessions
-	ttPaymentWatcher
+	ttOrderExpired
 	ttMemoryStats
 	ttTickStats
 )
@@ -950,7 +1055,7 @@ var allTickTypes = [...]tickType{
 	ttOp,
 	ttOpInternal,
 	ttDebounceSessions,
-	ttPaymentWatcher,
+	ttOrderExpired,
 	ttMemoryStats,
 	ttTickStats,
 }
@@ -965,6 +1070,7 @@ func (r *Relay) run() {
 	defer sentryRecover()
 
 	debounceSessionsTimer := NewReusableTimer(databaseDebounceInterval)
+	orderExpiredTimer := NewReusableTimer(orderExpiredCheckInterval)
 	memoryStatsTimer := NewReusableTimer(memoryStatsInterval)
 	tickStatsTimer := NewReusableTimer(tickStatsInterval)
 
@@ -989,6 +1095,11 @@ func (r *Relay) run() {
 		case op := <-r.opsInternal:
 			tickType, tickSelected = timeTick(ttOpInternal)
 			op.process(r)
+
+		case <-orderExpiredTimer.C:
+			tickType, tickSelected = timeTick(ttOrderExpired)
+			r.processExpiredOrders()
+			orderExpiredTimer.Rewind()
 
 		case <-debounceSessionsTimer.C:
 			tickType, tickSelected = timeTick(ttDebounceSessions)
