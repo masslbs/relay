@@ -1233,6 +1233,7 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 	pr.ChainId = new(big.Int).SetUint64(chosenCurrency.ChainID)
 	// TODO: use timeout from manifest
 	pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
+	binary.BigEndian.PutUint64(orderHash[:], orderID)
 	pr.Order = orderHash
 	commonChosenCurrency := common.Address(chosenCurrency.Address)
 	pr.Currency = commonChosenCurrency
