@@ -26,10 +26,10 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/getsentry/sentry-go"
 	"github.com/jackc/pgx/v5"
-	cbor "github.com/masslbs/network-schema/go/cbor"
-	"github.com/masslbs/network-schema/go/objects"
-	"github.com/masslbs/network-schema/go/patch"
-	pb "github.com/masslbs/network-schema/go/pb"
+	cbor "github.com/masslbs/network-schema/v5/go/cbor"
+	"github.com/masslbs/network-schema/v5/go/objects"
+	"github.com/masslbs/network-schema/v5/go/patch"
+	pb "github.com/masslbs/network-schema/v5/go/pb"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -47,12 +47,13 @@ const (
 	sessionBufferSizeRefill       = limitMaxOutRequests * limitMaxOutBatchSize
 	sessionBufferSizeMax          = limitMaxOutRequests * limitMaxOutBatchSize * 2
 
-	watcherTimeout           = 5 * time.Second
-	databaseDebounceInterval = 100 * time.Millisecond
-	tickStatsInterval        = 1 * time.Second
-	tickBlockThreshold       = 50 * time.Millisecond
-	memoryStatsInterval      = 5 * time.Second
-	emitUptimeInterval       = 10 * time.Second
+	watcherTimeout            = 5 * time.Second
+	databaseDebounceInterval  = 100 * time.Millisecond
+	orderExpiredCheckInterval = 10 * time.Second
+	tickStatsInterval         = 1 * time.Second
+	tickBlockThreshold        = 50 * time.Millisecond
+	memoryStatsInterval       = 5 * time.Second
+	emitUptimeInterval        = 10 * time.Second
 
 	databaseOpsChanSize           = 64 * 1024
 	databasePropagationEventLimit = 5000
@@ -76,8 +77,8 @@ var simulateErrorRate = 0
 var simulateIgnoreRate = 0
 
 var (
-	networkVersions            = []uint{4}
-	currentRelayVersion uint16 = 4
+	networkVersions            = []uint{5}
+	currentRelayVersion uint16 = 5
 )
 
 var initLoggingOnce sync.Once
@@ -220,7 +221,7 @@ func (m *Metric) connect() {
 
 func (m *Metric) gaugeSet(name string, value float64) {
 	if logMetrics {
-		log("metric.emit name=%s value=%d", name, value)
+		log("metric.emit name=%s value=%f", name, value)
 	}
 
 	m.mu.Lock()

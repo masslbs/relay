@@ -157,18 +157,19 @@ func (r *Relay) getPaymentWaiterForERC20Transfer(chainID uint64, purchaseAddr, t
 	var sid, oid []byte
 
 	query := `
-		SELECT shopId, orderId, paymentChosenAt, purchaseAddr, lastBlockNo, coinsTotal, erc20TokenAddr
+		SELECT shopId, orderId, purchaseAddr, lastBlockNo, coinsTotal, erc20TokenAddr
 		FROM payments
-		WHERE paidAt IS NULL
+		WHERE
+            paidAt IS NULL AND canceledAt IS NULL
 			AND erc20TokenAddr = $1
 			AND purchaseAddr = $2
-			AND paymentChosenAt >= NOW() - INTERVAL '1 day'
+			AND orderExpiresAt >= NOW()
 			AND chainId = $3
 		LIMIT 1
 	`
 
 	err := r.connPool.QueryRow(context.Background(), query, tokenAddr, purchaseAddr, chainID).Scan(
-		&sid, &oid, &order.paymentChosenAt, &order.purchaseAddr,
+		&sid, &oid, &order.purchaseAddr,
 		&order.lastBlockNo, &order.coinsTotal, &order.erc20TokenAddr,
 	)
 
@@ -186,15 +187,15 @@ func (r *Relay) getPaymentWaiterForPaymentMade(chainID uint64, paymentIDHash com
 	var order PaymentWaiter
 	var sid, oid []byte
 
-	const query = `SELECT shopId, orderId, paymentChosenAt
+	const query = `SELECT shopId, orderId
 	FROM payments
 	WHERE
-	paidAt IS NULL
-	AND paymentChosenAt >= NOW() - INTERVAL '1 day'
+	paidAt IS NULL and canceledAt is NULL
+	AND orderExpiresAt >= NOW()
 	AND paymentID = $1
 	AND chainId = $2`
 
-	err := r.connPool.QueryRow(context.Background(), query, paymentIDHash.Bytes(), chainID).Scan(&sid, &oid, &order.paymentChosenAt)
+	err := r.connPool.QueryRow(context.Background(), query, paymentIDHash.Bytes(), chainID).Scan(&sid, &oid)
 	if err != nil {
 		return PaymentWaiter{}, err
 	}
@@ -455,11 +456,11 @@ func (r *Relay) subscribeNewHeadsForEther(client *ethClient) error {
 func (r *Relay) getOpenEtherPayments(ctx context.Context, chainID uint64) (map[common.Address]PaymentWaiter, error) {
 	orders := make(map[common.Address]PaymentWaiter)
 
-	openPaymentsQry := `SELECT shopId, orderId, paymentChosenAt, purchaseAddr, coinsTotal
+	openPaymentsQry := `SELECT shopId, orderId, purchaseAddr, coinsTotal
 			FROM payments
-			WHERE paidAt IS NULL
+			WHERE paidAt IS NULL AND canceledAt IS NULL
 				AND erc20TokenAddr IS NULL
-				AND paymentChosenAt >= NOW() - INTERVAL '1 day'
+				AND orderExpiresAt >= NOW()
 		        AND chainId = $1
 		 ORDER BY lastBlockNo asc;`
 	rows, err := r.connPool.Query(ctx, openPaymentsQry, chainID)
@@ -471,7 +472,7 @@ func (r *Relay) getOpenEtherPayments(ctx context.Context, chainID uint64) (map[c
 	for rows.Next() {
 		var order PaymentWaiter
 		var sid, oid []byte
-		err := rows.Scan(&sid, &oid, &order.paymentChosenAt, &order.purchaseAddr, &order.coinsTotal)
+		err := rows.Scan(&sid, &oid, &order.purchaseAddr, &order.coinsTotal)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan open payments from database: %w", err)
 		}

@@ -34,8 +34,8 @@ import (
 	ethlog "github.com/ethereum/go-ethereum/log"
 	"github.com/ssgreg/repeat"
 
-	"github.com/masslbs/network-schema/go/objects"
-	pb "github.com/masslbs/network-schema/go/pb"
+	"github.com/masslbs/network-schema/v5/go/objects"
+	pb "github.com/masslbs/network-schema/v5/go/pb"
 	contractsabi "github.com/masslbs/relay/internal/contractabis"
 )
 

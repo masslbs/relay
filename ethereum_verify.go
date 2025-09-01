@@ -11,7 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/crypto"
 
-	"github.com/masslbs/network-schema/go/objects"
+	"github.com/masslbs/network-schema/v5/go/objects"
 	contractsabi "github.com/masslbs/relay/internal/contractabis"
 )
 

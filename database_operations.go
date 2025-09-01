@@ -23,10 +23,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	cbor "github.com/masslbs/network-schema/go/cbor"
-	"github.com/masslbs/network-schema/go/objects"
-	"github.com/masslbs/network-schema/go/patch"
-	pb "github.com/masslbs/network-schema/go/pb"
+	cbor "github.com/masslbs/network-schema/v5/go/cbor"
+	"github.com/masslbs/network-schema/v5/go/objects"
+	"github.com/masslbs/network-schema/v5/go/patch"
+	pb "github.com/masslbs/network-schema/v5/go/pb"
 	contractsabi "github.com/masslbs/relay/internal/contractabis"
 )
 
@@ -554,7 +554,7 @@ func (op *PatchSetWriteOp) process(r *Relay) {
 		if sessionState.keyCardOfAGuest {
 			if p.Path.Type != patch.ObjectTypeOrder {
 				logSR("relay.patchSetWriteOp.guestKeycardWriteNotAllowed path=%+v", sessionID, requestID, p.Path)
-				op.err = &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: "not allowed"}
+				op.err = &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: "write not allowed"}
 				r.sendSessionOp(sessionState, op)
 				return
 			}
@@ -592,7 +592,7 @@ func (op *PatchSetWriteOp) process(r *Relay) {
 			}
 		}
 
-		// change proposedshop state
+		// change proposed shop state
 		if err := patcher.ApplyPatch(p); err != nil {
 			logSR("relay.patchSetWriteOp.applyPatchFailed patch=%d err=%s errType=%T patch.value=%x", sessionID, requestID, i, err.Error(), err, p.Value)
 			var notFoundError patch.ObjectNotFoundError
@@ -630,12 +630,48 @@ func (op *PatchSetWriteOp) process(r *Relay) {
 			patches := r.processRemoveVariation(sessionID, p)
 			relayPatches = append(relayPatches, patches...)
 		}
-		if isOrderStateCommitted(p) {
-			err := r.processOrderItemsCommitment(sessionID, proposal, p)
-			if err != nil {
-				op.err = err
-				r.sendSessionOp(sessionState, op)
-				return
+		if p.Path.Type == patch.ObjectTypeOrder &&
+			len(p.Path.Fields) == 1 &&
+			p.Path.Fields[0] == "PaymentState" {
+
+			// check this order existed before this patchSet
+			orderID := *p.Path.ObjectID
+			if currentOrder, has := shopState.data.Orders.Get(orderID); has {
+				currentState := currentOrder.PaymentState
+
+				tx, preProcessErr := r.connPool.Begin(ctx)
+				// should never fail since this inside the event loop and before committing the patchsets
+				check(preProcessErr)
+
+				// Did this order get locked?
+				if isOrderPaymentStateLocked(p, currentState) {
+					// if so, process it's items and lock up the inventory
+					patches, err := r.processLockItemsToOrder(sessionState.shopID, proposal, p, tx, shopState.lastUsedSeq)
+					if err != nil {
+						op.err = err
+						r.sendSessionOp(sessionState, op)
+						preProcessErr = tx.Rollback(ctx)
+						check(preProcessErr)
+						return
+					}
+					relayPatches = append(relayPatches, patches...)
+				}
+
+				// Check for order unlock (transition from locked to open, or locked to cancelled)
+				if isOrderPaymentStateUnlock(p, currentState) {
+					patches, err := r.processOrderUnlock(sessionState.shopID, proposal, p, tx)
+					if err != nil {
+						op.err = err
+						r.sendSessionOp(sessionState, op)
+						preProcessErr = tx.Rollback(ctx)
+						check(preProcessErr)
+						return
+					}
+					relayPatches = append(relayPatches, patches...)
+				}
+
+				preProcessErr = tx.Commit(ctx)
+				check(preProcessErr)
 			}
 		}
 		if isOrderStatePaymentChosen(p) {
@@ -719,7 +755,7 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 	otherOrderRows, err := r.connPool.Query(ctx, `select orderId from payments
 	where shopId = $1
 		and paidAt is null
-		and itemsLockedAt >= now() - interval '1 day'`, sessionState.shopID[:])
+		and orderExpiresAt < now()`, sessionState.shopID[:])
 	check(err)
 
 	otherOrderIDs := NewMapInts[uint64, objects.Order]()
@@ -772,7 +808,7 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 	var patches []patch.Patch
 	cborCanceledAt, err := cbor.Marshal(canceledAt)
 	check(err)
-	cborCanceledState, err := cbor.Marshal(objects.OrderStateCanceled)
+	cborCanceledState, err := cbor.Marshal(objects.OrderPaymentStateCanceled)
 	check(err)
 	for _, orderID := range orderIDslice {
 		patches = append(patches,
@@ -789,7 +825,7 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 				Path: patch.Path{
 					Type:     patch.ObjectTypeOrder,
 					ObjectID: &orderID,
-					Fields:   []any{"State"},
+					Fields:   []any{"PaymentState"},
 				},
 				Op:    patch.ReplaceOp,
 				Value: cborCanceledState,
@@ -801,10 +837,10 @@ func (r *Relay) processRemoveVariation(sessionID sessionID, p patch.Patch) []pat
 	return patches
 }
 
-func isOrderStateCommitted(p patch.Patch) bool {
+func isOrderPaymentStateLocked(p patch.Patch, currentState objects.OrderPaymentState) bool {
 	if !(p.Path.Type == patch.ObjectTypeOrder &&
 		len(p.Path.Fields) == 1 &&
-		p.Path.Fields[0] == "State") {
+		p.Path.Fields[0] == "PaymentState") {
 		return false
 	}
 	if p.Op != patch.ReplaceOp {
@@ -813,20 +849,22 @@ func isOrderStateCommitted(p patch.Patch) bool {
 	if p.Value == nil {
 		return false
 	}
-	var orderState objects.OrderState
-	if err := cbor.Unmarshal(p.Value, &orderState); err != nil {
+	var paymentState objects.OrderPaymentState
+	if err := cbor.Unmarshal(p.Value, &paymentState); err != nil {
 		return false
 	}
-	return orderState == objects.OrderStateCommitted
+	if currentState == objects.OrderPaymentStateLocked {
+		return false
+	}
+	return paymentState == objects.OrderPaymentStateLocked
 }
 
-func (r *Relay) processOrderItemsCommitment(sessionID sessionID, shop *objects.Shop, p patch.Patch) *pb.Error {
+func (r *Relay) processLockItemsToOrder(shopID ObjectIDArray, shop *objects.Shop, p patch.Patch, tx pgx.Tx, lastUsedSeqNo uint64) ([]patch.Patch, *pb.Error) {
 	start := now()
 	ctx := context.Background()
-	sessionState := r.sessionIDsToSessionStates.MustGet(sessionID)
 
 	orderID := *p.Path.ObjectID
-	logS(sessionID, "relay.orderCommitItemsOp.process order=%d", orderID)
+	log("relay.orderLockItemsToOrderOp.process shop=%d order=%d", shopID.Uint64(), orderID)
 
 	// load related data
 	// this shop state is the prior state to the patch
@@ -834,56 +872,11 @@ func (r *Relay) processOrderItemsCommitment(sessionID sessionID, shop *objects.S
 	order, has := shop.Orders.Get(orderID)
 	assert(has)
 
-	// get all other orders that haven't been paid yet
-	// TODO: configure timeout
-	var orderDBID ObjectIDArray
-	binary.BigEndian.PutUint64(orderDBID[:], orderID)
-	otherOrderRows, err := r.connPool.Query(ctx, `select orderId from payments
-where shopId = $1
-	  and orderId != $2
-	  and paidAt is null
-	  and itemsLockedAt >= now() - interval '1 day'`,
-		sessionState.shopID[:],
-		orderDBID[:],
-	)
-	check(err)
-	var otherOrderIDBytes [][]byte
-	// first we need to drain all the otherOrderRows
-	for otherOrderRows.Next() {
-		var otherOrderID SQLUint64Bytes
-		err := otherOrderRows.Scan(&otherOrderID)
-		check(err)
-		otherOrderIDBytes = append(otherOrderIDBytes, otherOrderID.Data[:])
-	}
-	check(otherOrderRows.Err())
-	otherOrderRows.Close()
-	// now we can use the ordersByOrderID to reduce the orders
-	// (this can load in data from psql and if we did it in the same loop would lead to conn busy errors)
-	otherOrderIDs := NewMapInts[uint64, objects.Order]()
-	for _, orderIDBytes := range otherOrderIDBytes {
-		orderID := binary.BigEndian.Uint64(orderIDBytes)
-		otherOrder, has := shop.Orders.Get(orderID)
-		assert(has)
-		otherOrderIDs.Set(orderID, otherOrder)
-	}
-	// for convenience, sum up all items in the other orders
-	otherOrderItemQuantities := NewMapInts[combinedID, uint32]()
-	otherOrderIDs.All(func(_ uint64, order objects.Order) bool {
-		if order.CanceledAt != nil { // skip canceled orders
-			return false
-		}
-		for _, item := range order.Items {
-			combinedID := newCombinedID(item.ListingID, item.VariationIDs...)
-			current := otherOrderItemQuantities.Get(combinedID)
-			current += item.Quantity
-			otherOrderItemQuantities.Set(combinedID, current)
-		}
-		return false
-	})
-
 	// iterate over this order
 	var invalidErr *pb.Error
+	var inventoryPatches []patch.Patch
 	for _, item := range order.Items {
+
 		listing, has := shop.Listings.Get(item.ListingID)
 		if !has {
 			invalidErr = notFoundError
@@ -892,6 +885,7 @@ where shopId = $1
 			}
 			break
 		}
+
 		if listing.ViewState != objects.ListingViewStatePublished {
 			invalidErr = notFoundError
 			invalidErr.AdditionalInfo = &pb.Error_AdditionalInfo{
@@ -899,6 +893,7 @@ where shopId = $1
 			}
 			break
 		}
+
 		stockItems, has := shop.Inventory.Get(item.ListingID, item.VariationIDs)
 		if !has {
 			invalidErr = notEnoughStockError
@@ -907,47 +902,99 @@ where shopId = $1
 			}
 			break
 		}
-		combinedID := newCombinedID(item.ListingID, item.VariationIDs...)
-		usedInOtherOrders := otherOrderItemQuantities.Get(combinedID)
-		if stockItems < 0 || uint32(stockItems)-usedInOtherOrders < item.Quantity {
+
+		if uint32(stockItems) < item.Quantity {
 			invalidErr = notEnoughStockError
 			invalidErr.AdditionalInfo = &pb.Error_AdditionalInfo{
 				ObjectId: item.ListingID,
 			}
 			break
 		}
+
+		log("relay.orderLockItemsToOrderOp.decrementing shop=%d order=%d item=%d stock=%d in_order=%d", orderID, item.ListingID, stockItems, item.Quantity)
+
+		// prepare inventory decrement patches for each item
+		// Create a patch to decrement inventory for each item
+		listingID := item.ListingID
+
+		variationIDs := make([]any, len(item.VariationIDs))
+		for i, id := range item.VariationIDs {
+			variationIDs[i] = id
+		}
+		// Prepare the patch path with variations in the fields
+		patchPath := patch.Path{
+			Type:     patch.ObjectTypeInventory,
+			ObjectID: &listingID,
+			Fields:   variationIDs,
+		}
+
+		// Create the decrement patch
+		quantityBytes, err := cbor.Marshal(item.Quantity)
+		check(err)
+		inventoryPatches = append(inventoryPatches, patch.Patch{
+			Path:  patchPath,
+			Op:    patch.DecrementOp,
+			Value: quantityBytes,
+		})
 	}
 	if invalidErr != nil {
-		return invalidErr
+		return nil, invalidErr
 	}
 
-	shopState := r.shopIDsToShopState.MustGet(sessionState.shopID)
-	const insertPaymentQuery = `insert into payments (shopSeqNo, shopId, orderId, itemsLockedAt)
-		VALUES ($1, $2, $3, now())`
-	_, err = r.connPool.Exec(ctx, insertPaymentQuery,
-		shopState.lastUsedSeq,
-		sessionState.shopID[:],
+	var orderDBID ObjectIDArray
+	binary.BigEndian.PutUint64(orderDBID[:], orderID)
+
+	orderExpiresAt := time.Now().UTC().Add(shop.Manifest.OrderPaymentTimeout.Duration())
+
+	const orderAlreadyExistsQuery = `SELECT count(*) FROM payments
+WHERE shopId = $1 and orderId = $2`
+	var rowCount uint
+	err := tx.QueryRow(ctx, orderAlreadyExistsQuery,
+		shopID[:],
 		orderDBID[:],
-	)
-	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) {
-			// fmt.Fprintf(os.Stderr, "relay.keyCardEnrolledOp.debug pgErr.Code=%s pgErr.ConstraintName=%s\n", pgErr.Code, pgErr.ConstraintName)
-			if pgErr.Code == pgerrcode.UniqueViolation && pgErr.ConstraintName == "paymentsorderid" {
-				return &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "order already committed"}
-			}
-		}
+	).Scan(&rowCount)
+	check(err)
+
+	switch rowCount {
+	case 0: // new order, lock it for the first time
+		const insertPaymentQuery = `insert into payments (shopSeqNo, shopId, orderId, orderExpiresAt)
+		VALUES ($1, $2, $3, $4)`
+		_, err = tx.Exec(ctx, insertPaymentQuery,
+			lastUsedSeqNo,
+			shopID[:],
+			orderDBID[:],
+			orderExpiresAt,
+		)
 		check(err)
+	case 1: // order already exists -> re-lock the order
+		const relockOrderQuery = `UPDATE payments set
+canceledAt=null, shopSeqNo=$3, orderExpiresAt=$4
+where shopId=$1 and orderId=$2`
+		result, err := tx.Exec(ctx, relockOrderQuery,
+			shopID[:],
+			orderDBID[:],
+			lastUsedSeqNo,
+			orderExpiresAt,
+		)
+		check(err)
+		if n := result.RowsAffected(); n != 1 {
+			// this should never happen
+			check(fmt.Errorf("expected 1 affected row but had %d", n))
+		}
+
+	default:
+		check(fmt.Errorf("rowCount > 1? %d", rowCount))
 	}
 
-	logS(sessionID, "relay.orderCommitItemsOp.finish took=%d", took(start))
-	return nil
+	log("relay.orderLockItemsToOrderOp.finish took=%d patches=%d", took(start), len(inventoryPatches))
+	return inventoryPatches, nil
 }
 
-func isOrderStatePaymentChosen(p patch.Patch) bool {
+// was the state locked before and is now open again?
+func isOrderPaymentStateUnlock(p patch.Patch, currentState objects.OrderPaymentState) bool {
 	if !(p.Path.Type == patch.ObjectTypeOrder &&
 		len(p.Path.Fields) == 1 &&
-		p.Path.Fields[0] == "State") {
+		p.Path.Fields[0] == "PaymentState") {
 		return false
 	}
 	if p.Op != patch.ReplaceOp {
@@ -956,11 +1003,89 @@ func isOrderStatePaymentChosen(p patch.Patch) bool {
 	if p.Value == nil {
 		return false
 	}
-	var orderState objects.OrderState
-	if err := cbor.Unmarshal(p.Value, &orderState); err != nil {
+	var newState objects.OrderPaymentState
+	if err := cbor.Unmarshal(p.Value, &newState); err != nil {
 		return false
 	}
-	return orderState == objects.OrderStatePaymentChosen
+	if currentState != objects.OrderPaymentStateLocked {
+		return false
+	}
+	return newState == objects.OrderPaymentStateOpen || newState == objects.OrderPaymentStateCanceled
+}
+
+func (r *Relay) processOrderUnlock(shopDatabaseID ObjectIDArray, shop *objects.Shop, p patch.Patch, sqlConn pgx.Tx) ([]patch.Patch, *pb.Error) {
+	start := now()
+	ctx := context.Background()
+
+	orderID := *p.Path.ObjectID
+	order, has := shop.Orders.Get(orderID)
+	assertWithMessage(has, "should have checked order is present in state")
+	log("relay.orderUnlockOp.process order=%d", orderID)
+
+	// Convert orderID to bytes for database query
+	var orderDBID ObjectIDArray
+	binary.BigEndian.PutUint64(orderDBID[:], orderID)
+
+	// Update record to unlock the order
+	const qry = `UPDATE payments set canceledAt = now()
+		WHERE shopId = $1 AND orderId = $2`
+	commandTag, err := sqlConn.Exec(ctx, qry, shopDatabaseID[:], orderDBID[:])
+	if err != nil {
+		log("relay.orderUnlockOp.deleteFailed err=%s", err)
+		return nil, &pb.Error{Code: pb.ErrorCodes_INVALID, Message: "failed to unlock order"}
+	}
+
+	// Check that exactly one row was deleted
+	if commandTag.RowsAffected() != 1 {
+		log("relay.orderUnlockOp.noRowsAffected affected=%d", commandTag.RowsAffected())
+		return nil, &pb.Error{Code: pb.ErrorCodes_NOT_FOUND, Message: "order not found or already unlocked"}
+	}
+
+	var inventoryPatches []patch.Patch
+	for _, item := range order.Items {
+		listingID := item.ListingID
+
+		variationIDs := make([]any, len(item.VariationIDs))
+		for i, id := range item.VariationIDs {
+			variationIDs[i] = id
+		}
+		// Prepare the patch path with variations in the fields
+		patchPath := patch.Path{
+			Type:     patch.ObjectTypeInventory,
+			ObjectID: &listingID,
+			Fields:   variationIDs,
+		}
+
+		// Create the decrement patch
+		quantityBytes, err := cbor.Marshal(item.Quantity)
+		check(err)
+		inventoryPatches = append(inventoryPatches, patch.Patch{
+			Path:  patchPath,
+			Op:    patch.IncrementOp,
+			Value: quantityBytes,
+		})
+	}
+	log("relay.orderUnlockOp.finish took=%d patches=%d", took(start), len(inventoryPatches))
+	return inventoryPatches, nil
+}
+
+func isOrderStatePaymentChosen(p patch.Patch) bool {
+	if !(p.Path.Type == patch.ObjectTypeOrder &&
+		len(p.Path.Fields) == 1 &&
+		p.Path.Fields[0] == "PaymentState") {
+		return false
+	}
+	if p.Op != patch.ReplaceOp {
+		return false
+	}
+	if p.Value == nil {
+		return false
+	}
+	var state objects.OrderPaymentState
+	if err := cbor.Unmarshal(p.Value, &state); err != nil {
+		return false
+	}
+	return state == objects.OrderPaymentStatePaymentChosen
 }
 
 var big100 = new(big.Int).SetInt64(100)
@@ -1146,7 +1271,9 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 	// construct payment request for ID and pay-by-address
 	var pr = contractsabi.PaymentRequest{}
 	pr.ChainId = new(big.Int).SetUint64(chosenCurrency.ChainID)
+	// TODO: use timeout from manifest
 	pr.Ttl = new(big.Int).SetUint64(block.Time() + DefaultPaymentTTL)
+	//binary.BigEndian.PutUint64(orderHash[:], orderID)
 	pr.Order = orderHash
 	commonChosenCurrency := common.Address(chosenCurrency.Address)
 	pr.Currency = commonChosenCurrency
@@ -1166,23 +1293,23 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 	logS(sessionID, "relay.orderPaymentChoiceOp.paymentRequest id=%x addr=%x total=%s currentBlock=%d order_hash=%x", paymentID, paymentAddr, bigTotal.String(), blockNo, orderHash)
 
 	// mark order as finalized by creating the event and updating payments table
-	var fin objects.PaymentDetails
-	copy(fin.PaymentID[:], paymentID)
-	fin.TTL = pr.Ttl.Uint64()
+	var details objects.PaymentDetails
+	copy(details.PaymentID[:], paymentID)
+	details.TTL = pr.Ttl.Uint64()
 
-	fin.ListingHashes = make([][]byte, len(items))
+	details.ListingHashes = make([][]byte, len(items))
 	for i, it := range items {
-		fin.ListingHashes[i] = it.cborHash[:]
+		details.ListingHashes[i] = it.cborHash[:]
 	}
 
-	fin.Total = objects.Uint256(*bigTotal)
-	copy(fin.ShopSignature[:], pr.ShopSignature)
+	details.Total = objects.Uint256(*bigTotal)
+	copy(details.ShopSignature[:], pr.ShopSignature)
 
-	finBytes, err := cbor.Marshal(fin)
+	finBytes, err := cbor.Marshal(details)
 	check(err)
 
 	// TODO: once
-	unpaidBytes, err := cbor.Marshal(objects.OrderStateUnpaid)
+	unpaidBytes, err := cbor.Marshal(objects.OrderPaymentStateUnpaid)
 	check(err)
 
 	var detailsOp patch.OpString = patch.AddOp
@@ -1204,28 +1331,28 @@ func (r *Relay) processOrderPaymentChoice(sessionID sessionID, shop *objects.Sho
 			Path: patch.Path{
 				Type:     patch.ObjectTypeOrder,
 				ObjectID: &orderID,
-				Fields:   []any{"State"},
+				Fields:   []any{"PaymentState"},
 			},
 			Op:    patch.ReplaceOp,
 			Value: unpaidBytes,
 		},
 	}
 
-	var w PaymentWaiter
-	w.shopID = shopID
+	var waiter PaymentWaiter
+	waiter.shopID = shopID
 	var dbOrderID ObjectIDArray
 	binary.BigEndian.PutUint64(dbOrderID[:], orderID)
-	w.orderID = dbOrderID
-	w.paymentChosenAt = now()
-	w.purchaseAddr = paymentAddr
-	w.chainID = chosenCurrency.ChainID
-	w.lastBlockNo.SetInt64(int64(blockNo))
-	w.coinsTotal.Set(bigTotal)
-	w.paymentID = paymentID
+	waiter.orderID = dbOrderID
+	waiter.paymentChosenAt = now()
+	waiter.purchaseAddr = paymentAddr
+	waiter.chainID = chosenCurrency.ChainID
+	waiter.lastBlockNo.SetInt64(int64(blockNo))
+	waiter.coinsTotal.Set(bigTotal)
+	waiter.paymentID = paymentID
 
 	var chosenIsErc20 = ZeroAddress.Cmp(commonChosenCurrency) != 0
 	if chosenIsErc20 {
-		w.erc20TokenAddr = &commonChosenCurrency
+		waiter.erc20TokenAddr = &commonChosenCurrency
 	}
 
 	const insertPaymentWaiterQuery = `update payments set
@@ -1242,16 +1369,16 @@ AND orderId = $2`
 
 	_, err = r.connPool.Exec(ctx, insertPaymentWaiterQuery,
 		// where
-		w.shopID[:],
-		w.orderID[:],
+		waiter.shopID[:],
+		waiter.orderID[:],
 		// set
-		w.paymentChosenAt,
-		w.purchaseAddr.Bytes(),
-		w.lastBlockNo,
-		w.coinsTotal,
-		w.erc20TokenAddr,
-		w.paymentID,
-		w.chainID)
+		waiter.paymentChosenAt,
+		waiter.purchaseAddr.Bytes(),
+		waiter.lastBlockNo,
+		waiter.coinsTotal,
+		waiter.erc20TokenAddr,
+		waiter.paymentID,
+		waiter.chainID)
 	check(err)
 
 	logS(sessionID, "relay.orderPaymentChoiceOp.finish took=%d", took(start))
@@ -1263,6 +1390,7 @@ var publicDefaultFilters = []*pb.SubscriptionRequest_Filter{
 	{ObjectType: pb.ObjectType_OBJECT_TYPE_ACCOUNT},
 	{ObjectType: pb.ObjectType_OBJECT_TYPE_TAG},
 	{ObjectType: pb.ObjectType_OBJECT_TYPE_LISTING},
+	{ObjectType: pb.ObjectType_OBJECT_TYPE_INVENTORY},
 }
 
 func (op *SubscriptionRequestOp) process(r *Relay) {
@@ -1325,8 +1453,7 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 	for _, filter := range op.im.Filters {
 		// Ensure that non-authenticated sessions can only access public content
 		if !subscription.shopID.Equal(session.shopID) &&
-			(filter.ObjectType == pb.ObjectType_OBJECT_TYPE_INVENTORY ||
-				filter.ObjectType == pb.ObjectType_OBJECT_TYPE_ORDER) {
+			(filter.ObjectType == pb.ObjectType_OBJECT_TYPE_ORDER) {
 			logSR("relay.subscriptionRequestOp.notAllowed why=\"other shop\" filter=%s",
 				sessionID, requestID, filter.ObjectType.String())
 			op.err = notAllowedError
@@ -1342,12 +1469,6 @@ func (op *SubscriptionRequestOp) process(r *Relay) {
 				if id := filter.GetObjectId(); id != nil {
 					verifyOrderIDs = append(verifyOrderIDs, id.Raw)
 				}
-			case pb.ObjectType_OBJECT_TYPE_INVENTORY:
-				logSR("relay.subscriptionRequestOp.notAllowed filter=%s",
-					sessionID, requestID, filter.ObjectType.String())
-				op.err = notAllowedError
-				r.sendSessionOp(session, op)
-				return
 			}
 		}
 
@@ -1561,6 +1682,7 @@ func (op *KeyCardEnrolledInternalOp) process(r *Relay) {
 			PricingCurrency: objects.ChainAddress{
 				ChainID: r.ethereum.registryChainID,
 			},
+			OrderPaymentTimeout: objects.OrderPaymentTimeoutUnit(time.Hour.Seconds()),
 		}
 		manifestBytes, err := cbor.Marshal(manifest)
 		check(err)
@@ -1711,45 +1833,26 @@ WHERE shopID = $3 and orderId = $4;`
 
 	shopState := r.shopIDsToShopState.MustGet(shopID).data
 
-	order, has := shopState.Orders.Get(ordeDBID.Uint64())
+	currentOrderState, has := shopState.Orders.Get(ordeDBID.Uint64())
 	assertWithMessage(has, fmt.Sprintf("order not found for orderId=%x", ordeDBID))
 
-	var inventoryPatches []patch.Patch
-	// emit inventory decrement patches for each item
-	for _, item := range order.Items {
-		// Create a patch to decrement inventory for each item
-		listingID := item.ListingID
-
-		variationIDs := make([]any, len(item.VariationIDs))
-		for i, id := range item.VariationIDs {
-			variationIDs[i] = id
-		}
-		// Prepare the patch path with variations in the fields
-		patchPath := patch.Path{
-			Type:     patch.ObjectTypeInventory,
-			ObjectID: &listingID,
-			Fields:   variationIDs,
-		}
-
-		// Create the decrement patch
-		inventoryPatches = append(inventoryPatches, patch.Patch{
-			Path:  patchPath,
-			Op:    patch.DecrementOp,
-			Value: []byte{byte(item.Quantity)}, // Decrement by the item quantity
-		})
-	}
-
-	orderID := objects.ObjectID(ordeDBID.Uint64())
+	orderID := ordeDBID.Uint64()
 
 	paidBytes, err := cbor.Marshal(paid)
 	check(err)
 
-	// TODO: only once
-	orderStateBytes, err := cbor.Marshal(objects.OrderStatePaid)
+	var nextOrderState objects.OrderPaymentState
+	if currentOrderState.PaymentState == objects.OrderPaymentStateCanceled {
+		nextOrderState = objects.OrderPaymentStatePaidLate
+	} else {
+		nextOrderState = objects.OrderPaymentStatePaid
+	}
+	// TODO: make this a const / only marshal these bytes once
+	orderStateBytes, err := cbor.Marshal(nextOrderState)
 	check(err)
 
-	inventoryPatches = append(inventoryPatches,
-		patch.Patch{
+	orderPatches := []patch.Patch{
+		{
 			Op: patch.AddOp,
 			Path: patch.Path{
 				Type:     patch.ObjectTypeOrder,
@@ -1758,17 +1861,18 @@ WHERE shopID = $3 and orderId = $4;`
 			},
 			Value: paidBytes,
 		},
-		patch.Patch{
+		{
 			Op: patch.ReplaceOp,
 			Path: patch.Path{
 				Type:     patch.ObjectTypeOrder,
 				ObjectID: &orderID,
-				Fields:   []any{"State"},
+				Fields:   []any{"PaymentState"},
 			},
 			Value: orderStateBytes,
-		})
+		},
+	}
 
-	r.createRelayPatchSet(shopID, inventoryPatches...)
+	r.createRelayPatchSet(shopID, orderPatches...)
 
 	r.commitSyncTransaction()
 	log("db.paymentFoundInternalOp.finish orderID=%x took=%d", ordeDBID, took(start))
