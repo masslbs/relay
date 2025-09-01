@@ -19,10 +19,10 @@
     contracts.url = "github:masslbs/contracts/548ca6e00ffe3f8d841fa4aa985183f0ff3b4dc3";
     # to reduce derivation size we use this nixpkgs for everything below
 
-    schema.url = "github:masslbs/network-schema/order-locking-states";
+    schema.url = "github:masslbs/network-schema/v5-dev";
     nixpkgs.follows = "schema/nixpkgs";
 
-    pystoretest.url = "github:masslbs/pystoretest/order-state-locking";
+    pystoretest.url = "github:masslbs/pystoretest/network-v5";
     pystoretest.inputs = {
       nixpkgs.follows = "nixpkgs";
       contracts.follows = "contracts";

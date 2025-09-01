@@ -601,16 +601,16 @@
         "systems": "systems_2"
       },
       "locked": {
-        "lastModified": 1756294336,
-        "narHash": "sha256-2CKITJHDutAqdVsq8k8UzUczHsMuZwmYb5/1e6feMIc=",
+        "lastModified": 1756726429,
+        "narHash": "sha256-5YlZjXFxVKOSP6yDK676zNk0Pd++gpLaSJx8Tw3H6j4=",
         "owner": "masslbs",
         "repo": "pystoretest",
-        "rev": "444f581a80362e3f3096e1d28d28830d9132a4e7",
+        "rev": "b6e065cf40018241e4d006e830aed4c1022da25a",
         "type": "github"
       },
       "original": {
         "owner": "masslbs",
-        "ref": "order-state-locking",
+        "ref": "network-v5",
         "repo": "pystoretest",
         "type": "github"
       }
@@ -640,16 +640,16 @@
         "systems": "systems_4"
       },
       "locked": {
-        "lastModified": 1756286342,
-        "narHash": "sha256-s734Zb9hkhlfDvN3k56CZpjHaNrJ5MxYx3vNmdrNdmM=",
+        "lastModified": 1756463675,
+        "narHash": "sha256-bkmf29WbE+6u7/D1WfNdvxrvgw5vEOpdjJg7fgT8Sz0=",
         "owner": "masslbs",
         "repo": "network-schema",
-        "rev": "a3e0d2517ff280dbb37d98235f2241ea34b8660b",
+        "rev": "fc4405743242b2f4b095b1027119d4e82927efbd",
         "type": "github"
       },
       "original": {
         "owner": "masslbs",
-        "ref": "order-locking-states",
+        "ref": "v5-dev",
         "repo": "network-schema",
         "type": "github"
       }
@@ -671,11 +671,11 @@
     },
     "services-flake_2": {
       "locked": {
-        "lastModified": 1756366058,
-        "narHash": "sha256-xQZszI2fgCbHHfumRMIJ3BKsebxGyaUrc7C6hfkfkj4=",
+        "lastModified": 1756600705,
+        "narHash": "sha256-MRsbapTbaHI17JJ8axMRf6uQaiDf+D3I+AbxkHqxDiY=",
         "owner": "juspay",
         "repo": "services-flake",
-        "rev": "56ef61a90955d7ca764fad38d8620a9dc891a615",
+        "rev": "383348cffc753cde22b67b3e7a3aa65e4a9f28e9",
         "type": "github"
       },
       "original": {
